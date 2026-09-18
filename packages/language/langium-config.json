@@ -1,0 +1,16 @@
+{
+    "projectName": "Thinai",
+    "languages": [
+        {
+            "id": "thinai",
+            "grammar": "src/thinai.langium",
+            "fileExtensions": [
+                ".tni"
+            ],
+            "textMate": {
+                "out": "syntaxes/thinai.tmLanguage.json"
+            }
+        }
+    ],
+    "out": "src/generated"
+}
