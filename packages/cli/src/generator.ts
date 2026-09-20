@@ -1,17 +1,28 @@
+import type { LangiumDocument } from 'langium';
 import type { Model } from 'thinai-language';
-import { expandToNode, joinToNode, toString } from 'langium/generate';
+import { expandToNode, toString } from 'langium/generate';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { extractDestinationAndName } from './util.js';
 
-export function generateJavaScript(model: Model, filePath: string, destination: string | undefined): string {
+export function generateJavaScript(documents: LangiumDocument<Model>[], filePath: string, destination: string | undefined): string {
     const data = extractDestinationAndName(filePath, destination);
     const generatedFilePath = `${path.join(data.destination, data.name)}.js`;
+
+    const summary = documents.flatMap(document => {
+        const model = document.parseResult.value;
+        return model.declarations.map(declaration => ({
+            file: document.uri.fsPath,
+            type: declaration.$type,
+            name: 'name' in declaration ? declaration.name : declaration.context.$refText
+        }));
+    });
 
     const fileNode = expandToNode`
         "use strict";
 
-        ${joinToNode(model.greetings, greeting => `console.log('Hello, ${greeting.person.ref?.name}!');`, { appendNewLineIfNotEmpty: true })}
+        const thinaiModel = ${JSON.stringify(summary, undefined, 4)};
+        console.log(JSON.stringify(thinaiModel, undefined, 2));
     `.appendNewLineIfNotEmpty();
 
     if (!fs.existsSync(data.destination)) {

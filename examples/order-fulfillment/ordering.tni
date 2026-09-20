@@ -1,0 +1,32 @@
+import "./strategic.tni";
+
+bounded context Ordering realizes OrderManagement {
+
+    actor Customer;
+    external system PaymentProvider;
+    capability OrderFulfillment owned by Customer;
+
+    aggregate Order root OrderRoot {
+        entity OrderRoot {
+            id: string;
+            orderId: OrderId;
+            status: OrderStatus;
+            invariant "An order must have an owner";
+        }
+
+        value object OrderId {
+            raw: string;
+        }
+
+        enum OrderStatus {
+            Draft, Placed, Paid
+        }
+
+        domain service OrderPricing {
+            method calculateTotal(amount: number) returns number;
+        }
+
+        repository OrderRepository for Order;
+        factory OrderFactory for Order;
+    }
+}

@@ -1,0 +1,19 @@
+import "./ordering.tni";
+
+part of bounded context Ordering {
+    command PlaceOrder
+        handled by Customer
+        targets Order
+        with items: string
+        emits OrderPlaced;
+
+    event OrderPlaced for Order publishes integration OrderPlacedV1 data {
+        orderId: OrderId;
+    }
+    integration event OrderPlacedV1 from OrderPlaced data {
+        orderId: OrderId;
+    }
+    policy ReserveInventory when OrderPlaced then PlaceOrder;
+    read model OrderSummary from OrderPlaced;
+    hotspot PaymentContract note "Payment API contract is unclear";
+}

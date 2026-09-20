@@ -1,0 +1,6 @@
+import "./ordering.tni" as Ordering;
+import "./shipping.tni" as Shipping;
+
+context map FulfillmentMap {
+    Ordering customer supplier Shipping;
+}

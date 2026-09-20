@@ -1,58 +1,91 @@
-import { beforeAll, describe, expect, test } from "vitest";
-import { EmptyFileSystem, type LangiumDocument } from "langium";
-import { expandToString as s } from "langium/generate";
-import { parseHelper } from "langium/test";
-import type { Model } from "thinai-language";
-import { createThinaiServices, isModel } from "thinai-language";
+import { beforeAll, describe, expect, test } from 'vitest';
+import { EmptyFileSystem, type LangiumDocument } from 'langium';
+import { expandToString as s } from 'langium/generate';
+import { parseHelper } from 'langium/test';
+import type { Model } from 'thinai-language';
+import {
+    createThinaiServices,
+    isBoundedContext,
+    isModel
+} from 'thinai-language';
 
-let services: ReturnType<typeof createThinaiServices>;
-let parse:    ReturnType<typeof parseHelper<Model>>;
-let document: LangiumDocument<Model> | undefined;
+let parse: ReturnType<typeof parseHelper<Model>>;
 
-beforeAll(async () => {
-    services = createThinaiServices(EmptyFileSystem);
+beforeAll(() => {
+    const services = createThinaiServices(EmptyFileSystem);
     parse = parseHelper<Model>(services.Thinai);
-
-    // activate the following if your linking test requires elements from a built-in library, for example
-    // await services.shared.workspace.WorkspaceManager.initializeWorkspace([]);
 });
 
 describe('Parsing tests', () => {
+    test('parses strategic, tactical, and EventStorming elements', async () => {
+        const document = await parse(s`
+            subdomain OrderManagement kind core;
 
-    test('parse simple Model', async () => {
-        document = await parse(`
-            person Langium
-            Hello Langium!
+            bounded context Ordering realizes OrderManagement {
+                capability OrderFulfillment;
+                actor Customer;
+                external system PaymentProvider;
+
+                aggregate Order root OrderRoot {
+                    entity OrderRoot {
+                        id: OrderId;
+                        invariant "An order must have an owner";
+                    }
+                    value object OrderId {
+                        identifier: string;
+                    }
+                }
+
+                command PlaceOrder handled by Customer targets Order with items: string emits OrderPlaced;
+                event OrderPlaced for Order publishes integration OrderPlacedV1 data {
+                    orderId: OrderId;
+                }
+                integration event OrderPlacedV1 from OrderPlaced;
+                policy ReserveInventory when OrderPlaced then PlaceOrder;
+                read model OrderSummary from OrderPlaced;
+                hotspot PaymentProvider note "Payment API contract is unclear";
+
+                event storming PlaceOrderWorkshop {
+                    actor Customer;
+                    command PlaceOrder;
+                    event OrderPlaced;
+                    policy ReserveInventory;
+                    aggregate Order;
+                    read model OrderSummary;
+                    hotspot PaymentProvider;
+                }
+            }
         `);
 
-        // check for absence of parser errors the classic way:
-        //  deactivated, find a much more human readable way below!
-        // expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(checkDocumentValid(document)).toBeUndefined();
+        expect(document.parseResult.value?.declarations.map(declaration => declaration.$type)).toEqual([
+            'Subdomain',
+            'BoundedContext'
+        ]);
+        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(11);
 
-        expect(
-            // here we use a (tagged) template expression to create a human readable representation
-            //  of the AST part we are interested in and that is to be compared to our expectation;
-            // prior to the tagged template expression we check for validity of the parsed document object
-            //  by means of the reusable function 'checkDocumentValid()' to sort out (critical) typos first;
-            checkDocumentValid(document) || s`
-                Persons:
-                  ${document.parseResult.value?.persons?.map(p => p.name)?.join('\n  ')}
-                Greetings to:
-                  ${document.parseResult.value?.greetings?.map(g => g.person.$refText)?.join('\n  ')}
-            `
-        ).toBe(s`
-            Persons:
-              Langium
-            Greetings to:
-              Langium
+        expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
+        expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[1])).toBe(true);
+    });
+
+    test('parses canonical context parts and imports', async () => {
+        const document = await parse(s`
+            import "./ordering.tni";
+
+            part of bounded context Ordering {
+                integration event OrderPlacedV1;
+            }
         `);
+
+        expect(checkDocumentValid(document) || document.parseResult.value?.imports[0].path).toBe('./ordering.tni');
+        expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
     });
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {
     return document.parseResult.parserErrors.length && s`
         Parser errors:
-          ${document.parseResult.parserErrors.map(e => e.message).join('\n  ')}
+          ${document.parseResult.parserErrors.map(error => error.message).join('\n  ')}
     `
         || document.parseResult.value === undefined && `ParseResult is 'undefined'.`
         || !isModel(document.parseResult.value) && `Root AST object is a ${document.parseResult.value.$type}, expected a 'Model'.`

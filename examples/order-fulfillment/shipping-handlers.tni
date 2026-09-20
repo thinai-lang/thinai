@@ -1,0 +1,17 @@
+import "./ordering.tni";
+import "./ordering-events.tni";
+import "./shipping.tni";
+
+part of bounded context Shipping {
+    policy StartShipment when Ordering.OrderPlacedV1 then CreateShipment;
+
+    event storming OrderLifecycle {
+        actor Customer;
+        command Ordering.PlaceOrder;
+        event Ordering.OrderPlacedV1;
+        aggregate Shipment;
+        command CreateShipment;
+        external system PaymentProvider;
+        hotspot PaymentContract;
+    }
+}

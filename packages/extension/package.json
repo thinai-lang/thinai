@@ -3,6 +3,7 @@
     "description": "The extension specific package",
     "version": "0.0.1",
     "displayName": "thinai",
+    "icon": "./icon.png",
     "type": "module",
     "engines": {
         "vscode": "^1.91.0"
@@ -15,6 +16,10 @@
             "id": "thinai",
             "aliases": ["Thinai", "thinai"],
             "extensions": [".tni"],
+            "icon": {
+                "light": "./icons/thinai-light.svg",
+                "dark": "./icons/thinai-dark.svg"
+            },
             "configuration": "./language-configuration.json"
         }],
         "grammars": [{

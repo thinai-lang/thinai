@@ -1,0 +1,12 @@
+import "./strategic.tni";
+
+bounded context Shipping realizes Fulfillment {
+    aggregate Shipment root ShipmentRoot {
+        entity ShipmentRoot {
+            id: string;
+        }
+    }
+
+    command CreateShipment targets Shipment emits ShipmentStarted;
+    event ShipmentStarted for Shipment;
+}

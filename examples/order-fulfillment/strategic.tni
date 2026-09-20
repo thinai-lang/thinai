@@ -1,0 +1,3 @@
+subdomain OrderManagement kind core;
+subdomain Fulfillment kind supporting;
+subdomain Payments kind generic;
