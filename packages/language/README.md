@@ -11,8 +11,13 @@ Declare a bounded context once, then extend it from any number of explicitly imp
 subdomain OrderManagement kind core;
 
 bounded context Ordering realizes OrderManagement {
-    aggregate Order root OrderRoot {
-        entity OrderRoot;
+    aggregate Order {
+        root entity OrderRoot {
+            identifier id: OrderId;
+        }
+        identifier value object OrderId for OrderRoot {
+            raw: string;
+        }
     }
 }
 ```
@@ -32,12 +37,14 @@ Imports are direct and relative. Declarations from unrelated workspace files are
 
 Domain events are local to their bounded context by default. Cross-context consumers must reference an integration event, either explicitly declared with `integration event ... from ...` or exposed with `publishes integration`.
 
+Modules are optional internal namespaces. Use `exposes` and `depends on` to enforce module-level architectural dependencies. Shared value objects belong in an explicit `shared kernel` rather than in a business bounded context.
+
 The language server provides keyword and cross-reference completion, relative `.tni` import-path completion, and quick fixes for unresolved declarations that can be imported from another workspace file.
 
 ## Supported Concepts
 
-- Strategic DDD: bounded contexts, subdomains, capabilities, context maps, and context relationships.
-- Tactical DDD: aggregates, entities, value objects, domain services, repositories, factories, commands, events, policies, and read models.
+- Strategic DDD: bounded contexts, subdomains, capabilities, context maps, context relationships, and shared kernels.
+- Tactical DDD: modules, aggregates, root entities, explicit identifier fields, identifier value objects, mirrored identifiers, entities, value objects, domain services, repositories, factories, commands, events, policies, and read models.
 - EventStorming: actors, external systems, commands, domain events, integration events, policies, hotspots, and EventStorming boards.
 
 As a general Langium reference, see the [Langium grammar guide](https://langium.org/docs/learn/workflow/write_grammar/).

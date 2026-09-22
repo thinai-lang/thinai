@@ -16,7 +16,10 @@ import {
     type Import,
     isBoundedContext,
     isBoundedContextPart,
-    isModel
+    isModel,
+    isModule,
+    isSharedKernel,
+    type Module
 } from './generated/ast.js';
 
 const exportedTypes = new Set([
@@ -34,9 +37,11 @@ const exportedTypes = new Set([
     'Factory',
     'Hotspot',
     'IntegrationEvent',
+    'Module',
     'Policy',
     'ReadModel',
     'Repository',
+    'SharedKernel',
     'Subdomain',
     'ValueObject'
 ]);
@@ -56,6 +61,9 @@ export function getOwningContextName(node: AstNode): string | undefined {
         if (isBoundedContextPart(current)) {
             return current.context.$refText;
         }
+        if (isSharedKernel(current)) {
+            return current.name;
+        }
         current = current.$container;
     }
     return undefined;
@@ -64,13 +72,35 @@ export function getOwningContextName(node: AstNode): string | undefined {
 function getDeclarationPath(node: NamedNode): string[] {
     const path: string[] = [];
     let current: AstNode | undefined = node;
-    while (current && !isBoundedContext(current) && !isBoundedContextPart(current)) {
+    while (current && !isBoundedContext(current) && !isBoundedContextPart(current) && !isSharedKernel(current)) {
         if (isNamedExport(current)) {
             path.unshift(current.name);
         }
         current = current.$container;
     }
     return path;
+}
+
+export function getOwningModule(node: AstNode): Module | undefined {
+    let current: AstNode | undefined = node;
+    while (current) {
+        if (isModule(current)) {
+            return current;
+        }
+        current = current.$container;
+    }
+    return undefined;
+}
+
+export function isInSharedKernel(node: AstNode): boolean {
+    let current: AstNode | undefined = node;
+    while (current) {
+        if (isSharedKernel(current)) {
+            return true;
+        }
+        current = current.$container;
+    }
+    return false;
 }
 
 export function getExportedName(node: NamedNode): string {
@@ -126,10 +156,43 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         let result = this.createScope(this.getImportedSymbols(document, referenceType));
+        const moduleSymbols = context.property === 'dependencies'
+            ? []
+            : this.getModuleSymbols(context, referenceType);
+        result = this.createScope(moduleSymbols, result);
         for (let index = localScopes.length - 1; index >= 0; index--) {
             result = this.createScope(localScopes[index], result);
         }
         return result;
+    }
+
+    private getModuleSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
+        const module = getOwningModule(context.container);
+        if (!module) {
+            return [];
+        }
+
+        const descriptions: AstNodeDescription[] = [];
+        for (const dependency of module.dependencies) {
+            const targetModule = dependency.ref;
+            if (!targetModule) {
+                continue;
+            }
+            for (const exposure of targetModule.exposures) {
+                for (const declaration of exposure.declarations) {
+                    const target = declaration.ref;
+                    if (!target || !this.reflection.isSubtype(target.$type, referenceType)) {
+                        continue;
+                    }
+                    const name = this.nameProvider.getName(target);
+                    if (name) {
+                        descriptions.push(this.descriptions.createDescription(target, name));
+                    }
+                    descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
+                }
+            }
+        }
+        return descriptions;
     }
 
     private getImportedSymbols(document: LangiumDocument, referenceType: string): AstNodeDescription[] {

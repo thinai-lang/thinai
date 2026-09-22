@@ -1,12 +1,29 @@
 import "./strategic.tni";
+import "./ordering.tni";
 
 bounded context Shipping realizes Fulfillment {
-    aggregate Shipment root ShipmentRoot {
-        entity ShipmentRoot {
-            id: string;
+    identifier value object OrderId mirrors Ordering.Order.OrderId {
+        raw: string;
+    }
+
+    aggregate Shipment {
+        root entity ShipmentRoot {
+            identifier id: ShipmentId;
+            orderId: OrderId;
+        }
+        identifier value object ShipmentId for ShipmentRoot {
+            raw: string;
         }
     }
 
     command CreateShipment targets Shipment emits ShipmentStarted;
     event ShipmentStarted for Shipment;
+
+    module Operations {
+        exposes TrackingCode;
+
+        value object TrackingCode {
+            raw: string;
+        }
+    }
 }

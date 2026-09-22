@@ -3,7 +3,8 @@ import {
     type ValidationAcceptor,
     type ValidationChecks,
     URI,
-    UriUtils
+    UriUtils,
+    isReference
 } from 'langium';
 import type {
     Actor,
@@ -23,16 +24,19 @@ import type {
     Import,
     Hotspot,
     IntegrationEvent,
+    Field,
+    Module,
     Policy,
     ReadModel,
     Repository,
     Subdomain,
     ThinaiAstType,
-    ValueObject
+    ValueObject,
+    SharedKernel
 } from './generated/ast.js';
-import { isDomainEvent, isModel } from './generated/ast.js';
+import { isAggregate, isDomainEvent, isEntity, isModel, isModule, isValueObject } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { getExportedName, getOwningContextName, resolveImportUri } from './thinai-scope.js';
+import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -40,6 +44,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
     const checks: ValidationChecks<ThinaiAstType> = {
         Actor: validator.checkNamedDeclaration,
         Aggregate: validator.checkAggregate,
+        AstNode: validator.checkReferences,
         BoundedContext: validator.checkBoundedContext,
         BoundedContextPart: validator.checkBoundedContextPart,
         Capability: validator.checkNamedDeclaration,
@@ -47,19 +52,22 @@ export function registerValidationChecks(services: ThinaiServices): void {
         ContextRelationship: validator.checkContextRelationship,
         DomainEvent: validator.checkDomainEvent,
         DomainService: validator.checkNamedDeclaration,
-        Entity: validator.checkNamedDeclaration,
+        Entity: validator.checkEntity,
         EnumType: validator.checkNamedDeclaration,
         EventStorming: validator.checkEventStorming,
         ExternalSystem: validator.checkNamedDeclaration,
         Factory: validator.checkNamedDeclaration,
+        Field: validator.checkField,
         Hotspot: validator.checkNamedDeclaration,
         Import: validator.checkImport,
         IntegrationEvent: validator.checkIntegrationEvent,
+        Module: validator.checkModule,
         Policy: validator.checkPolicy,
         ReadModel: validator.checkReadModel,
         Repository: validator.checkNamedDeclaration,
+        SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
-        ValueObject: validator.checkNamedDeclaration
+        ValueObject: validator.checkValueObject
     };
     registry.register(checks, validator);
 }
@@ -150,12 +158,174 @@ export class ThinaiValidator {
 
     checkAggregate(aggregate: Aggregate, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(aggregate, accept);
-        if (aggregate.root?.ref && aggregate.root.ref.$container !== aggregate) {
-            accept('error', 'An aggregate root must be an entity declared inside the aggregate.', {
+        const roots = aggregate.members.filter(member => isEntity(member) && member.root);
+        if (roots.length !== 1) {
+            accept('error', 'An aggregate must declare exactly one root entity.', {
                 node: aggregate,
-                property: 'root'
+                property: 'members'
             });
         }
+    }
+
+    checkEntity(entity: Entity, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(entity, accept);
+        if (entity.root) {
+            const aggregate = entity.$container;
+            if (!isAggregate(aggregate)) {
+                accept('error', 'A root entity must be declared directly inside an aggregate.', {
+                    node: entity,
+                    keyword: 'root'
+                });
+            } else if (!entity.fields.some(field => field.identifier)) {
+                accept('error', 'A root entity must declare an identifier field.', {
+                    node: entity,
+                    property: 'name'
+                });
+            }
+        }
+    }
+
+    checkField(field: Field, accept: ValidationAcceptor): void {
+        if (field.type?.ref && isValueObject(field.type.ref) && !isInSharedKernel(field.type.ref)) {
+            const sourceContext = getOwningContextName(field);
+            const targetContext = getOwningContextName(field.type.ref);
+            if (sourceContext && targetContext && sourceContext !== targetContext) {
+                accept('error', 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.', {
+                    node: field,
+                    property: 'type'
+                });
+            }
+        }
+        if (!field.identifier) {
+            return;
+        }
+        if (!field.type?.ref || !isValueObject(field.type.ref) || !field.type.ref.identifier) {
+            accept('error', 'An identifier field must reference an identifier value object.', {
+                node: field,
+                property: 'type'
+            });
+        }
+    }
+
+    checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(valueObject, accept);
+        if (valueObject.identifier && !valueObject.identifierOf && !valueObject.mirrors) {
+            accept('error', 'An identifier value object must identify an entity or mirror another identifier.', {
+                node: valueObject,
+                property: 'name'
+            });
+        }
+        if (valueObject.identifierOf?.ref) {
+            const entity = valueObject.identifierOf.ref;
+            if (!entity.root) {
+                accept('error', 'An identifier value object must identify an aggregate root entity.', {
+                    node: valueObject,
+                    property: 'identifierOf'
+                });
+            }
+            if (entity.$container !== valueObject.$container) {
+                accept('error', 'An identifier value object must be declared in the same aggregate as its entity.', {
+                    node: valueObject,
+                    property: 'identifierOf'
+                });
+            }
+        }
+        if (valueObject.mirrors?.ref) {
+            const source = valueObject.mirrors.ref;
+            if (!source.identifier) {
+                accept('error', 'A mirrored value object must target an identifier value object.', {
+                    node: valueObject,
+                    property: 'mirrors'
+                });
+            }
+            if (getOwningContextName(source) === getOwningContextName(valueObject)) {
+                accept('error', 'A mirrored identifier must originate in another bounded context.', {
+                    node: valueObject,
+                    property: 'mirrors'
+                });
+            }
+            if (!valueObject.identifier) {
+                accept('error', 'A mirrored identifier must be declared as an identifier value object.', {
+                    node: valueObject,
+                    property: 'mirrors'
+                });
+            }
+        }
+    }
+
+    checkModule(module: Module, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(module, accept);
+        for (const dependency of module.dependencies) {
+            if (dependency.ref === module) {
+                accept('error', 'A module cannot depend on itself.', {
+                    node: module,
+                    property: 'dependencies'
+                });
+            }
+            if (dependency.ref && getOwningContextName(dependency.ref) !== getOwningContextName(module)) {
+                accept('error', 'A module can depend only on another module in the same bounded context.', {
+                    node: module,
+                    property: 'dependencies'
+                });
+            }
+        }
+        for (const exposure of module.exposures) {
+            for (const declaration of exposure.declarations) {
+                if (declaration.ref && getOwningModule(declaration.ref) !== module) {
+                    accept('error', 'A module may expose only declarations that it owns.', {
+                        node: exposure,
+                        property: 'declarations'
+                    });
+                }
+            }
+        }
+    }
+
+    checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(sharedKernel, accept);
+        const disallowed = new Set([
+            'Actor', 'Aggregate', 'Capability', 'Command', 'DomainEvent', 'DomainService', 'EventStorming',
+            'ExternalSystem', 'Factory', 'Hotspot', 'IntegrationEvent', 'Policy', 'ReadModel', 'Repository', 'Subdomain'
+        ]);
+        for (const node of AstUtils.streamAst(sharedKernel)) {
+            if (disallowed.has(node.$type)) {
+                accept('error', 'A shared kernel may contain only reusable value objects, enums, and modules.', {
+                    node: sharedKernel,
+                    property: 'members'
+                });
+                break;
+            }
+        }
+    }
+
+    checkReferences(node: import('langium').AstNode, accept: ValidationAcceptor): void {
+        AstUtils.streamReferences(node).forEach(referenceInfo => {
+            if (!isReference(referenceInfo.reference)) {
+                return;
+            }
+            const target = referenceInfo.reference.ref;
+            if (!target) {
+                return;
+            }
+            const sourceModule = getOwningModule(referenceInfo.container);
+            const targetModule = getOwningModule(target);
+            if (!sourceModule || !targetModule || sourceModule === targetModule || isModule(target)) {
+                return;
+            }
+            if (getOwningContextName(sourceModule) !== getOwningContextName(targetModule) || isInSharedKernel(target)) {
+                return;
+            }
+            const dependsOn = sourceModule.dependencies.some(dependency => dependency.ref === targetModule);
+            const exposed = targetModule.exposures.some(exposure =>
+                exposure.declarations.some(declaration => declaration.ref === target)
+            );
+            if (!dependsOn || !exposed) {
+                accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+            }
+        });
     }
 
     checkCommand(command: Command, accept: ValidationAcceptor): void {
@@ -249,7 +419,7 @@ export class ThinaiValidator {
 
     checkNamedDeclaration(
         node: Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity | EnumType |
-        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Policy | ReadModel | Repository | Subdomain | ValueObject,
+        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Module | Policy | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         this.checkDuplicateDeclaration(node, accept);
@@ -257,7 +427,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity | EnumType |
-        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Policy | ReadModel | Repository | Subdomain | ValueObject,
+        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Module | Policy | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);

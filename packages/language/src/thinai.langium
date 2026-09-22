@@ -4,7 +4,8 @@ entry Model:
     (imports+=Import | declarations+=TopLevelDeclaration)*;
 
 TopLevelDeclaration:
-    Subdomain
+    SharedKernel
+    | Subdomain
     | BoundedContext
     | BoundedContextPart
     | ContextMap;
@@ -47,6 +48,46 @@ ContextMember:
     | ReadModel
     | Hotspot
     | EventStorming
+    | Module
+    | TypeDeclaration;
+
+SharedKernel:
+    'shared' 'kernel' name=ID '{'
+        members+=SharedKernelMember*
+    '}' ';'?;
+
+SharedKernelMember:
+    ValueObject
+    | EnumType
+    | Module;
+
+Module:
+    'module' name=ID
+    ('depends' 'on' dependencies+=[Module:QualifiedName] (',' dependencies+=[Module:QualifiedName])*)?
+    '{'
+        exposures+=Exposure*
+        members+=ModuleMember*
+    '}' ';'?;
+
+Exposure:
+    'exposes' declarations+=[NamedDeclaration:QualifiedName] (',' declarations+=[NamedDeclaration:QualifiedName])* ';'?;
+
+ModuleMember:
+    Capability
+    | Aggregate
+    | DomainService
+    | Repository
+    | Factory
+    | Actor
+    | ExternalSystem
+    | Command
+    | DomainEvent
+    | IntegrationEvent
+    | Policy
+    | ReadModel
+    | Hotspot
+    | EventStorming
+    | Module
     | TypeDeclaration;
 
 Subdomain:
@@ -56,7 +97,7 @@ Capability:
     'capability' name=ID ('owned' 'by' owner=[Actor:QualifiedName])? ';'?;
 
 Aggregate:
-    'aggregate' name=ID ('root' root=[Entity:QualifiedName])? '{'
+    'aggregate' name=ID '{'
         members+=AggregateMember*
     '}' ';'?;
 
@@ -69,10 +110,13 @@ AggregateMember:
     | Factory;
 
 Entity:
-    'entity' name=ID ('extends' base=[Entity:QualifiedName])? ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
+    (root?='root')? 'entity' name=ID ('extends' base=[Entity:QualifiedName])? ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
 
 ValueObject:
-    'value' 'object' name=ID ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
+    (identifier?='identifier')? 'value' 'object' name=ID
+    ('for' identifierOf=[Entity:QualifiedName])?
+    ('mirrors' mirrors=[ValueObject:QualifiedName])?
+    ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
 
 EnumType:
     'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ';'?;
@@ -81,7 +125,7 @@ EnumValue:
     name=ID;
 
 Field:
-    name=ID ('?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName]) ';'?;
+    (identifier?='identifier')? name=ID ('?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName]) ';'?;
 
 Invariant:
     'invariant' description=STRING ';'?;
@@ -132,6 +176,10 @@ IntegrationEvent:
     ';'?;
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
+
+type NamedDeclaration = Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity |
+    EnumType | EventStorming | ExternalSystem | Factory | Hotspot | IntegrationEvent | Module | Policy | ReadModel |
+    Repository | Subdomain | ValueObject;
 
 Policy:
     'policy' name=ID

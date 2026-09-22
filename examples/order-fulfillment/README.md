@@ -10,6 +10,9 @@ This example demonstrates the complete Thinai model across multiple files.
 - `shipping.tni` defines a second bounded context.
 - `shipping-handlers.tni` handles an integration event from Ordering and contains an EventStorming board.
 - `context-map.tni` defines the relationship between the bounded contexts.
+- `common-types.tni` defines a shared-kernel value object.
+
+The model also demonstrates optional modules, explicit aggregate-root entities, identifier fields, and a local Shipping identifier that mirrors the Ordering identifier.
 
 ## Try It
 

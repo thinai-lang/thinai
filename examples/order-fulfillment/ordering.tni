@@ -1,4 +1,5 @@
 import "./strategic.tni";
+import "./common-types.tni" as Common;
 
 bounded context Ordering realizes OrderManagement {
 
@@ -6,15 +7,16 @@ bounded context Ordering realizes OrderManagement {
     external system PaymentProvider;
     capability OrderFulfillment owned by Customer;
 
-    aggregate Order root OrderRoot {
-        entity OrderRoot {
-            id: string;
+    aggregate Order {
+        root entity OrderRoot {
+            identifier id: OrderId;
+            currency: Common.Currency;
             orderId: OrderId;
             status: OrderStatus;
             invariant "An order must have an owner";
         }
 
-        value object OrderId {
+        identifier value object OrderId for OrderRoot {
             raw: string;
         }
 

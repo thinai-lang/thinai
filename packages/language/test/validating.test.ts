@@ -24,8 +24,13 @@ describe('Validating', () => {
     test('accepts a valid aggregate command and event model', async () => {
         const document = await parse(`
             bounded context Ordering {
-                aggregate Order root OrderRoot {
-                    entity OrderRoot;
+                aggregate Order {
+                    root entity OrderRoot {
+                        identifier id: OrderId;
+                    }
+                    identifier value object OrderId for OrderRoot {
+                        raw: string;
+                    }
                 }
                 command PlaceOrder targets Order emits OrderPlaced;
                 event OrderPlaced for Order;

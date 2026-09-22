@@ -25,8 +25,13 @@ describe('Linking tests', () => {
                 subdomain OrderManagement kind core;
 
                 bounded context Ordering realizes OrderManagement {
-                    aggregate Order root OrderRoot {
-                        entity OrderRoot;
+                    aggregate Order {
+                        root entity OrderRoot {
+                            identifier id: OrderId;
+                        }
+                        identifier value object OrderId for OrderRoot {
+                            raw: string;
+                        }
                     }
                     command PlaceOrder targets Order emits OrderPlaced;
                     event OrderPlaced for Order publishes integration OrderPlacedV1;
@@ -52,8 +57,13 @@ describe('Linking tests', () => {
                 import "./order-events.tni";
 
                 bounded context Shipping {
-                    aggregate Shipment root ShipmentRoot {
-                        entity ShipmentRoot;
+                    aggregate Shipment {
+                        root entity ShipmentRoot {
+                            identifier id: ShipmentId;
+                        }
+                        identifier value object ShipmentId for ShipmentRoot {
+                            raw: string;
+                        }
                     }
                     command CreateShipment targets Shipment emits ShipmentStarted;
                     event ShipmentStarted for Shipment;
@@ -123,8 +133,13 @@ describe('Linking tests', () => {
                 import "./ordering.tni";
 
                 bounded context Shipping {
-                    aggregate Shipment root ShipmentRoot {
-                        entity ShipmentRoot;
+                    aggregate Shipment {
+                        root entity ShipmentRoot {
+                            identifier id: ShipmentId;
+                        }
+                        identifier value object ShipmentId for ShipmentRoot {
+                            raw: string;
+                        }
                     }
                     command StartShipment targets Shipment;
                     policy StartWhenOrderPlaced when Ordering.OrderPlaced then StartShipment;
@@ -136,6 +151,116 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('may consume only an integration event'))).toBe(true);
+    });
+
+    test('links shared values, identifier mirrors, and module exposures', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/common.tni'),
+            'shared kernel CommonTypes { value object Currency { code: string; } }'
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            s`
+                import "./common.tni" as Common;
+
+                bounded context Ordering {
+                    aggregate Order {
+                        root entity OrderRoot {
+                            identifier id: OrderId;
+                            currency: Common.Currency;
+                        }
+                        identifier value object OrderId for OrderRoot {
+                            raw: string;
+                        }
+                    }
+                }
+            `
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            s`
+                import "./ordering.tni";
+
+                bounded context Shipping {
+                    identifier value object OrderId mirrors Ordering.Order.OrderId {
+                        raw: string;
+                    };
+
+                    aggregate Shipment {
+                        root entity ShipmentRoot {
+                            identifier id: ShipmentId;
+                            orderId: OrderId;
+                        }
+                        identifier value object ShipmentId for ShipmentRoot {
+                            raw: string;
+                        };
+                    };
+
+                    module Public {
+                        exposes PublicCode;
+                        value object PublicCode {
+                            raw: string;
+                        };
+                    };
+
+                    module Consumer depends on Public {
+                        value object LocalCode {
+                            publicCode: PublicCode;
+                        };
+                    };
+                }
+            `
+        );
+        documents = [common, ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        type TestNode = {
+            $type: string;
+            name: string;
+            fields?: Array<{ type?: { ref?: unknown } }>;
+            members?: TestNode[];
+            mirrors?: { ref?: unknown };
+        };
+        const orderingModel = ordering.parseResult.value as Model;
+        const shippingModel = shipping.parseResult.value as Model;
+        const orderingContext = orderingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
+        const orderAggregate = orderingContext.members.find(member => member.$type === 'Aggregate');
+        const orderRoot = orderAggregate?.members?.find(member => member.name === 'OrderRoot');
+        const shippingPart = shippingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
+        const mirroredId = shippingPart.members.find(member => member.$type === 'ValueObject' && member.mirrors);
+        const publicModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Public');
+        const consumerModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Consumer');
+        const localCode = consumerModule?.members?.find(member => member.name === 'LocalCode');
+
+        expect(mirroredId?.mirrors?.ref).toBe(orderAggregate?.members?.find(member => member.name === 'OrderId'));
+        expect(localCode?.fields?.[0].type?.ref).toBe(publicModule?.members?.find(member => member.name === 'PublicCode'));
+        expect(orderRoot).toBeDefined();
+    });
+
+    test('rejects direct use of a private value object across contexts', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering { value object InternalCode { raw: string; } }'
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            s`
+                import "./ordering.tni";
+
+                bounded context Shipping {
+                    value object LocalCode {
+                        source: Ordering.InternalCode;
+                    }
+                }
+            `
+        );
+        documents = [ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('private value object'))).toBe(true);
     });
 });
 

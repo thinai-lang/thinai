@@ -26,13 +26,13 @@ describe('Parsing tests', () => {
                 actor Customer;
                 external system PaymentProvider;
 
-                aggregate Order root OrderRoot {
-                    entity OrderRoot {
-                        id: OrderId;
+                aggregate Order {
+                    root entity OrderRoot {
+                        identifier id: OrderId;
                         invariant "An order must have an owner";
                     }
-                    value object OrderId {
-                        identifier: string;
+                    identifier value object OrderId for OrderRoot {
+                        raw: string;
                     }
                 }
 
@@ -43,7 +43,7 @@ describe('Parsing tests', () => {
                 integration event OrderPlacedV1 from OrderPlaced;
                 policy ReserveInventory when OrderPlaced then PlaceOrder;
                 read model OrderSummary from OrderPlaced;
-                hotspot PaymentProvider note "Payment API contract is unclear";
+                hotspot PaymentContract note "Payment API contract is unclear";
 
                 event storming PlaceOrderWorkshop {
                     actor Customer;
@@ -52,7 +52,7 @@ describe('Parsing tests', () => {
                     policy ReserveInventory;
                     aggregate Order;
                     read model OrderSummary;
-                    hotspot PaymentProvider;
+                    hotspot PaymentContract;
                 }
             }
         `);

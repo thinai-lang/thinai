@@ -1,0 +1,5 @@
+shared kernel CommonTypes {
+    value object Currency {
+        code: string;
+    }
+}
