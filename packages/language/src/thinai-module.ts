@@ -6,6 +6,8 @@ import { ThinaiScopeComputation, ThinaiScopeProvider } from './thinai-scope.js';
 import { ThinaiDocumentBuilder } from './thinai-document-builder.js';
 import { ThinaiCompletionProvider } from './thinai-completion.js';
 import { ThinaiCodeActionProvider } from './thinai-code-actions.js';
+import { ThinaiValueConverter } from './thinai-value-converter.js';
+import { ThinaiTokenBuilder } from './thinai-token-builder.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -37,6 +39,10 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
     references: {
         ScopeComputation: services => new ThinaiScopeComputation(services),
         ScopeProvider: services => new ThinaiScopeProvider(services)
+    },
+    parser: {
+        TokenBuilder: () => new ThinaiTokenBuilder(),
+        ValueConverter: () => new ThinaiValueConverter()
     },
     lsp: {
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),

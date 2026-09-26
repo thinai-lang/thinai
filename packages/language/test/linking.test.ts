@@ -3,7 +3,14 @@ import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
 import type { Model } from 'thinai-language';
-import { createThinaiServices, isModel } from 'thinai-language';
+import {
+    createThinaiServices,
+    isAggregate,
+    isBoundedContext,
+    isCommand,
+    isEntity,
+    isModel
+} from 'thinai-language';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -261,6 +268,115 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('private value object'))).toBe(true);
+    });
+
+    test('links inline method references in command behavior specifications', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot operations {
+                        method ensureOwner();
+                    } {
+                        identifier id: OrderId;
+                    }
+                    identifier value object OrderId for OrderRoot {
+                        raw: string;
+                    }
+                }
+                command PlaceOrder targets Order {
+                    behavior $"Check ${'${Order.OrderRoot.ensureOwner}'} before placing.";
+                }
+                event storming PlaceOrderBoard {
+                    command PlaceOrder;
+                }
+            }`
+        );
+        documents = [ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(ordering.parseResult.parserErrors).toHaveLength(0);
+        const model = ordering.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[0];
+        expect(context && isBoundedContext(context)).toBe(true);
+        if (!context || !isBoundedContext(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const root = aggregate?.members.find(isEntity);
+        const method = root?.methods[0];
+        const command = context.members.find(isCommand);
+        const part = command?.behaviors[0].description.template?.parts.find(part => part.method);
+
+        expect(method).toBeDefined();
+        expect(part?.method?.ref).toBe(method);
+        expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+
+        const methodOffset = ordering.textDocument.getText().indexOf('Order.OrderRoot.ensureOwner') + 'Order.OrderRoot.'.length;
+        const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(ordering, {
+            textDocument: { uri: ordering.uri.toString() },
+            position: ordering.textDocument.positionAt(methodOffset)
+        });
+        expect(definitions?.some(definition => definition.targetUri === ordering.uri.toString())).toBe(true);
+    });
+
+    test('selectively imports bounded contexts from a multi-context file', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering {} bounded context Shipping {} bounded context Billing {}'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/map.tni'),
+            `import "./contexts.tni" { Ordering as Orders, Shipping };
+             context map FulfillmentMap {
+                 Orders partnership Shipping;
+                 Billing partnership Shipping;
+             }`
+        );
+        documents = [catalog, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const diagnostics = consumer.diagnostics ?? [];
+        expect(consumer.parseResult.parserErrors).toHaveLength(0);
+        expect(diagnostics.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to BoundedContext named 'Billing'"))).toBe(true);
+        const model = consumer.parseResult.value as Model;
+        const map = model?.declarations[0] as Model['declarations'][number] & {
+            relationships: Array<{ source: { ref?: { name: string } }; target: { ref?: { name: string } } }>;
+        };
+        expect(map.relationships[0].source.ref?.name).toBe('Ordering');
+        expect(map.relationships[0].target.ref?.name).toBe('Shipping');
+    });
+
+    test('reports unresolved method references in behavior specifications', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unresolved-behavior.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot {
+                        identifier id: OrderId;
+                    }
+                    identifier value object OrderId for OrderRoot {
+                        raw: string;
+                    }
+                }
+                command PlaceOrder targets Order {
+                    behavior $"Check ${'${Order.OrderRoot.missingMethod}'} before placing.";
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("Could not resolve reference to Method named 'Order.OrderRoot.missingMethod'"))
+        ).toBe(true);
     });
 });
 

@@ -12,7 +12,7 @@ This example demonstrates the complete Thinai model across multiple files.
 - `context-map.tni` defines the relationship between the bounded contexts.
 - `common-types.tni` defines a shared-kernel value object.
 
-The model also demonstrates optional modules, explicit aggregate-root entities, identifier fields, and a local Shipping identifier that mirrors the Ordering identifier.
+The model also demonstrates optional modules, explicit aggregate-root entities, identifier fields, a local Shipping identifier that mirrors the Ordering identifier, typed collection signatures, and inline method references in behavior specifications. The context map uses component-selective imports.
 
 ## Try It
 

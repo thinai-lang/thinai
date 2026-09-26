@@ -10,9 +10,10 @@ import {
 } from 'thinai-language';
 
 let parse: ReturnType<typeof parseHelper<Model>>;
+let services: ReturnType<typeof createThinaiServices>;
 
 beforeAll(() => {
-    const services = createThinaiServices(EmptyFileSystem);
+    services = createThinaiServices(EmptyFileSystem);
     parse = parseHelper<Model>(services.Thinai);
 });
 
@@ -79,6 +80,85 @@ describe('Parsing tests', () => {
 
         expect(checkDocumentValid(document) || document.parseResult.value?.imports[0].path).toBe('./ordering.tni');
         expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
+    });
+
+    test('parses behavior specifications, method signatures, constructors, and collections', async () => {
+        const document = await parse(s`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot operations {
+                        constructor(id: OrderId) {
+                            invariant "An order must have an identifier";
+                            precondition "The id must be non-empty";
+                            behavior $"Normalize an order's id with ${'${OrderId.normalize}'} before creating";
+                            postcondition "The identifier is set";
+                        }
+                        method ensureOwner();
+                    }
+                    {
+                        identifier id: OrderId;
+                    }
+                    identifier value object OrderId for OrderRoot operations {
+                        method normalize() returns string;
+                    }
+                    {
+                        raw: string;
+                    }
+                    invariant $"Placed orders retain ${'${OrderRoot.ensureOwner}'}";
+                    method addLines(lines: List<OrderLine>) returns Order;
+                }
+                domain service Pricing {
+                    method calculate(lines: List<OrderLine>, currency?: Currency) returns Money {
+                        behavior $"Calculate a total for ${'${Order.OrderRoot.ensureOwner}'}";
+                    }
+                }
+                command PlaceOrder targets Order with description?: string emits OrderPlaced {
+                    precondition "The order can be placed";
+                    behavior $"Validate with ${'${Order.OrderRoot.ensureOwner}'} then place";
+                    postcondition "OrderPlaced is emitted";
+                }
+            }
+        `);
+
+        expect(checkDocumentValid(document)).toBeUndefined();
+        const model = document.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        const context = model?.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ $type: string; name: string; members?: Array<{ $type: string; name: string; constructors?: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ $type: string; text?: string; method?: { $refText: string } }> } } }> }> }> }>;
+        };
+        const aggregate = context.members.find(member => member.$type === 'Aggregate');
+        const root = aggregate?.members?.find(member => member.name === 'OrderRoot');
+        const behaviorParts = root?.constructors?.[0].behaviors[0].description.template?.parts ?? [];
+        expect(behaviorParts).toHaveLength(3);
+        expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
+        expect(behaviorParts[1].method?.$refText).toBe('OrderId.normalize');
+        expect(behaviorParts[2].text).toBe(' before creating');
+        const command = context.members.find(member => member.$type === 'Command') as { fields?: Array<{ optional: boolean }> } | undefined;
+        expect(command?.fields?.[0].optional).toBe(true);
+        const pricing = context.members.find(member => member.$type === 'DomainService') as {
+            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
+        } | undefined;
+        expect(pricing?.methods?.[0].parameters[1].optional).toBe(true);
+    });
+
+    test('allows escaping a literal interpolation marker in a behavior specification', async () => {
+        const document = await parse(
+            'bounded context Escape { command Run { behavior $"Literal \\${NotAReference.method} stays text"; } }'
+        );
+
+        expect(checkDocumentValid(document)).toBeUndefined();
+        const model = document.parseResult.value;
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ $type: string; behaviors?: Array<{ description: { template?: { parts: Array<{ text?: string; method?: unknown }> } } }> }>;
+        };
+        const command = context.members.find(member => member.$type === 'Command');
+        const parts = command?.behaviors?.[0].description.template?.parts ?? [];
+        expect(parts).toHaveLength(1);
+        expect(parts[0].text).toBe('Literal ${NotAReference.method} stays text');
+        expect(parts[0].method).toBeUndefined();
     });
 });
 

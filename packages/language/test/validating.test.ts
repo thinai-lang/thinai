@@ -67,6 +67,47 @@ describe('Validating', () => {
 
         expect(first.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Ordering'.")).toBe(true);
     });
+
+    test('requires map collections to declare both key and value types', async () => {
+        const document = await parse(`
+            bounded context Inventory {
+                value object InventoryIndex {
+                    entries: Map<string>;
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Map type requires both a key and a value type'))).toBe(true);
+    });
+
+    test('rejects circular module dependencies', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                module Orders depends on Pricing {}
+                module Pricing depends on Orders {}
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Module dependencies cannot contain a cycle'))).toBe(true);
+    });
+
+    test('requires a component selector for file aliases that contain multiple bounded contexts', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/catalog.tni'),
+            'bounded context Ordering {} bounded context Shipping {}'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/consumer.tni'),
+            'import "./catalog.tni" as Contexts; bounded context Billing {}'
+        );
+        documents = [catalog, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A file-level alias requires exactly one bounded context or shared kernel'
+        ))).toBe(true);
+    });
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

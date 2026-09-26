@@ -33,18 +33,51 @@ part of bounded context Ordering {
 }
 ```
 
-Imports are direct and relative. Declarations from unrelated workspace files are not visible. Imported declarations may be referenced by simple names or qualified names such as `Ordering.OrderPlaced`.
+Imports are direct and relative. Declarations from unrelated workspace files are not visible. Unaliased imports expose their declarations by simple or qualified names. A file may contain multiple bounded contexts; select only the components a file needs with a named import:
+
+```thinai
+import "./contexts.tni" { Ordering as Orders, Shipping };
+```
+
+An alias applies only to its selected bounded context or shared kernel. The older `import "./file.tni" as Alias` form remains a shorthand when the file contains exactly one bounded context or shared kernel; use selectors for files with multiple components.
 
 Domain events are local to their bounded context by default. Cross-context consumers must reference an integration event, either explicitly declared with `integration event ... from ...` or exposed with `publishes integration`.
 
-Modules are optional internal namespaces. Use `exposes` and `depends on` to enforce module-level architectural dependencies. Shared value objects belong in an explicit `shared kernel` rather than in a business bounded context.
+Modules are optional internal namespaces. Use `exposes` and `depends on` to enforce module-level architectural dependencies within the same bounded context or shared kernel. Direct module dependencies across bounded contexts are not supported. Shared value objects belong in an explicit `shared kernel` rather than in a business bounded context.
+
+## Behavior specifications
+
+Use `invariant`, `precondition`, `postcondition`, and `behavior` to describe domain meaning on aggregates, entities, value objects, constructors, methods, and commands. Plain quoted strings remain valid. For inline method references, prefix the string with `$`, as in `$"... ${MethodName} ..."`:
+
+```thinai
+root entity OrderRoot operations {
+    constructor(id: OrderId) {
+        invariant "An order must have an identifier.";
+        postcondition $"The identifier is normalized by ${OrderId.normalize}.";
+    }
+    method ensureOwner();
+} {
+    identifier id: OrderId;
+    invariant $"An order must have an owner; check ${OrderRoot.ensureOwner}.";
+}
+
+command PlaceOrder targets Order {
+    precondition "The order contains at least one item.";
+    behavior $"Check ${Order.OrderRoot.ensureOwner}, then place the order.";
+    postcondition "OrderPlaced is emitted.";
+}
+```
+
+An EventStorming board references the canonical command, so its behavior specifications are not duplicated on the board. Interpolations are links to declared methods, with completion, navigation, and unresolved-reference diagnostics; write `\${` when the text should contain a literal interpolation marker. They are descriptive—not executable—and Thinai does not prove that a method enforces the surrounding prose. Entity and value-object methods and constructors are declared in an `operations` block before the regular field/invariant block; methods have typed parameters and optional return types, while constructors return their owning type implicitly.
+
+Fields and method signatures accept built-in `List<T>`, `Set<T>`, and `Map<K, V>` collection types. User-defined generic type declarations are not supported.
 
 The language server provides keyword and cross-reference completion, relative `.tni` import-path completion, and quick fixes for unresolved declarations that can be imported from another workspace file.
 
 ## Supported Concepts
 
 - Strategic DDD: bounded contexts, subdomains, capabilities, context maps, context relationships, and shared kernels.
-- Tactical DDD: modules, aggregates, root entities, explicit identifier fields, identifier value objects, mirrored identifiers, entities, value objects, domain services, repositories, factories, commands, events, policies, and read models.
+- Tactical DDD: modules, aggregates, root entities, explicit identifier fields, identifier value objects, mirrored identifiers, entities, value objects, typed methods and constructors, built-in collection types, domain services, repositories, factories, commands, events, policies, and read models.
 - EventStorming: actors, external systems, commands, domain events, integration events, policies, hotspots, and EventStorming boards.
 
 As a general Langium reference, see the [Langium grammar guide](https://langium.org/docs/learn/workflow/write_grammar/).

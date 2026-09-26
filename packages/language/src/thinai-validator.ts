@@ -1,4 +1,6 @@
 import {
+    type AstNode,
+    type Reference,
     AstUtils,
     type ValidationAcceptor,
     type ValidationChecks,
@@ -14,6 +16,8 @@ import type {
     Capability,
     Command,
     ContextRelationship,
+    CollectionType,
+    Constructor,
     DomainEvent,
     DomainService,
     Entity,
@@ -22,19 +26,32 @@ import type {
     ExternalSystem,
     Factory,
     Import,
+    ImportComponent,
     Hotspot,
     IntegrationEvent,
     Field,
+    Method,
+    Model,
     Module,
+    Parameter,
     Policy,
     ReadModel,
     Repository,
     Subdomain,
     ThinaiAstType,
+    TypeDeclaration,
     ValueObject,
     SharedKernel
 } from './generated/ast.js';
-import { isAggregate, isDomainEvent, isEntity, isModel, isModule, isValueObject } from './generated/ast.js';
+import {
+    isAggregate,
+    isDomainEvent,
+    isEntity,
+    isImportableComponent,
+    isModel,
+    isModule,
+    isValueObject
+} from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
 
@@ -48,7 +65,9 @@ export function registerValidationChecks(services: ThinaiServices): void {
         BoundedContext: validator.checkBoundedContext,
         BoundedContextPart: validator.checkBoundedContextPart,
         Capability: validator.checkNamedDeclaration,
+        CollectionType: validator.checkCollectionType,
         Command: validator.checkCommand,
+        Constructor: validator.checkConstructor,
         ContextRelationship: validator.checkContextRelationship,
         DomainEvent: validator.checkDomainEvent,
         DomainService: validator.checkNamedDeclaration,
@@ -56,15 +75,18 @@ export function registerValidationChecks(services: ThinaiServices): void {
         EnumType: validator.checkNamedDeclaration,
         EventStorming: validator.checkEventStorming,
         ExternalSystem: validator.checkNamedDeclaration,
-        Factory: validator.checkNamedDeclaration,
+        Factory: validator.checkFactory,
         Field: validator.checkField,
         Hotspot: validator.checkNamedDeclaration,
         Import: validator.checkImport,
         IntegrationEvent: validator.checkIntegrationEvent,
+        Method: validator.checkMethod,
+        Model: validator.checkModelImports,
         Module: validator.checkModule,
+        Parameter: validator.checkParameter,
         Policy: validator.checkPolicy,
         ReadModel: validator.checkReadModel,
-        Repository: validator.checkNamedDeclaration,
+        Repository: validator.checkRepository,
         SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
         ValueObject: validator.checkValueObject
@@ -148,11 +170,56 @@ export class ThinaiValidator {
             });
         }
 
+        if (importDeclaration.alias) {
+            const importedModel = this.services.shared.workspace.LangiumDocuments.getDocument(uri)?.parseResult.value;
+            const components = isModel(importedModel)
+                ? importedModel.declarations.filter(isImportableComponent)
+                : [];
+            if (components.length !== 1) {
+                accept('error', 'A file-level alias requires exactly one bounded context or shared kernel; select components explicitly when importing a multi-context file.', {
+                    node: importDeclaration,
+                    property: 'alias'
+                });
+            }
+        }
+
         if (this.reachesImportCycle(uri, new Set([document.uri.toString()]))) {
             accept('error', 'Import cycle detected.', {
                 node: importDeclaration,
                 property: 'path'
             });
+        }
+    }
+
+    checkModelImports(model: Model, accept: ValidationAcceptor): void {
+        const names = new Map<string, Import | ImportComponent>();
+        for (const importDeclaration of model.imports) {
+            const declarations: Array<{ name: string; node: Import | ImportComponent; property: string }> = [];
+            if (importDeclaration.alias) {
+                declarations.push({ name: importDeclaration.alias, node: importDeclaration, property: 'alias' });
+            }
+            for (const component of importDeclaration.components) {
+                declarations.push({
+                    name: component.alias ?? component.component.$refText,
+                    node: component,
+                    property: component.alias ? 'alias' : 'component'
+                });
+            }
+            for (const declaration of declarations) {
+                if (names.has(declaration.name)) {
+                    const message = `Import component name '${declaration.name}' is declared more than once.`;
+                    if (declaration.node.$type === 'Import') {
+                        accept('error', message, { node: declaration.node, property: 'alias' });
+                    } else {
+                        accept('error', message, {
+                            node: declaration.node,
+                            property: declaration.property === 'alias' ? 'alias' : 'component'
+                        });
+                    }
+                } else {
+                    names.set(declaration.name, declaration.node);
+                }
+            }
         }
     }
 
@@ -169,6 +236,19 @@ export class ThinaiValidator {
 
     checkEntity(entity: Entity, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(entity, accept);
+        const ancestors = new Set<Entity>([entity]);
+        let base = entity.base?.ref;
+        while (base) {
+            if (ancestors.has(base)) {
+                accept('error', 'Entity inheritance cannot contain a cycle.', {
+                    node: entity,
+                    property: 'base'
+                });
+                break;
+            }
+            ancestors.add(base);
+            base = base.base?.ref;
+        }
         if (entity.root) {
             const aggregate = entity.$container;
             if (!isAggregate(aggregate)) {
@@ -186,25 +266,70 @@ export class ThinaiValidator {
     }
 
     checkField(field: Field, accept: ValidationAcceptor): void {
-        if (field.type?.ref && isValueObject(field.type.ref) && !isInSharedKernel(field.type.ref)) {
-            const sourceContext = getOwningContextName(field);
-            const targetContext = getOwningContextName(field.type.ref);
-            if (sourceContext && targetContext && sourceContext !== targetContext) {
-                accept('error', 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.', {
-                    node: field,
-                    property: 'type'
-                });
-            }
-        }
+        this.checkCrossContextTypeUse(field, this.collectTypeReferences(field.type, field.collection), accept);
         if (!field.identifier) {
             return;
         }
-        if (!field.type?.ref || !isValueObject(field.type.ref) || !field.type.ref.identifier) {
+        const identifierType = field.type?.ref;
+        if (!identifierType || !isValueObject(identifierType) || !identifierType.identifier) {
             accept('error', 'An identifier field must reference an identifier value object.', {
                 node: field,
                 property: 'type'
             });
         }
+    }
+
+    checkCollectionType(collection: CollectionType, accept: ValidationAcceptor): void {
+        const hasValueType = collection.valuePrimitive !== undefined || collection.valueType !== undefined || collection.valueCollection !== undefined;
+        const hasElementType = collection.elementPrimitive !== undefined || collection.elementType !== undefined || collection.elementCollection !== undefined;
+        if (!hasElementType) {
+            accept('error', `${collection.kind} requires an element type.`, {
+                node: collection,
+                property: 'kind'
+            });
+        }
+        if (collection.kind === 'Map' && !hasValueType) {
+            accept('error', 'A Map type requires both a key and a value type, for example Map<string, OrderLine>.', {
+                node: collection,
+                property: 'elementType'
+            });
+        } else if (collection.kind !== 'Map' && hasValueType) {
+            accept('error', `${collection.kind} accepts exactly one element type.`, {
+                node: collection,
+                property: 'valueType'
+            });
+        }
+    }
+
+    checkMethod(method: Method, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(method, accept);
+        this.checkUniqueParameterNames(method.parameters, accept);
+        if (method.returnType || method.returnCollection) {
+            this.checkCrossContextTypeUse(method,
+                this.collectTypeReferences(method.returnType, method.returnCollection), accept, 'returnType');
+        }
+    }
+
+    checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {
+        this.checkUniqueParameterNames(constructor.parameters, accept);
+    }
+
+    private checkUniqueParameterNames(parameters: Parameter[], accept: ValidationAcceptor): void {
+        const names = new Set<string>();
+        for (const parameter of parameters) {
+            if (names.has(parameter.name)) {
+                accept('error', `Duplicate parameter '${parameter.name}'.`, {
+                    node: parameter,
+                    property: 'name'
+                });
+            }
+            names.add(parameter.name);
+        }
+    }
+
+    checkParameter(parameter: Parameter, accept: ValidationAcceptor): void {
+        this.checkCrossContextTypeUse(parameter,
+            this.collectTypeReferences(parameter.type, parameter.collection), accept, 'type');
     }
 
     checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
@@ -268,6 +393,13 @@ export class ThinaiValidator {
                     property: 'dependencies'
                 });
             }
+            if (dependency.ref && dependency.ref !== module && this.dependsTransitivelyOn(dependency.ref, module, new Set())) {
+                accept('error', 'Module dependencies cannot contain a cycle.', {
+                    node: module,
+                    property: 'dependencies'
+                });
+                break;
+            }
         }
         for (const exposure of module.exposures) {
             for (const declaration of exposure.declarations) {
@@ -279,6 +411,17 @@ export class ThinaiValidator {
                 }
             }
         }
+    }
+
+    private dependsTransitivelyOn(current: Module, target: Module, visited: Set<Module>): boolean {
+        if (current === target) {
+            return true;
+        }
+        if (visited.has(current)) {
+            return false;
+        }
+        visited.add(current);
+        return current.dependencies.some(dependency => dependency.ref && this.dependsTransitivelyOn(dependency.ref, target, visited));
     }
 
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
@@ -309,6 +452,13 @@ export class ThinaiValidator {
             }
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
+            if (target.$type === 'Method' && this.isCrossContextOwned(referenceInfo.container, target) && !isInSharedKernel(target)) {
+                accept('error', 'A behavior specification cannot reference a private method from another bounded context.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+                return;
+            }
             if (!sourceModule || !targetModule || sourceModule === targetModule || isModule(target)) {
                 return;
             }
@@ -336,10 +486,53 @@ export class ThinaiValidator {
                 property: 'name'
             });
         }
+        if (command.aggregate?.ref && this.isCrossContextOwned(command, command.aggregate.ref)) {
+            accept('error', 'A command must target an aggregate in its own bounded context.', {
+                node: command,
+                property: 'aggregate'
+            });
+        }
+        for (const emitted of command.events) {
+            if (!emitted.ref) {
+                continue;
+            }
+            if (this.isCrossContextOwned(command, emitted.ref)) {
+                accept('error', 'A command may emit only events owned by its bounded context.', {
+                    node: command,
+                    property: 'events'
+                });
+            }
+            if (isDomainEvent(emitted.ref) && emitted.ref.command?.ref && emitted.ref.command.ref !== command) {
+                accept('error', 'The event identifies a different command as its cause.', {
+                    node: command,
+                    property: 'events'
+                });
+            }
+        }
         if (command.events.length === 0) {
             accept('warning', 'A command should emit at least one domain or integration event.', {
                 node: command,
                 property: 'name'
+            });
+        }
+    }
+
+    checkRepository(repository: Repository, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(repository, accept);
+        if (repository.aggregate.ref && this.isCrossContextOwned(repository, repository.aggregate.ref)) {
+            accept('error', 'A repository must belong to an aggregate in its own bounded context.', {
+                node: repository,
+                property: 'aggregate'
+            });
+        }
+    }
+
+    checkFactory(factory: Factory, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(factory, accept);
+        if (factory.aggregate.ref && this.isCrossContextOwned(factory, factory.aggregate.ref)) {
+            accept('error', 'A factory must belong to an aggregate in its own bounded context.', {
+                node: factory,
+                property: 'aggregate'
             });
         }
     }
@@ -355,6 +548,12 @@ export class ThinaiValidator {
 
     checkDomainEvent(event: DomainEvent, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(event, accept);
+        if (event.command?.ref && !event.command.ref.events.some(emitted => emitted.ref === event)) {
+            accept('error', 'The causing command should list this event among its emitted events.', {
+                node: event,
+                property: 'command'
+            });
+        }
         const commandAggregate = event.command?.ref?.aggregate?.ref;
         if (commandAggregate && event.aggregate?.ref && commandAggregate !== event.aggregate.ref) {
             accept('error', 'The event aggregate must match the command aggregate that caused it.', {
@@ -427,7 +626,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity | EnumType |
-        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Module | Policy | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        ExternalSystem | Factory | EventStorming | Hotspot | IntegrationEvent | Method | Module | Policy | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
@@ -455,6 +654,52 @@ export class ThinaiValidator {
     }
 
     private isCrossContextReference(source: EventStorming | Policy | ReadModel, target: DomainEvent): boolean {
+        const sourceContext = getOwningContextName(source);
+        const targetContext = getOwningContextName(target);
+        return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
+    }
+
+    private collectTypeReferences(
+        type?: Reference<TypeDeclaration>,
+        collection?: CollectionType
+    ): Reference<TypeDeclaration>[] {
+        const references = type ? [type] : [];
+        if (collection) {
+            references.push(
+                ...this.collectTypeReferences(collection.elementType, collection.elementCollection),
+                ...this.collectTypeReferences(collection.valueType, collection.valueCollection)
+            );
+        }
+        return references;
+    }
+
+    private checkCrossContextTypeUse(
+        node: AstNode,
+        references: Reference<TypeDeclaration>[],
+        accept: ValidationAcceptor,
+        property = 'type'
+    ): void {
+        const sourceContext = getOwningContextName(node);
+        for (const reference of references) {
+            const target = reference.ref;
+            if (!target || isInSharedKernel(target)) {
+                continue;
+            }
+            const targetContext = getOwningContextName(target);
+            if (sourceContext && targetContext && sourceContext !== targetContext) {
+                const message = isValueObject(target)
+                    ? 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.'
+                    : 'A bounded context cannot directly use a private type from another bounded context.';
+                accept('error', message, {
+                    node,
+                    property
+                });
+                return;
+            }
+        }
+    }
+
+    private isCrossContextOwned(source: AstNode, target: AstNode): boolean {
         const sourceContext = getOwningContextName(source);
         const targetContext = getOwningContextName(target);
         return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;

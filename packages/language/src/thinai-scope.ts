@@ -12,13 +12,13 @@ import {
 } from 'langium';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import {
-    BoundedContext,
     type Import,
     isBoundedContext,
     isBoundedContextPart,
     isModel,
     isModule,
     isSharedKernel,
+    isImportComponent,
     type Module
 } from './generated/ast.js';
 
@@ -37,6 +37,7 @@ const exportedTypes = new Set([
     'Factory',
     'Hotspot',
     'IntegrationEvent',
+    'Method',
     'Module',
     'Policy',
     'ReadModel',
@@ -141,6 +142,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     override getScope(context: ReferenceInfo): Scope {
         const referenceType = this.reflection.getReferenceType(context);
         const document = AstUtils.getDocument(context.container);
+        if (context.property === 'component' && isImportComponent(context.container)) {
+            return this.createScope(this.getImportableComponents(context.container, referenceType));
+        }
         const localScopes: Stream<AstNodeDescription>[] = [];
 
         if (document.localSymbols) {
@@ -156,6 +160,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         let result = this.createScope(this.getImportedSymbols(document, referenceType));
+        result = this.createScope(this.getDocumentSymbols(document, referenceType), result);
         const moduleSymbols = context.property === 'dependencies'
             ? []
             : this.getModuleSymbols(context, referenceType);
@@ -213,32 +218,89 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const seen = new Set<string>();
         for (const description of this.indexManager.allElements(referenceType, new Set(importsByUri.keys()))) {
             const imports = importsByUri.get(description.documentUri.toString()) ?? [];
-            this.addDescription(descriptions, seen, description, description.name);
-
             for (const importDeclaration of imports) {
-                const names = importDeclaration.alias
-                    ? this.getAliasedNames(description.name, importDeclaration.alias, description.type)
-                    : this.getUnaliasedNames(description.name);
-                for (const name of names) {
-                    this.addDescription(descriptions, seen, description, name);
+                if (importDeclaration.components.length > 0) {
+                    for (const component of importDeclaration.components) {
+                        const target = component.component.ref;
+                        if (!target || !this.isWithinComponent(description.name, target)) {
+                            continue;
+                        }
+                        const names = component.alias
+                            ? this.getComponentAliasNames(description.name, getExportedName(target), component.alias)
+                            : this.getUnaliasedNames(description.name);
+                        this.addNames(descriptions, seen, description, names);
+                    }
+                } else if (importDeclaration.alias) {
+                    const targetName = this.getSingleImportableComponentName(document, importDeclaration);
+                    if (targetName && this.isWithinComponentName(description.name, targetName)) {
+                        this.addNames(descriptions, seen, description,
+                            this.getComponentAliasNames(description.name, targetName, importDeclaration.alias));
+                    }
+                } else {
+                    this.addNames(descriptions, seen, description, this.getUnaliasedNames(description.name));
                 }
             }
         }
         return descriptions;
     }
 
+    private getDocumentSymbols(document: LangiumDocument, referenceType: string): AstNodeDescription[] {
+        const descriptions = this.indexManager.allElements(referenceType, new Set([document.uri.toString()]));
+        const result: AstNodeDescription[] = [];
+        const seen = new Set<string>();
+        for (const description of descriptions) {
+            this.addNames(result, seen, description, this.getUnaliasedNames(description.name));
+        }
+        return result;
+    }
+
+    private getImportableComponents(component: import('./generated/ast.js').ImportComponent, referenceType: string): AstNodeDescription[] {
+        const importDeclaration = component.$container;
+        const document = AstUtils.getDocument(importDeclaration);
+        const uri = resolveImportUri(document, importDeclaration).toString();
+        return this.indexManager.allElements(referenceType, new Set([uri]))
+            .filter(description => description.type === 'BoundedContext' || description.type === 'SharedKernel')
+            .toArray();
+    }
+
+    private getSingleImportableComponentName(document: LangiumDocument, importDeclaration: Import): string | undefined {
+        const uri = resolveImportUri(document, importDeclaration).toString();
+        const candidates = this.indexManager.allElements(undefined, new Set([uri]))
+            .filter(description => description.type === 'BoundedContext' || description.type === 'SharedKernel')
+            .toArray();
+        return candidates.length === 1 ? candidates[0].name : undefined;
+    }
+
+    private isWithinComponent(name: string, component: import('./generated/ast.js').ImportableComponent): boolean {
+        const componentName = getExportedName(component as AstNode & { name: string });
+        return this.isWithinComponentName(name, componentName);
+    }
+
+    private isWithinComponentName(name: string, componentName: string): boolean {
+        return name === componentName || name.startsWith(`${componentName}.`);
+    }
+
+    private getComponentAliasNames(name: string, componentName: string, alias: string): string[] {
+        if (name === componentName) {
+            return [alias];
+        }
+        return [`${alias}.${name.slice(componentName.length + 1)}`];
+    }
+
+    private addNames(
+        descriptions: AstNodeDescription[],
+        seen: Set<string>,
+        description: AstNodeDescription,
+        names: string[]
+    ): void {
+        for (const name of names) {
+            this.addDescription(descriptions, seen, description, name);
+        }
+    }
+
     private getUnaliasedNames(name: string): string[] {
         const parts = name.split('.');
         return parts.map((_part, index) => parts.slice(index).join('.'));
-    }
-
-    private getAliasedNames(name: string, alias: string, type: string): string[] {
-        const parts = name.split('.');
-        const names = [alias];
-        if (type !== BoundedContext.$type && parts.length > 1) {
-            names.push(`${alias}.${parts.slice(1).join('.')}`);
-        }
-        return names;
     }
 
     private addDescription(

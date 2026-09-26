@@ -5,9 +5,13 @@ part of bounded context Ordering {
         handled by Customer
         targets Order
         with items: string
-        emits OrderPlaced;
+        emits OrderPlaced {
+            precondition "The order contains at least one item.";
+            behavior $"Check ${Order.OrderRoot.ensureOwner}, then calculate the total with ${Order.OrderPricing.calculateTotal}.";
+            postcondition "OrderPlaced is emitted for the order.";
+        }
 
-    event OrderPlaced for Order publishes integration OrderPlacedV1 data {
+    event OrderPlaced caused by PlaceOrder for Order publishes integration OrderPlacedV1 data {
         orderId: OrderId;
     }
     integration event OrderPlacedV1 from OrderPlaced data {

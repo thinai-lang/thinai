@@ -35,6 +35,7 @@
         "test": "vitest run"
     },
     "dependencies": {
+        "chevrotain": "~13.2.0",
         "langium": "~4.4.0"
     },
     "devDependencies": {

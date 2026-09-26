@@ -8,15 +8,19 @@ bounded context Ordering realizes OrderManagement {
     capability OrderFulfillment owned by Customer;
 
     aggregate Order {
-        root entity OrderRoot {
+        root entity OrderRoot operations {
+            method ensureOwner();
+        } {
             identifier id: OrderId;
             currency: Common.Currency;
             orderId: OrderId;
             status: OrderStatus;
-            invariant "An order must have an owner";
+            invariant $"An order must have an owner; check ${OrderRoot.ensureOwner}.";
         }
 
-        identifier value object OrderId for OrderRoot {
+        identifier value object OrderId for OrderRoot operations {
+            method normalize() returns string;
+        } {
             raw: string;
         }
 
@@ -25,7 +29,9 @@ bounded context Ordering realizes OrderManagement {
         }
 
         domain service OrderPricing {
-            method calculateTotal(amount: number) returns number;
+            method calculateTotal(amount: number, adjustments: List<number>) returns number {
+                behavior $"Validate the order with ${OrderRoot.ensureOwner}, then calculate its total.";
+            }
         }
 
         repository OrderRepository for Order;

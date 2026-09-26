@@ -11,7 +11,12 @@ TopLevelDeclaration:
     | ContextMap;
 
 Import:
-    'import' path=STRING ('as' alias=ID)? ';'?;
+    'import' path=StringLiteral
+    (('as' alias=ID) | '{' components+=ImportComponent (',' components+=ImportComponent)* '}')? ';'?;
+
+ImportComponent:
+    component=[ImportableComponent:QualifiedName] ('as' alias=ID)?;
+
 
 BoundedContext:
     'bounded' 'context' name=ID
@@ -98,7 +103,7 @@ Capability:
 
 Aggregate:
     'aggregate' name=ID '{'
-        members+=AggregateMember*
+        (members+=AggregateMember | invariants+=Invariant | methods+=Method)*
     '}' ';'?;
 
 AggregateMember:
@@ -110,12 +115,15 @@ AggregateMember:
     | Factory;
 
 Entity:
-    (root?='root')? 'entity' name=ID ('extends' base=[Entity:QualifiedName])? ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
+    (root?='root')? 'entity' name=ID ('extends' base=[Entity:QualifiedName])?
+    ('operations' '{' constructors+=Constructor* methods+=Method* '}')?
+    ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
 
 ValueObject:
     (identifier?='identifier')? 'value' 'object' name=ID
     ('for' identifierOf=[Entity:QualifiedName])?
     ('mirrors' mirrors=[ValueObject:QualifiedName])?
+    ('operations' '{' constructors+=Constructor* methods+=Method* '}')?
     ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
 
 EnumType:
@@ -125,10 +133,19 @@ EnumValue:
     name=ID;
 
 Field:
-    (identifier?='identifier')? name=ID ('?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName]) ';'?;
+    (identifier?='identifier')? name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType) ';'?;
 
 Invariant:
-    'invariant' description=STRING ';'?;
+    'invariant' description=BehaviorSpecificationText ';'?;
+
+Precondition:
+    'precondition' description=BehaviorSpecificationText ';'?;
+
+Postcondition:
+    'postcondition' description=BehaviorSpecificationText ';'?;
+
+Behavior:
+    'behavior' description=BehaviorSpecificationText ';'?;
 
 TypeDeclaration:
     Entity
@@ -136,10 +153,19 @@ TypeDeclaration:
     | EnumType;
 
 DomainService:
-    'domain' 'service' name=ID ('{' methods+=ServiceMethod* '}')? ';'?;
+    'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
 
-ServiceMethod:
-    'method' name=ID '(' (parameters+=Field (',' parameters+=Field)*)? ')' ('returns' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName]))? ';'?;
+Method:
+    'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
+    ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
+
+Constructor:
+    'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
+
+Parameter:
+    name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType);
 
 Repository:
     'repository' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
@@ -148,7 +174,7 @@ Factory:
     'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
 
 Actor:
-    'actor' name=ID ('role' role=STRING)? ';'?;
+    'actor' name=ID ('role' role=StringLiteral)? ';'?;
 
 ExternalSystem:
     'external' 'system' name=ID ';'?;
@@ -159,7 +185,7 @@ Command:
     ('targets' aggregate=[Aggregate:QualifiedName])?
     ('with' fields+=Field (',' fields+=Field)*)?
     ('emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)?
-    ';'?;
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
 
 DomainEvent:
     'event' name=ID
@@ -178,7 +204,7 @@ IntegrationEvent:
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
 type NamedDeclaration = Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity |
-    EnumType | EventStorming | ExternalSystem | Factory | Hotspot | IntegrationEvent | Module | Policy | ReadModel |
+    EnumType | EventStorming | ExternalSystem | Factory | Hotspot | IntegrationEvent | Method | Module | Policy | ReadModel |
     Repository | Subdomain | ValueObject;
 
 Policy:
@@ -190,7 +216,7 @@ ReadModel:
     'read' 'model' name=ID ('from' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)? ';'?;
 
 Hotspot:
-    'hotspot' name=ID ('note' description=STRING)? ';'?;
+    'hotspot' name=ID ('note' description=StringLiteral)? ';'?;
 
 EventStorming:
     'event' 'storming' name=ID '{'
@@ -206,6 +232,33 @@ EventStormingElement:
     | 'read' 'model' readModel=[ReadModel:QualifiedName] ';'?
     | 'external' 'system' externalSystem=[ExternalSystem:QualifiedName] ';'?
     | 'hotspot' hotspot=[Hotspot:QualifiedName] ';'?;
+
+type ImportableComponent = BoundedContext | SharedKernel;
+
+CollectionType:
+    kind=CollectionKind '<'
+    (elementPrimitive=PrimitiveType | elementType=[TypeDeclaration:QualifiedName] | elementCollection=CollectionType)
+    (',' (valuePrimitive=PrimitiveType | valueType=[TypeDeclaration:QualifiedName] | valueCollection=CollectionType))?
+    '>';
+
+CollectionKind returns string:
+    'List' | 'Set' | 'Map';
+
+TemplateString:
+    TEMPLATE_STRING_START (parts+=TemplateStringPart)* TEMPLATE_STRING_END
+    | SINGLE_TEMPLATE_STRING_START (parts+=TemplateStringPart)* SINGLE_TEMPLATE_STRING_END;
+
+BehaviorSpecificationText:
+    plain=STRING
+    | template=TemplateString;
+
+TemplateStringPart:
+    text=DOUBLE_STRING_TEXT
+    | text=SINGLE_STRING_TEXT
+    | '${' method=[Method:QualifiedName] INTERPOLATION_END;
+
+StringLiteral returns string:
+    STRING;
 
 PrimitiveType returns string:
     'string' | 'number' | 'boolean' | 'date';
@@ -228,6 +281,13 @@ QualifiedName returns string:
 
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w_]*/;
+terminal TEMPLATE_STRING_START: /\$"/;
+terminal TEMPLATE_STRING_END: /"/;
+terminal SINGLE_TEMPLATE_STRING_START: /\$'/;
+terminal SINGLE_TEMPLATE_STRING_END: /'/;
+terminal INTERPOLATION_END: /\}/;
+terminal DOUBLE_STRING_TEXT: /(\\.|[^"\\$]|\$(?!\{))+/;
+terminal SINGLE_STRING_TEXT: /(\\.|[^'\\$]|\$(?!\{))+/;
 terminal STRING: /"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/;
 
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
