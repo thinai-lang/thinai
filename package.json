@@ -4,6 +4,10 @@
     "version": "0.0.1",
     "type": "module",
     "private": true,
+    "engines": {
+        "node": ">=22.0.0",
+        "npm": ">=10.2.3"
+    },
     "scripts": {
         "clean": "npm run clean --workspaces",
         "watch": "tsc -b tsconfig.build.json --watch",
@@ -14,7 +18,8 @@
         "test": "npm run --workspace packages/language test"
     },
     "devDependencies": {
-        "@types/node": "~20.19.43",
+        "@types/node": "^22.20.4",
+        "openai": "^7.23.0",
         "shx": "~0.4.0",
         "typescript": "~5.9.3"
     },
