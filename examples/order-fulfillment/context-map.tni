@@ -1,6 +1,5 @@
-import "./ordering.tni" { Ordering };
-import "./shipping.tni" { Shipping };
+import "./context-catalog.tni" { Ordering as Orders, Shipping };
 
 context map FulfillmentMap {
-    Ordering customer supplier Shipping;
+    Orders customer supplier Shipping;
 }

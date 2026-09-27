@@ -1,7 +1,7 @@
-import "./strategic.tni";
+import "./context-catalog.tni";
 import "./ordering.tni";
 
-bounded context Shipping realizes Fulfillment {
+part of bounded context Shipping {
     identifier value object OrderId mirrors Ordering.Order.OrderId {
         raw: string;
     }
@@ -24,6 +24,12 @@ bounded context Shipping realizes Fulfillment {
 
         value object TrackingCode {
             raw: string;
+        }
+    }
+
+    module Fulfillment depends on Operations {
+        value object ShipmentMetadata {
+            trackingCode: TrackingCode;
         }
     }
 }

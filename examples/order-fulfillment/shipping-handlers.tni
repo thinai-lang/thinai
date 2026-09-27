@@ -1,3 +1,4 @@
+import "./context-catalog.tni";
 import "./ordering.tni";
 import "./ordering-events.tni";
 import "./shipping.tni";

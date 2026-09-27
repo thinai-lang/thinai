@@ -1,10 +1,11 @@
+import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
     command PlaceOrder
         handled by Customer
         targets Order
-        with items: string
+        with items: List<OrderLine>
         emits OrderPlaced {
             precondition "The order contains at least one item.";
             behavior $"Check ${Order.OrderRoot.ensureOwner}, then calculate the total with ${Order.OrderPricing.calculateTotal}.";
