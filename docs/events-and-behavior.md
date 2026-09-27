@@ -18,7 +18,14 @@ commands. Plain quoted strings are valid. To make a method name navigable from
 the text, use an interpolated template string such as
 `$"Normalize with ${OrderId.normalize}."`. The interpolation must refer to a
 declared method; it is not a method call or expression. Write `\${` when the
-text should contain a literal interpolation marker.
+text should contain a literal interpolation marker. Behavior-specification
+strings may span multiple lines; line breaks are preserved, including in
+interpolated template strings:
+
+```thinai
+behavior $"Check ${OrderRoot.ensureOwner}
+before placing the order.";
+```
 
 ## Commands and Events
 

@@ -47,7 +47,7 @@ Modules are optional internal namespaces. Use `exposes` and `depends on` to enfo
 
 ## Behavior specifications
 
-Use `invariant`, `precondition`, `postcondition`, and `behavior` to describe domain meaning on aggregates, entities, value objects, constructors, methods, and commands. Plain quoted strings remain valid. For inline method references, prefix the string with `$`, as in `$"... ${MethodName} ..."`:
+Use `invariant`, `precondition`, `postcondition`, and `behavior` to describe domain meaning on aggregates, entities, value objects, constructors, methods, and commands. Plain quoted strings remain valid. Behavior-specification strings can span multiple lines, and line breaks are preserved. For inline method references, prefix the string with `$`, as in `$"... ${MethodName} ..."`:
 
 ```thinai
 root entity OrderRoot operations {

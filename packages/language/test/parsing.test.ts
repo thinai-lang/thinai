@@ -141,6 +141,42 @@ describe('Parsing tests', () => {
         expect(pricing?.methods?.[0].parameters[1].optional).toBe(true);
     });
 
+    test('preserves multiline behavior text in quoted and interpolated strings', async () => {
+        const document = await parse([
+            'bounded context Ordering {',
+            '    aggregate Order { method ensureOwner(); }',
+            '    command PlaceOrder {',
+            '        behavior "Place the order',
+            'after validation";',
+            '        behavior $"Check ${Order.ensureOwner}',
+            'before placing";',
+            '    }',
+            '}'
+        ].join('\n'));
+
+        expect(checkDocumentValid(document)).toBeUndefined();
+        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+            members: Array<{
+                $type: string;
+                behaviors?: Array<{
+                    description: {
+                        plain?: string;
+                        template?: { parts: Array<{ text?: string; method?: { $refText: string } }> };
+                    };
+                }>;
+            }>;
+        };
+        const command = context.members.find(member => member.$type === 'Command');
+        const behaviors = command?.behaviors ?? [];
+        const templateParts = behaviors[1].description.template?.parts ?? [];
+
+        expect(behaviors[0].description.plain).toBe('Place the order\nafter validation');
+        expect(templateParts).toHaveLength(3);
+        expect(templateParts[0].text).toBe('Check ');
+        expect(templateParts[1].method?.$refText).toBe('Order.ensureOwner');
+        expect(templateParts[2].text).toBe('\nbefore placing');
+    });
+
     test('allows escaping a literal interpolation marker in a behavior specification', async () => {
         const document = await parse(
             'bounded context Escape { command Run { behavior $"Literal \\${NotAReference.method} stays text"; } }'
