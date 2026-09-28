@@ -43,7 +43,7 @@ describe('LSP services', () => {
         );
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { event storming OrderLifecycle { event OrderPlaced; } }'
+            'bounded context Shipping { application service ShipmentApplication for Shipment { method onOrderPlaced(source: event OrderPlaced) {} } }'
         );
         documents = [target, source];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });

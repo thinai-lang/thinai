@@ -78,11 +78,10 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping-flow.tni'),
             `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import "./context-map.tni" { Fulfillment };
              part of bounded context Shipping {
-                 application service ShipmentEventHandler for Shipment {
-                     method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes ShipmentApplication.createShipment {}
-                 }
-                 event storming OrderLifecycle { event Ordering.OrderPlacedV1; method ShipmentApplication.createShipment; aggregate Shipment; }
-             }`
+                  application service ShipmentEventHandler for Shipment {
+                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes ShipmentApplication.createShipment {}
+                  }
+              }`
         );
         documents = [context, part, shippingContext, contextMap, consumer];
 
@@ -100,12 +99,10 @@ describe('Linking tests', () => {
         expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ ref?: unknown }> }).subdomains[0].ref).toBe(contextModel.declarations[0]);
         expect(partNode.$type).toBe('BoundedContextPart');
         expect((partNode as Model['declarations'][number] & { context: { ref?: unknown } }).context.ref).toBe(contextNode);
-        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ eventType?: { ref?: unknown } }>; invocations?: Array<{ ref?: unknown }> }>; elements?: Array<{ event?: { ref?: unknown } }> }> }).members;
+        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ eventType?: { ref?: unknown } }>; invocations?: Array<{ ref?: unknown }> }> }> }).members;
         const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter => parameter.eventType)));
-        const board = shippingMembers.find(member => member.$type === 'EventStorming');
         expect(shippingService?.methods?.[0].parameters[0].eventType?.ref).toBeDefined();
         expect(shippingService?.methods?.[0].invocations?.[0].ref).toBeDefined();
-        expect(board?.elements?.[0].event?.ref).toBeDefined();
 
         const contextPath = services.Thinai.workspace.AstNodeLocator.getAstNodePath(contextNode);
         const contextReferences = services.shared.workspace.IndexManager
@@ -121,7 +118,7 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { event storming OrderLifecycle { event OrderPlaced; } }'
+            'bounded context Shipping { application service ShipmentApplication for Shipment { method onOrderPlaced(source: event OrderPlaced) {} } }'
         );
         documents = [context, consumer];
 
@@ -204,7 +201,9 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
              part of bounded context Shipping {
-                 read model OrderProjection from Ordering.OrderPlacedV1;
+                 application service ShipmentApplication for Shipment {
+                     method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
+                 }
              }`
         );
         documents = [contexts, contextMap, shippingPart];
@@ -233,7 +232,9 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
              part of bounded context Shipping {
-                 read model OrderProjection from Ordering.OrderPlacedV1;
+                 application service ShipmentApplication for Shipment {
+                     method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
+                 }
              }`
         );
         documents = [contexts, contextMap, shippingPart];
@@ -377,9 +378,6 @@ describe('Linking tests', () => {
                     method placeOrder() invokes Order.OrderRoot.ensureOwner {
                         behavior $"Check ${'${Order.OrderRoot.ensureOwner}'} before placing.";
                     }
-                }
-                event storming PlaceOrderBoard {
-                    method OrderApplication.placeOrder;
                 }
             }`
         );

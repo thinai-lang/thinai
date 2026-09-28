@@ -1,7 +1,7 @@
 # Thinai Language Docs
 
 Thinai is a domain-specific language for describing domain-driven design (DDD)
-and EventStorming models in `.tni` files. Use these guides to explore the
+and behavior specifications in `.tni` files. Use these guides to explore the
 language by topic:
 
 - [Language model](language-model.md) — subdomains, bounded contexts, context

@@ -110,14 +110,13 @@ navigable semantic relationships. A method may emit multiple events; their
 declaration order is significant.
 
 Flows are ordered, user-started sequences of ordinary application-service
-methods. Event-triggered reactions are represented by event-typed methods, not
-flows. EventStorming boards are optional reference-oriented visualizations and
-do not define execution order.
+command methods. Event-triggered reactions are represented by event-typed
+methods, not flows.
 
 Thinai supports modules, aggregates, root entities, identifier and mirrored
 value objects, entities, value objects, typed methods and constructors, domain
-services, repositories, factories, events, read models, actors, external
-systems, context maps, and EventStorming boards. Built-in collections are
+services, repositories, factories, events, actors, flows, and context maps.
+Built-in collections are
 `List<T>`, `Set<T>`, and `Map<K, V>`.
 
 The language server provides keyword and cross-reference completion,

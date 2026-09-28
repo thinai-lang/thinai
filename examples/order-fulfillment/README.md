@@ -7,9 +7,8 @@ This example demonstrates the complete Thinai model across multiple files.
 - `strategic.tni` defines core, supporting, and generic subdomains.
 - `context-catalog.tni` declares both canonical bounded contexts and imports their subdomains.
 - `ordering.tni` extends Ordering with tactical DDD types and behavior specifications.
-- `ordering-events.tni` contributes application-service methods, an integration-event contract, a user-started flow, a read model, and hotspots. `ordering.tni` declares the internal domain event.
+- `ordering-events.tni` contributes application-service methods, an integration-event contract, and a user-started flow. `ordering.tni` declares the internal domain event.
 - `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
-- `shipping-handlers.tni` contains an EventStorming reference board.
 - `context-map.tni` selectively imports Ordering and Shipping, maps their customer-supplier integration patterns, and connects them through the named `CommonTypes` shared kernel.
 - `common-types.tni` defines a shared-kernel value object.
 
@@ -22,7 +21,7 @@ Open this directory as a workspace in the Thinai Extension Development Host. The
 From the repository root, validate and generate a summary with:
 
 ```bash
-node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping-handlers.tni -d examples/order-fulfillment/generated
+node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
 ```
 
 The example uses a private `OrderPlaced` domain event and maps it to the separate `OrderPlacedV1` integration contract. Shipping imports both the producer context and context map, and consumes only the IntegrationEvent.

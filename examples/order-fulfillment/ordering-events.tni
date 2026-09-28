@@ -17,9 +17,6 @@ part of bounded context Ordering {
     integration event OrderPlacedV1 data {
         orderId: OrderId;
     }
-    read model OrderSummary from OrderPlaced;
-    hotspot PaymentContract note "Payment API contract is unclear";
-
     flow PlaceOrder {
         actor Customer;
         invoke OrderApplication.placeOrder;

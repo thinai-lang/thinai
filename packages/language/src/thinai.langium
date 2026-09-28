@@ -72,13 +72,9 @@ ContextMember:
     | Repository
     | Factory
     | Actor
-    | ExternalSystem
     | DomainEvent
     | IntegrationEvent
     | Flow
-    | ReadModel
-    | Hotspot
-    | EventStorming
     | Module
     | TypeDeclaration;
 
@@ -111,13 +107,9 @@ ModuleMember:
     | Repository
     | Factory
     | Actor
-    | ExternalSystem
     | DomainEvent
     | IntegrationEvent
     | Flow
-    | ReadModel
-    | Hotspot
-    | EventStorming
     | Module
     | TypeDeclaration;
 
@@ -208,9 +200,6 @@ Factory:
 Actor:
     'actor' name=ID ('role' role=StringLiteral)? ';'?;
 
-ExternalSystem:
-    'external' 'system' name=ID ';'?;
-
 DomainEvent:
     'event' name=ID
     ('data' '{' fields+=Field* '}')?
@@ -224,28 +213,8 @@ IntegrationEvent:
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
 type NamedDeclaration = Actor | Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
-    EnumType | EventStorming | ExternalSystem | Factory | Flow | Hotspot | IntegrationEvent | Method | Module | ReadModel |
+    EnumType | Factory | Flow | IntegrationEvent | Method | Module |
     Repository | Subdomain | ValueObject;
-
-ReadModel:
-    'read' 'model' name=ID ('from' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)? ';'?;
-
-Hotspot:
-    'hotspot' name=ID ('note' description=StringLiteral)? ';'?;
-
-EventStorming:
-    'event' 'storming' name=ID '{'
-        elements+=EventStormingElement*
-    '}' ';'?;
-
-EventStormingElement:
-    'actor' actor=[Actor:QualifiedName] ';'?
-    | 'method' method=[Method:QualifiedName] ';'?
-    | 'event' event=[EventDeclaration:QualifiedName] ';'?
-    | 'aggregate' aggregate=[Aggregate:QualifiedName] ';'?
-    | 'read' 'model' readModel=[ReadModel:QualifiedName] ';'?
-    | 'external' 'system' externalSystem=[ExternalSystem:QualifiedName] ';'?
-    | 'hotspot' hotspot=[Hotspot:QualifiedName] ';'?;
 
 Flow:
     'flow' name=ID '{' elements+=FlowElement* '}' ';'?;

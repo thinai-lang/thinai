@@ -24,14 +24,10 @@ import type {
     DomainService,
     Entity,
     EnumType,
-    EventStorming,
-    EventDeclaration,
     EnumValue,
-    ExternalSystem,
     Factory,
     Import,
     ImportComponent,
-    Hotspot,
     IntegrationEvent,
     Field,
     Flow,
@@ -39,7 +35,6 @@ import type {
     Model,
     Module,
     Parameter,
-    ReadModel,
     Repository,
     Subdomain,
     ThinaiAstType,
@@ -86,11 +81,8 @@ export function registerValidationChecks(services: ThinaiServices): void {
         DomainService: validator.checkNamedDeclaration,
         Entity: validator.checkEntity,
         EnumType: validator.checkNamedDeclaration,
-        EventStorming: validator.checkEventStorming,
-        ExternalSystem: validator.checkNamedDeclaration,
         Factory: validator.checkFactory,
         Field: validator.checkField,
-        Hotspot: validator.checkNamedDeclaration,
         Import: validator.checkImport,
         IntegrationEvent: validator.checkIntegrationEvent,
         Flow: validator.checkFlow,
@@ -100,7 +92,6 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Model: validator.checkModelImports,
         Module: validator.checkModule,
         Parameter: validator.checkParameter,
-        ReadModel: validator.checkReadModel,
         Repository: validator.checkRepository,
         SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
@@ -580,8 +571,8 @@ export class ThinaiValidator {
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
-            'Actor', 'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService', 'EventStorming',
-            'ExternalSystem', 'Factory', 'Flow', 'Hotspot', 'IntegrationEvent', 'ReadModel', 'Repository', 'Subdomain'
+            'Actor', 'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService',
+            'Factory', 'Flow', 'IntegrationEvent', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
             if (disallowed.has(node.$type)) {
@@ -693,23 +684,9 @@ export class ThinaiValidator {
         this.checkDuplicateDeclaration(event, accept);
     }
 
-    checkReadModel(readModel: ReadModel, accept: ValidationAcceptor): void {
-        this.checkDuplicateDeclaration(readModel, accept);
-        for (const event of readModel.events) {
-            this.checkEventReference(readModel, event.ref, 'events', accept);
-        }
-    }
-
-    checkEventStorming(board: EventStorming, accept: ValidationAcceptor): void {
-        this.checkDuplicateDeclaration(board, accept);
-        for (const element of board.elements) {
-            this.checkEventReference(board, element.event?.ref, 'elements', accept);
-        }
-    }
-
     checkNamedDeclaration(
         node: Actor | Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        ExternalSystem | Factory | EventStorming | Flow | Hotspot | IntegrationEvent | Module | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        Factory | Flow | IntegrationEvent | Module | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         this.checkDuplicateDeclaration(node, accept);
@@ -717,7 +694,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Actor | Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        ExternalSystem | Factory | EventStorming | Flow | Hotspot | IntegrationEvent | Method | Module | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        Factory | Flow | IntegrationEvent | Method | Module | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
@@ -742,23 +719,6 @@ export class ThinaiValidator {
             node,
             property: 'name'
         });
-    }
-
-    private checkEventReference(source: AstNode, event: EventDeclaration | undefined, property: string, accept: ValidationAcceptor): void {
-        if (!event || !this.isCrossContextOwned(source, event)) {
-            return;
-        }
-        if (isDomainEvent(event)) {
-            accept('error', 'A bounded context may consume only an integration event from another bounded context.', {
-                node: source,
-                property
-            });
-        } else if (!this.hasAuthorizedEventRelationship(source, event)) {
-            accept('error', 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.', {
-                node: source,
-                property
-            });
-        }
     }
 
     private hasAuthorizedEventRelationship(source: AstNode, event: IntegrationEvent): boolean {

@@ -7,7 +7,7 @@ Please check the specific projects here:
 - [Thinai language docs](./docs/README.md) Guides to the language model, tactical modeling, events, and behavior.
 - [packages/cli](./packages/cli/README.md) *Optional* Is only available if you chose to use the command-line interface.
 - [packages/extension](./packages/extension/langium-quickstart.md) *Optional* Contains the VSCode extension if you chose to create it.
-- [examples/order-fulfillment](./examples/order-fulfillment/README.md) Complete multi-file DDD and EventStorming example.
+- [examples/order-fulfillment](./examples/order-fulfillment/README.md) Complete multi-file DDD example.
 
 ## LLM evaluations
 

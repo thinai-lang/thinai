@@ -111,11 +111,5 @@ flow PlaceOrder {
 Flow order is significant. Emitted events are derived from the invoked methods
 and need not be repeated in the flow.
 
-## EventStorming
-
-An EventStorming board is an optional reference-oriented visualization. It may
-refer to actors, methods, events, aggregates, read models, external systems, and
-hotspots, but it does not define execution order or duplicate method behavior.
-
 See the [Order Fulfillment example](../examples/order-fulfillment/README.md)
 for a multi-file model with an integration-event consumer.

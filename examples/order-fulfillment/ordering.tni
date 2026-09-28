@@ -5,7 +5,6 @@ import "./context-map.tni" { FulfillmentMap };
 part of bounded context Ordering {
 
     actor Customer;
-    external system PaymentProvider;
     capability OrderFulfillment owned by Customer;
 
     aggregate Order {

@@ -18,15 +18,13 @@ beforeAll(() => {
 });
 
 describe('Parsing tests', () => {
-    test('parses strategic, tactical, and EventStorming elements', async () => {
+    test('parses strategic, tactical, and behavior elements', async () => {
         const document = await parse(s`
             subdomain OrderManagement kind core;
 
             bounded context Ordering realizes OrderManagement {
                 capability OrderFulfillment;
                 actor Customer;
-                external system PaymentProvider;
-
                 aggregate Order {
                     root entity OrderRoot {
                         identifier id: OrderId;
@@ -46,21 +44,9 @@ describe('Parsing tests', () => {
                 }
                 integration event OrderPlacedV1;
                 integration event OrderPlacedAuditV1;
-                read model OrderSummary from OrderPlaced;
-                hotspot PaymentContract note "Payment API contract is unclear";
-
                 flow PlaceOrder {
                     actor Customer;
                     invoke OrderApplication.placeOrder;
-                }
-
-                event storming PlaceOrderWorkshop {
-                    actor Customer;
-                    method OrderApplication.placeOrder;
-                    event OrderPlaced;
-                    aggregate Order;
-                    read model OrderSummary;
-                    hotspot PaymentContract;
                 }
             }
         `);
@@ -70,7 +56,7 @@ describe('Parsing tests', () => {
             'Subdomain',
             'BoundedContext'
         ]);
-        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(12);
+        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(8);
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
         expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[1])).toBe(true);
