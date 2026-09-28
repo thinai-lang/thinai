@@ -89,7 +89,9 @@ An invariant describes a domain rule; a precondition states what must hold befor
 - Keep ordinary module dependencies within their owning bounded context or shared kernel. A module can reference another module's declarations only when the dependency and exposure are declared.
 - Do not directly reference a private type, method, or DomainEvent owned by another bounded context. Use local mirrored identifier value objects and IntegrationEvents for cross-context event consumption.
 - Cross-context IntegrationEvent handling requires explicit imports of the producer context and an authorized relationship in an imported context map.
-- The authorized context-map relationships are customer-supplier with the consumer as customer, conformist or anti-corruption-layer from consumer to producer, and published-language from producer to consumer.
+- Use `customer Context { integrationPatterns: [...] } -> supplier Context { integrationPatterns: [...] }` for customer-supplier relationships. The arrow points from downstream/customer to upstream/supplier, not in message-flow direction.
+- Put `Conformist` and `AntiCorruptionLayer` on the consumer endpoint, and `OpenHostService` and `PublishedLanguage` on the provider endpoint. Only customer-supplier, consumer-side conformist/ACL, or producer-side published-language authorizes cross-context IntegrationEvent handling; OHS alone does not.
+- Use `partner Context <-> partner Context` for partnerships, `separateWays Context -x- Context` for deliberate non-integration, and `sharedKernel Name { participants: [Context, Context] }` to reference the declared shared-kernel component.
 
 ## Generation checklist
 

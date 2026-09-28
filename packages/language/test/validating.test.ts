@@ -83,6 +83,35 @@ describe('Validating', () => {
         expect(first.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Ordering'.")).toBe(true);
     });
 
+    test('requires a shared-kernel relationship to name at least two contexts', async () => {
+        const document = await parse(`
+            bounded context Ordering {}
+            shared kernel CommonTypes {}
+            context map SharedTypes {
+                sharedKernel CommonTypes { participants: [Ordering]; }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A shared-kernel relationship must include at least two bounded contexts'
+        ))).toBe(true);
+    });
+
+    test('rejects duplicate integration patterns on a context-map endpoint', async () => {
+        const document = await parse(`
+            bounded context Ordering {}
+            bounded context Shipping {}
+            context map Fulfillment {
+                customer Shipping { integrationPatterns: [AntiCorruptionLayer, AntiCorruptionLayer]; }
+                    -> supplier Ordering;
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'An integration pattern may only be listed once per bounded context'
+        ))).toBe(true);
+    });
+
     test('requires map collections to declare both key and value types', async () => {
         const document = await parse(`
             bounded context Inventory {

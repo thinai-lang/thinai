@@ -1,6 +1,14 @@
 import "./context-catalog.tni" { Ordering as Orders, Shipping };
+import "./common-types.tni" { CommonTypes };
 
 context map FulfillmentMap {
-    Shipping customer supplier Orders;
-    Orders shared kernel Shipping;
+    customer Shipping {
+        integrationPatterns: [AntiCorruptionLayer];
+    } -> supplier Orders {
+        integrationPatterns: [OpenHostService, PublishedLanguage];
+    }
+
+    sharedKernel CommonTypes {
+        participants: [Orders, Shipping];
+    }
 }

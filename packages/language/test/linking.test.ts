@@ -69,7 +69,10 @@ describe('Linking tests', () => {
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            'import "./ordering.tni"; import "./shipping.tni"; context map Fulfillment { Shipping customer supplier Ordering; }'
+            `import "./ordering.tni"; import "./shipping.tni"; context map Fulfillment {
+                customer Shipping { integrationPatterns: [AntiCorruptionLayer]; }
+                    -> supplier Ordering { integrationPatterns: [OpenHostService, PublishedLanguage]; };
+            }`
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-flow.tni'),
@@ -184,6 +187,64 @@ describe('Linking tests', () => {
         ))).toBe(true);
     });
 
+    test('authorizes event consumption through integration patterns on the correct endpoints', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni";
+             context map Fulfillment {
+                 partner Shipping { integrationPatterns: [AntiCorruptionLayer]; }
+                    <-> partner Ordering { integrationPatterns: [PublishedLanguage]; }
+             }`
+        );
+        const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+             part of bounded context Shipping {
+                 read model OrderProjection from Ordering.OrderPlacedV1;
+             }`
+        );
+        documents = [contexts, contextMap, shippingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shippingPart.parseResult.parserErrors).toHaveLength(0);
+        expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(false);
+    });
+
+    test('does not authorize event consumption from an open-host-service pattern alone', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni";
+             context map Fulfillment {
+                 partner Shipping <-> partner Ordering { integrationPatterns: [OpenHostService]; }
+             }`
+        );
+        const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+             part of bounded context Shipping {
+                 read model OrderProjection from Ordering.OrderPlacedV1;
+             }`
+        );
+        documents = [contexts, contextMap, shippingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(true);
+    });
+
     test('links shared values, identifier mirrors, and module exposures', async () => {
         const common = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/common.tni'),
@@ -192,13 +253,13 @@ describe('Linking tests', () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
-                import "./common.tni" as Common;
+                import "./common.tni" { CommonTypes };
 
                 bounded context Ordering {
                     aggregate Order {
                         root entity OrderRoot {
                             identifier id: OrderId;
-                            currency: Common.Currency;
+                            currency: CommonTypes.Currency;
                         }
                         identifier value object OrderId for OrderRoot {
                             raw: string;
@@ -207,7 +268,7 @@ describe('Linking tests', () => {
                 }
                 bounded context Peer {}
                 context map SharedTypes {
-                    Ordering shared kernel Peer;
+                    sharedKernel CommonTypes { participants: [Ordering, Peer]; }
                 }
             `
         );
@@ -367,8 +428,9 @@ describe('Linking tests', () => {
             URI.file('/workspace/map.tni'),
             `import "./contexts.tni" { Ordering as Orders, Shipping };
              context map FulfillmentMap {
-                 Orders partnership Shipping;
-                 Billing partnership Shipping;
+                 partner Orders <-> partner Shipping;
+                 partner Billing <-> partner Shipping;
+                 separateWays Orders -x- Billing;
              }`
         );
         documents = [catalog, consumer];
@@ -380,10 +442,10 @@ describe('Linking tests', () => {
         expect(diagnostics.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to BoundedContext named 'Billing'"))).toBe(true);
         const model = consumer.parseResult.value as Model;
         const map = model?.declarations[0] as Model['declarations'][number] & {
-            relationships: Array<{ source: { ref?: { name: string } }; target: { ref?: { name: string } } }>;
+            relationships: Array<{ left: { context: { ref?: { name: string } } }; right: { context: { ref?: { name: string } } } }>;
         };
-        expect(map.relationships[0].source.ref?.name).toBe('Ordering');
-        expect(map.relationships[0].target.ref?.name).toBe('Shipping');
+        expect(map.relationships[0].left.context.ref?.name).toBe('Ordering');
+        expect(map.relationships[0].right.context.ref?.name).toBe('Shipping');
     });
 
     test('reports unresolved method references in behavior specifications', async () => {

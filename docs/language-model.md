@@ -61,15 +61,35 @@ A context map describes relationships between bounded contexts:
 ```thinai
 bounded context Ordering {}
 bounded context Shipping {}
+shared kernel CommonTypes {}
 
 context map FulfillmentMap {
-    Shipping customer supplier Ordering;
+    customer Shipping {
+        integrationPatterns: [AntiCorruptionLayer];
+    } -> supplier Ordering {
+        integrationPatterns: [OpenHostService, PublishedLanguage];
+    }
+
+    partner Ordering <-> partner Shipping;
+    separateWays Ordering -x- Shipping;
+
+    sharedKernel CommonTypes {
+        participants: [Ordering, Shipping];
+    }
 }
 ```
 
-Relationship kinds include `partnership`, `customer supplier`, `conformist`,
-`shared kernel`, `published language`, `open host`, `anti corruption layer`,
-and `separate ways`.
+The customer-to-supplier arrow points from the downstream customer to the
+upstream supplier; it describes the relationship direction, not message flow.
+Each endpoint may list its own `integrationPatterns`: `Conformist` and
+`AntiCorruptionLayer` typically describe the downstream side, while
+`OpenHostService` and `PublishedLanguage` describe the upstream side. These are
+PascalCase pattern values, not declarations of implementation artifacts.
+
+`partner ... <-> partner ...` expresses a symmetric partnership.
+`separateWays ... -x- ...` expresses a deliberate lack of integration and does
+not take integration patterns. A `sharedKernel` relationship names the actual
+shared-kernel component and lists the bounded contexts that share it.
 
 A shared kernel is an explicit place for types shared across contexts. It may
 contain value objects, enumerations, and modules:

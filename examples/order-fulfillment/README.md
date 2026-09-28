@@ -10,7 +10,7 @@ This example demonstrates the complete Thinai model across multiple files.
 - `ordering-events.tni` contributes application-service methods, an integration-event contract, a user-started flow, a read model, and hotspots. `ordering.tni` declares the internal domain event.
 - `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
 - `shipping-handlers.tni` contains an EventStorming reference board.
-- `context-map.tni` selectively imports Ordering and Shipping from the multi-context catalog and defines their customer-supplier and shared-kernel relationships.
+- `context-map.tni` selectively imports Ordering and Shipping, maps their customer-supplier integration patterns, and connects them through the named `CommonTypes` shared kernel.
 - `common-types.tni` defines a shared-kernel value object.
 
 The model demonstrates explicit aggregate-root entities, constructors and methods with signatures, aggregate state transitions and event emissions, event-to-integration-event translation, incoming integration-event handling, all four behavior-specification kinds, inline method references, optional fields/parameters, and `List`, `Set`, and `Map` types. It also shows identifier fields, a local Shipping identifier that mirrors the Ordering identifier, component-selective imports, an imported context map, and a module dependency within Shipping.

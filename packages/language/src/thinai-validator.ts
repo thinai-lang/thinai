@@ -16,6 +16,7 @@ import type {
     BoundedContextPart,
     Capability,
     ContextMap,
+    ContextMapEndpoint,
     ContextRelationship,
     CollectionType,
     Constructor,
@@ -54,9 +55,14 @@ import {
     isIntegrationEvent,
     isImportableComponent,
     isContextMap,
+    isCustomerSupplierRelationship,
     isEnumType,
     isModel,
     isModule,
+    isPartnershipRelationship,
+    isSeparateWaysRelationship,
+    isSharedKernel,
+    isSharedKernelRelationship,
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
@@ -646,11 +652,36 @@ export class ThinaiValidator {
     }
 
     checkContextRelationship(relationship: ContextRelationship, accept: ValidationAcceptor): void {
-        if (relationship.source.ref && relationship.target.ref && relationship.source.ref === relationship.target.ref) {
-            accept('error', 'A context relationship must connect two different bounded contexts.', {
+        const endpoints = this.getContextMapEndpoints(relationship);
+        const sharedKernelRelationship = isSharedKernelRelationship(relationship);
+        const contexts = sharedKernelRelationship
+            ? relationship.participants
+            : isSeparateWaysRelationship(relationship)
+                ? [relationship.left, relationship.right]
+                : endpoints.map(endpoint => endpoint.context);
+        const resolvedContexts = contexts.map(context => context.ref).filter((context): context is BoundedContext => context !== undefined);
+
+        if (sharedKernelRelationship && resolvedContexts.length < 2) {
+            accept('error', 'A shared-kernel relationship must include at least two bounded contexts.', {
                 node: relationship,
-                property: 'target'
+                property: 'participants'
             });
+        }
+
+        if (new Set(resolvedContexts).size !== resolvedContexts.length) {
+            accept('error', 'A context relationship must connect different bounded contexts.', {
+                node: relationship,
+                property: sharedKernelRelationship ? 'participants' : isCustomerSupplierRelationship(relationship) ? 'supplier' : 'right'
+            });
+        }
+
+        for (const endpoint of endpoints) {
+            if (new Set(endpoint.integrationPatterns).size !== endpoint.integrationPatterns.length) {
+                accept('error', 'An integration pattern may only be listed once per bounded context.', {
+                    node: endpoint,
+                    property: 'integrationPatterns'
+                });
+            }
         }
     }
 
@@ -757,20 +788,40 @@ export class ThinaiValidator {
                     continue;
                 }
                 for (const relationship of contextMap.relationships) {
-                    const sourceName = relationship.source.ref?.name;
-                    const targetName = relationship.target.ref?.name;
-                    const kind = String(relationship.relationship).replace(/\s+/g, '');
-                    const authorizes =
-                        (kind === 'customersupplier' || kind === 'conformist' || kind === 'anticorruptionlayer') &&
-                        sourceName === consumer && targetName === producer ||
-                        kind === 'publishedlanguage' && sourceName === producer && targetName === consumer;
-                    if (authorizes) {
+                    if (this.authorizesEventRelationship(relationship, consumer, producer)) {
                         return true;
                     }
                 }
             }
         }
         return false;
+    }
+
+    private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {
+        if (isCustomerSupplierRelationship(relationship) &&
+            relationship.customer.context.ref?.name === consumer && relationship.supplier.context.ref?.name === producer) {
+            return true;
+        }
+
+        const endpoints = this.getContextMapEndpoints(relationship);
+        const consumerEndpoint = endpoints.find(endpoint => endpoint.context.ref?.name === consumer);
+        const producerEndpoint = endpoints.find(endpoint => endpoint.context.ref?.name === producer);
+        if (!consumerEndpoint || !producerEndpoint) {
+            return false;
+        }
+
+        return consumerEndpoint.integrationPatterns.some(pattern => pattern === 'Conformist' || pattern === 'AntiCorruptionLayer') ||
+            producerEndpoint.integrationPatterns.includes('PublishedLanguage');
+    }
+
+    private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {
+        if (isCustomerSupplierRelationship(relationship)) {
+            return [relationship.customer, relationship.supplier];
+        }
+        if (isPartnershipRelationship(relationship)) {
+            return [relationship.left, relationship.right];
+        }
+        return [];
     }
 
     private getOwningAggregate(node: AstNode): Aggregate | undefined {
@@ -811,7 +862,8 @@ export class ThinaiValidator {
                 continue;
             }
             if (isInSharedKernel(target)) {
-                if (sourceContext && !this.hasSharedKernelRelationship(node)) {
+                const sharedKernel = this.getOwningSharedKernel(target);
+                if (sourceContext && (!sharedKernel || !this.hasSharedKernelRelationship(node, sharedKernel))) {
                     accept('error', 'Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.', {
                         node,
                         property
@@ -834,7 +886,7 @@ export class ThinaiValidator {
         }
     }
 
-    private hasSharedKernelRelationship(source: AstNode): boolean {
+    private hasSharedKernelRelationship(source: AstNode, sharedKernel: SharedKernel): boolean {
         const contextName = getOwningContextName(source);
         const document = AstUtils.getDocument(source);
         const model = document.parseResult.value;
@@ -853,9 +905,20 @@ export class ThinaiValidator {
             ));
         }
         return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            String(relationship.relationship).replace(/\s+/g, '') === 'sharedkernel' &&
-            (relationship.source.ref?.name === contextName || relationship.target.ref?.name === contextName)
+            isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
+            relationship.participants.some(participant => participant.ref?.name === contextName)
         ));
+    }
+
+    private getOwningSharedKernel(node: AstNode): SharedKernel | undefined {
+        let current: AstNode | undefined = node;
+        while (current) {
+            if (isSharedKernel(current)) {
+                return current;
+            }
+            current = current.$container;
+        }
+        return undefined;
     }
 
     private isCrossContextOwned(source: AstNode, target: AstNode): boolean {

@@ -36,7 +36,28 @@ ContextMap:
     '}' ';'?;
 
 ContextRelationship:
-    source=[BoundedContext:QualifiedName] relationship=RelationshipKind target=[BoundedContext:QualifiedName] ';'?;
+    CustomerSupplierRelationship
+    | PartnershipRelationship
+    | SeparateWaysRelationship
+    | SharedKernelRelationship;
+
+CustomerSupplierRelationship:
+    'customer' customer=ContextMapEndpoint '->' 'supplier' supplier=ContextMapEndpoint ';'?;
+
+PartnershipRelationship:
+    'partner' left=ContextMapEndpoint '<->' 'partner' right=ContextMapEndpoint ';'?;
+
+SeparateWaysRelationship:
+    'separateWays' left=[BoundedContext:QualifiedName] '-x-' right=[BoundedContext:QualifiedName] ';'?;
+
+SharedKernelRelationship:
+    'sharedKernel' sharedKernel=[SharedKernel:QualifiedName] '{'
+        'participants' ':' '[' participants+=[BoundedContext:QualifiedName] (',' participants+=[BoundedContext:QualifiedName])* ']' ';'?
+    '}' ';'?;
+
+ContextMapEndpoint:
+    context=[BoundedContext:QualifiedName]
+    ('{' 'integrationPatterns' ':' '[' integrationPatterns+=IntegrationPattern (',' integrationPatterns+=IntegrationPattern)* ']' ';'? '}')?;
 
 ApplicationService:
     'application' 'service' name=ID 'for' aggregate=[Aggregate:QualifiedName] '{'
@@ -266,15 +287,11 @@ PrimitiveType returns string:
 SubdomainKind returns string:
     'core' | 'supporting' | 'generic';
 
-RelationshipKind returns string:
-    'partnership'
-    | 'customer' 'supplier'
-    | 'conformist'
-    | 'shared' 'kernel'
-    | 'published' 'language'
-    | 'open' 'host'
-    | 'anti' 'corruption' 'layer'
-    | 'separate' 'ways';
+IntegrationPattern returns string:
+    'Conformist'
+    | 'AntiCorruptionLayer'
+    | 'OpenHostService'
+    | 'PublishedLanguage';
 
 QualifiedName returns string:
     ID ('.' ID)*;
