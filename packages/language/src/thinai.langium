@@ -38,18 +38,23 @@ ContextMap:
 ContextRelationship:
     source=[BoundedContext:QualifiedName] relationship=RelationshipKind target=[BoundedContext:QualifiedName] ';'?;
 
+ApplicationService:
+    'application' 'service' name=ID 'for' aggregate=[Aggregate:QualifiedName] '{'
+        methods+=Method*
+    '}' ';'?;
+
 ContextMember:
-    Capability
+    ApplicationService
+    | Capability
     | Aggregate
     | DomainService
     | Repository
     | Factory
     | Actor
     | ExternalSystem
-    | Command
     | DomainEvent
     | IntegrationEvent
-    | Policy
+    | Flow
     | ReadModel
     | Hotspot
     | EventStorming
@@ -78,17 +83,17 @@ Exposure:
     'exposes' declarations+=[NamedDeclaration:QualifiedName] (',' declarations+=[NamedDeclaration:QualifiedName])* ';'?;
 
 ModuleMember:
-    Capability
+    ApplicationService
+    | Capability
     | Aggregate
     | DomainService
     | Repository
     | Factory
     | Actor
     | ExternalSystem
-    | Command
     | DomainEvent
     | IntegrationEvent
-    | Policy
+    | Flow
     | ReadModel
     | Hotspot
     | EventStorming
@@ -158,14 +163,20 @@ DomainService:
 Method:
     'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
-    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
+    ('invokes' invocations+=[Method:QualifiedName] (',' invocations+=[Method:QualifiedName])*)?
+    ('emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)?
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition)* '}')? ';'?;
+
+Transition:
+    'transition' field=ID 'from' from=ID 'to' to=ID ';'?;
 
 Constructor:
     'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
 
 Parameter:
-    name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType);
+    name=ID (optional?='?')? ':' ('event' eventType=[EventDeclaration:QualifiedName] |
+        primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType);
 
 Repository:
     'repository' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
@@ -179,38 +190,21 @@ Actor:
 ExternalSystem:
     'external' 'system' name=ID ';'?;
 
-Command:
-    'command' name=ID
-    ('handled' 'by' handler=[Actor:QualifiedName])?
-    ('targets' aggregate=[Aggregate:QualifiedName])?
-    ('with' fields+=Field (',' fields+=Field)*)?
-    ('emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)?
-    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
-
 DomainEvent:
     'event' name=ID
-    ('caused' 'by' command=[Command:QualifiedName])?
-    ('for' aggregate=[Aggregate:QualifiedName])?
-    (publishesIntegration?='publishes' 'integration' (publishedAs=[IntegrationEvent:QualifiedName])?)?
     ('data' '{' fields+=Field* '}')?
     ';'?;
 
 IntegrationEvent:
     'integration' 'event' name=ID
-    ('from' source=[DomainEvent:QualifiedName])?
     ('data' '{' fields+=Field* '}')?
     ';'?;
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
-type NamedDeclaration = Actor | Aggregate | BoundedContext | Capability | Command | DomainEvent | DomainService | Entity |
-    EnumType | EventStorming | ExternalSystem | Factory | Hotspot | IntegrationEvent | Method | Module | Policy | ReadModel |
+type NamedDeclaration = Actor | Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
+    EnumType | EventStorming | ExternalSystem | Factory | Flow | Hotspot | IntegrationEvent | Method | Module | ReadModel |
     Repository | Subdomain | ValueObject;
-
-Policy:
-    'policy' name=ID
-    'when' triggers+=[EventDeclaration:QualifiedName] (',' triggers+=[EventDeclaration:QualifiedName])*
-    'then' commands+=[Command:QualifiedName] (',' commands+=[Command:QualifiedName])* ';'?;
 
 ReadModel:
     'read' 'model' name=ID ('from' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)? ';'?;
@@ -225,15 +219,21 @@ EventStorming:
 
 EventStormingElement:
     'actor' actor=[Actor:QualifiedName] ';'?
-    | 'command' command=[Command:QualifiedName] ';'?
+    | 'method' method=[Method:QualifiedName] ';'?
     | 'event' event=[EventDeclaration:QualifiedName] ';'?
-    | 'policy' policy=[Policy:QualifiedName] ';'?
     | 'aggregate' aggregate=[Aggregate:QualifiedName] ';'?
     | 'read' 'model' readModel=[ReadModel:QualifiedName] ';'?
     | 'external' 'system' externalSystem=[ExternalSystem:QualifiedName] ';'?
     | 'hotspot' hotspot=[Hotspot:QualifiedName] ';'?;
 
-type ImportableComponent = BoundedContext | SharedKernel;
+Flow:
+    'flow' name=ID '{' elements+=FlowElement* '}' ';'?;
+
+FlowElement:
+    'actor' actor=[Actor:QualifiedName] ';'?
+    | 'invoke' method=[Method:QualifiedName] ';'?;
+
+type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 
 CollectionType:
     kind=CollectionKind '<'

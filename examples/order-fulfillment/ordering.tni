@@ -1,5 +1,6 @@
 import "./context-catalog.tni";
 import "./common-types.tni" as Common;
+import "./context-map.tni" { FulfillmentMap };
 
 part of bounded context Ordering {
 
@@ -16,6 +17,9 @@ part of bounded context Ordering {
                 postcondition "The order has an identifier and owner.";
             }
             method ensureOwner();
+            method place() emits OrderPlaced {
+                transition status from Draft to Placed;
+            }
         } {
             identifier id: OrderId;
             owner: string;
@@ -65,5 +69,9 @@ part of bounded context Ordering {
 
         repository OrderRepository for Order;
         factory OrderFactory for Order;
+    }
+
+    event OrderPlaced data {
+        orderId: OrderId;
     }
 }

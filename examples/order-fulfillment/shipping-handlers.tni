@@ -2,16 +2,14 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 import "./ordering-events.tni";
 import "./shipping.tni";
+import "./context-map.tni" { FulfillmentMap };
 
 part of bounded context Shipping {
-    policy StartShipment when Ordering.OrderPlacedV1 then CreateShipment;
-
     event storming OrderLifecycle {
         actor Customer;
-        command Ordering.PlaceOrder;
         event Ordering.OrderPlacedV1;
         aggregate Shipment;
-        command CreateShipment;
+        method ShipmentApplication.createShipment;
         external system PaymentProvider;
         hotspot PaymentContract;
     }

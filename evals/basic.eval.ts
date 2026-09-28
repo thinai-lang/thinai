@@ -25,7 +25,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('generates a valid single-file ordering model', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai model for an Ordering bounded context. Declare root entity OrderRoot and identifier value object OrderId for OrderRoot as sibling members inside aggregate Order; never nest the value object in the entity. Give OrderRoot the field identifier id: OrderId; and OrderId the field raw: string;. Define the command as command PlaceOrder targets Order emits OrderPlaced; and the event as event OrderPlaced caused by PlaceOrder for Order;. Do not separate command or event clauses with semicolons. Keep all declarations in the same file and make all references resolve.',
+            'Generate a valid, single-file Thinai model for an Ordering bounded context. Declare root entity OrderRoot and identifier value object OrderId for OrderRoot as sibling members inside aggregate Order; never nest the value object in the entity. Give OrderRoot the field identifier id: OrderId; and OrderId the field raw: string;. Declare event OrderPlaced. Give OrderRoot a place method that emits OrderPlaced. Add application service OrderApplication for Order with method placeOrder that invokes Order.OrderRoot.place. Keep all declarations in the same file and make all references resolve.',
             context
         );
         return {
@@ -38,7 +38,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('uses linked behavior specifications for command logic', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai Ordering model. Use the exact structure root entity OrderRoot operations { method ensureOwner(); } { identifier id: OrderId; invariant $"A valid order has an owner; check ${OrderRoot.ensureOwner}."; } followed by sibling declaration identifier value object OrderId for OrderRoot { raw: string; }. Do not put the value object inside the entity. Define command PlaceOrder targets Order emits OrderPlaced { invariant "A placed order has an owner."; precondition "The order can be placed."; behavior $"Check ${Order.OrderRoot.ensureOwner} before placing."; postcondition "OrderPlaced is emitted."; }. Define event OrderPlaced caused by PlaceOrder for Order;. Keep command clauses in keyword order with no semicolons between clauses.',
+            'Generate a valid, single-file Thinai Ordering model. Use the exact structure root entity OrderRoot operations { method ensureOwner(); method place() emits OrderPlaced; } { identifier id: OrderId; invariant $"A valid order has an owner; check ${OrderRoot.ensureOwner}."; } followed by sibling declaration identifier value object OrderId for OrderRoot { raw: string; }. Do not put the value object inside the entity. Define application service OrderApplication for Order with method placeOrder invokes Order.OrderRoot.place { precondition "The order can be placed."; behavior $"Check ${Order.OrderRoot.ensureOwner} before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
             context
         );
         const lowerCode = generated.code.toLowerCase();

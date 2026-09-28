@@ -21,35 +21,50 @@ afterEach(async () => {
 });
 
 describe('Validating', () => {
-    test('accepts a valid aggregate command and event model', async () => {
+    test('accepts aggregate effects and an application-service command', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot {
+                    root entity OrderRoot operations {
+                        method place() emits OrderPlaced, OrderAudited {
+                            transition status from Draft to Placed;
+                        }
+                    } {
                         identifier id: OrderId;
+                        status: OrderStatus;
                     }
                     identifier value object OrderId for OrderRoot {
                         raw: string;
                     }
+                    enum OrderStatus { Draft, Placed }
                 }
-                command PlaceOrder targets Order emits OrderPlaced;
-                event OrderPlaced for Order;
+                application service OrderApplication for Order {
+                    method placeOrder() invokes Order.OrderRoot.place {}
+                }
+                event OrderPlaced;
+                event OrderAudited;
             }
         `);
 
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('requires commands to target an aggregate', async () => {
-        const document = await parse(`
-            bounded context Ordering {
-                command PlaceOrder;
-            }
-        `);
+    test('requires services to target an aggregate in their own context', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering { aggregate Order { root entity OrderRoot { identifier id: OrderId; } identifier value object OrderId for OrderRoot { raw: string; } } }'
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            'import "./ordering.tni"; bounded context Shipping { application service ShippingApplication for Ordering.Order {} }'
+        );
+        documents = [ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(
-            checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')
-        ).toEqual(expect.stringContaining('A command must target an aggregate.'));
+            checkDocumentValid(shipping) || shipping.diagnostics?.map(diagnosticToString).join('\n')
+        ).toEqual(expect.stringContaining('An application service must be associated with an aggregate in its own bounded context.'));
     });
 
     test('rejects duplicate canonical context declarations', async () => {
@@ -105,7 +120,7 @@ describe('Validating', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'A file-level alias requires exactly one bounded context or shared kernel'
+            'A file-level alias requires exactly one bounded context, context map, or shared kernel'
         ))).toBe(true);
     });
 });

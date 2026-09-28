@@ -1,118 +1,120 @@
 # Events and Behavior
 
-Thinai represents domain interactions with commands, events, policies, and
-EventStorming boards. Behavior specifications add human-readable domain
-meaning to types and operations; they are descriptive, not executable.
+Thinai models application-service operations, aggregate behavior, domain and
+integration events, and user-started flows. Behavior specifications remain
+descriptive; structured clauses such as `invokes`, `emits`, and `transition`
+provide navigable semantic relationships.
 
-## Behavior Specifications
+## Aggregate Effects and Application Services
 
-Use these forms to describe domain rules and operation intent:
-
-- `invariant` — a rule that should hold for a domain type.
-- `precondition` — what must hold before an operation.
-- `postcondition` — what is guaranteed after successful completion.
-- `behavior` — a natural-language description of what an operation does.
-
-Attach these specifications to relevant types, constructors, methods, or
-commands. Plain quoted strings are valid. To make a method name navigable from
-the text, use an interpolated template string such as
-`$"Normalize with ${OrderId.normalize}."`. The interpolation must refer to a
-declared method; it is not a method call or expression. Write `\${` when the
-text should contain a literal interpolation marker. Behavior-specification
-strings may span multiple lines; line breaks are preserved, including in
-interpolated template strings:
-
-```thinai
-behavior $"Check ${OrderRoot.ensureOwner}
-before placing the order.";
-```
-
-## Commands and Events
-
-Commands can name a handler, target aggregate, typed fields, and emitted
-events. A command can also carry behavior specifications:
+An ordinary application-service method is a command operation. It coordinates
+aggregate behavior, while the aggregate method owns state changes and emits
+domain events:
 
 ```thinai
 bounded context Ordering {
-    actor Customer;
-
     aggregate Order {
-        root entity OrderRoot {
-            identifier id: OrderId;
+        root entity OrderRoot operations {
+            method place() emits OrderPlaced {
+                transition status from Draft to Placed;
+            }
+        } {
+            status: OrderStatus;
         }
-        identifier value object OrderId for OrderRoot {
-            raw: string;
-        }
-        value object OrderLine {
-            sku: string;
-        }
+        enum OrderStatus { Draft, Placed }
     }
 
-    command PlaceOrder
-        handled by Customer
-        targets Order
-        with items: List<OrderLine>
-        emits OrderPlaced {
+    event OrderPlaced;
+
+    application service OrderApplication for Order {
+        method placeOrder(items: List<OrderLine>)
+            invokes Order.OrderRoot.place {
             precondition "The order contains at least one item.";
-            behavior "Place the order and emit its event.";
+            behavior "Place the order through its aggregate root.";
         }
-
-    event OrderPlaced caused by PlaceOrder for Order;
+    }
 }
 ```
 
-Domain events are local to their bounded context by default. To let another
-context consume an event, publish or declare an integration event:
+Aggregate methods may emit multiple domain events. Emissions are listed in
+order. Application-service command methods invoke aggregate methods rather
+than repeating their state transitions or event emissions.
+
+## Integration Events and Event-Triggered Methods
+
+Domain events are private to their bounded context. To publish a fact across a
+context boundary, an application-service method can receive a domain event and
+emit one or more integration events. The integration-event declaration defines
+the public schema; the method's behavior text describes any payload mapping.
 
 ```thinai
 bounded context Ordering {
-    aggregate Order {
-        root entity OrderRoot {
-            identifier id: OrderId;
-        }
-        identifier value object OrderId for OrderRoot {
-            raw: string;
+    event OrderPlaced data {
+        orderId: OrderId;
+    }
+
+    module Contracts {
+        integration event OrderPlacedV1 data {
+            orderId: OrderId;
         }
     }
 
-    event OrderPlaced for Order publishes integration OrderPlacedV1;
-    integration event OrderPlacedV1 from OrderPlaced;
+    application service OrderApplication for Order {
+        method publishOrderPlaced(source: event OrderPlaced) emits Contracts.OrderPlacedV1 {
+            behavior "Map the internal event to the public contract.";
+        }
+    }
 }
 ```
 
-Policies connect event triggers to commands using `when` and `then`. Read
-models can list their source events. Actors, external systems, and hotspots
-can also be declared.
+A method with an event-typed parameter is event-triggered. The `event` marker
+in the parameter's type makes that event reference unambiguous. A consumer's
+method can receive an imported integration event and invoke a local command
+method:
+
+```thinai
+application service ShipmentApplication for Shipment {
+    method createShipment(orderId: OrderId) {}
+
+    method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1)
+        invokes createShipment {
+        behavior "Map the incoming event to the local command input.";
+    }
+}
+```
+
+Keep the imported contract at this boundary; use local types in ordinary
+command methods and aggregates. Do not model arbitrary payload transformations
+as expressions. Integration-event publication is an application-layer reaction
+to a committed domain event; broker and outbox mechanics are outside the DSL.
+
+Cross-context integration-event use requires an explicit bounded-context
+import and an imported context map with an authorized, correctly directed
+relationship. A consumer is the customer in a `customer supplier` relationship;
+conformist and anti-corruption-layer relationships point from consumer to
+producer; a `published language` relationship points from producer to consumer.
+Context maps do not make domain events public.
+
+## Flows
+
+A flow describes an ordered user-started sequence of application-service
+command methods. Event-triggered methods are not flow steps:
+
+```thinai
+flow PlaceOrder {
+    actor Customer;
+    invoke Ordering.OrderApplication.placeOrder;
+}
+```
+
+Flow order is significant. Emitted events are derived from the invoked methods
+and need not be repeated in the flow.
 
 ## EventStorming
 
-An EventStorming board references canonical declarations rather than
-redefining them:
+An EventStorming board is an optional reference-oriented visualization. It may
+refer to actors, methods, events, aggregates, read models, external systems, and
+hotspots, but it does not define execution order or duplicate method behavior.
 
-```thinai
-bounded context Ordering {
-    actor Customer;
-
-    aggregate Order {
-        root entity OrderRoot {
-            identifier id: OrderId;
-        }
-        identifier value object OrderId for OrderRoot {
-            raw: string;
-        }
-    }
-
-    command PlaceOrder handled by Customer targets Order emits OrderPlaced;
-    event OrderPlaced caused by PlaceOrder for Order;
-
-    event storming OrderLifecycle {
-        actor Customer;
-        command PlaceOrder;
-        event OrderPlaced;
-        aggregate Order;
-    }
-}
-```
-
-For a complete multi-file example, including cross-context integration-event
-consumption, see the [Order Fulfillment example](../examples/order-fulfillment/README.md).
+See the [Order Fulfillment example](../examples/order-fulfillment/README.md)
+for a multi-file model with an integration-event consumer.

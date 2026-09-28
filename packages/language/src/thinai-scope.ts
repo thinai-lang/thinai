@@ -25,21 +25,22 @@ import {
 const exportedTypes = new Set([
     'Actor',
     'Aggregate',
+    'ApplicationService',
     'BoundedContext',
+    'ContextMap',
     'Capability',
-    'Command',
     'DomainEvent',
     'DomainService',
     'Entity',
     'EnumType',
     'EventStorming',
     'ExternalSystem',
+    'Flow',
     'Factory',
     'Hotspot',
     'IntegrationEvent',
     'Method',
     'Module',
-    'Policy',
     'ReadModel',
     'Repository',
     'SharedKernel',
@@ -60,7 +61,7 @@ export function getOwningContextName(node: AstNode): string | undefined {
             return current.name;
         }
         if (isBoundedContextPart(current)) {
-            return current.context.$refText;
+            return current.context.ref?.name ?? current.context.$refText;
         }
         if (isSharedKernel(current)) {
             return current.name;
@@ -259,14 +260,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const document = AstUtils.getDocument(importDeclaration);
         const uri = resolveImportUri(document, importDeclaration).toString();
         return this.indexManager.allElements(referenceType, new Set([uri]))
-            .filter(description => description.type === 'BoundedContext' || description.type === 'SharedKernel')
+            .filter(description => ['BoundedContext', 'ContextMap', 'SharedKernel'].includes(description.type))
             .toArray();
     }
 
     private getSingleImportableComponentName(document: LangiumDocument, importDeclaration: Import): string | undefined {
         const uri = resolveImportUri(document, importDeclaration).toString();
         const candidates = this.indexManager.allElements(undefined, new Set([uri]))
-            .filter(description => description.type === 'BoundedContext' || description.type === 'SharedKernel')
+            .filter(description => ['BoundedContext', 'ContextMap', 'SharedKernel'].includes(description.type))
             .toArray();
         return candidates.length === 1 ? candidates[0].name : undefined;
     }

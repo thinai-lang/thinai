@@ -1,7 +1,7 @@
 # Tactical Modeling
 
 Thinai models aggregates, entities, value objects, and related tactical DDD
-declarations. For commands, events, and descriptive domain behavior, see
+declarations. For application services, events, and descriptive domain behavior, see
 [Events and behavior](events-and-behavior.md).
 
 ## Aggregates, Entities, and Value Objects

@@ -1,5 +1,8 @@
 import "./context-catalog.tni";
 import "./ordering.tni";
+import "./ordering-events.tni";
+import "./context-map.tni" { FulfillmentMap };
+import "./common-types.tni" as Common;
 
 part of bounded context Shipping {
     identifier value object OrderId mirrors Ordering.Order.OrderId {
@@ -7,17 +10,33 @@ part of bounded context Shipping {
     }
 
     aggregate Shipment {
-        root entity ShipmentRoot {
+        root entity ShipmentRoot operations {
+            method start() emits ShipmentStarted {
+                transition status from Pending to Started;
+            }
+        } {
             identifier id: ShipmentId;
             orderId: OrderId;
+            status: ShipmentStatus;
+            currency: Common.Currency;
         }
         identifier value object ShipmentId for ShipmentRoot {
             raw: string;
         }
     }
 
-    command CreateShipment targets Shipment emits ShipmentStarted;
-    event ShipmentStarted for Shipment;
+    enum ShipmentStatus { Pending, Started }
+    event ShipmentStarted;
+
+    application service ShipmentApplication for Shipment {
+        method createShipment(orderId: OrderId) invokes Shipment.ShipmentRoot.start {
+            behavior "Create a shipment by invoking the aggregate root's start operation.";
+        }
+
+        method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes createShipment {
+            behavior "Create a shipment from the order identifier in the incoming event.";
+        }
+    }
 
     module Operations {
         exposes TrackingCode;

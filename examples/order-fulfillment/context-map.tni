@@ -1,5 +1,6 @@
 import "./context-catalog.tni" { Ordering as Orders, Shipping };
 
 context map FulfillmentMap {
-    Orders customer supplier Shipping;
+    Shipping customer supplier Orders;
+    Orders shared kernel Shipping;
 }

@@ -8,8 +8,8 @@ language by topic:
   maps, shared kernels, imports, and working across files.
 - [Tactical modeling](tactical-modeling.md) — aggregates, entities, value
   objects, operations, modules, and domain constraints.
-- [Events and behavior](events-and-behavior.md) — commands, domain and
-  integration events, EventStorming, and behavior specifications.
+- [Events and behavior](events-and-behavior.md) — application-service methods,
+  aggregate events, integration contracts, flows, and behavior specifications.
 
 For a complete multi-file model, see the
 [Order Fulfillment example](../examples/order-fulfillment/README.md). The

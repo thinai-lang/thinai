@@ -37,20 +37,27 @@ describe('Parsing tests', () => {
                     }
                 }
 
-                command PlaceOrder handled by Customer targets Order with items: string emits OrderPlaced;
-                event OrderPlaced for Order publishes integration OrderPlacedV1 data {
+                application service OrderApplication for Order {
+                    method placeOrder(items: string) invokes Order.OrderRoot.place {}
+                    method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1, OrderPlacedAuditV1 {}
+                }
+                event OrderPlaced data {
                     orderId: OrderId;
                 }
-                integration event OrderPlacedV1 from OrderPlaced;
-                policy ReserveInventory when OrderPlaced then PlaceOrder;
+                integration event OrderPlacedV1;
+                integration event OrderPlacedAuditV1;
                 read model OrderSummary from OrderPlaced;
                 hotspot PaymentContract note "Payment API contract is unclear";
 
+                flow PlaceOrder {
+                    actor Customer;
+                    invoke OrderApplication.placeOrder;
+                }
+
                 event storming PlaceOrderWorkshop {
                     actor Customer;
-                    command PlaceOrder;
+                    method OrderApplication.placeOrder;
                     event OrderPlaced;
-                    policy ReserveInventory;
                     aggregate Order;
                     read model OrderSummary;
                     hotspot PaymentContract;
@@ -63,7 +70,7 @@ describe('Parsing tests', () => {
             'Subdomain',
             'BoundedContext'
         ]);
-        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(11);
+        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(12);
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
         expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[1])).toBe(true);
@@ -112,10 +119,12 @@ describe('Parsing tests', () => {
                         behavior $"Calculate a total for ${'${Order.OrderRoot.ensureOwner}'}";
                     }
                 }
-                command PlaceOrder targets Order with description?: string emits OrderPlaced {
-                    precondition "The order can be placed";
-                    behavior $"Validate with ${'${Order.OrderRoot.ensureOwner}'} then place";
-                    postcondition "OrderPlaced is emitted";
+                application service OrderApplication for Order {
+                    method placeOrder(description?: string) {
+                        precondition "The order can be placed";
+                        behavior $"Validate with ${'${Order.OrderRoot.ensureOwner}'} then place";
+                        postcondition "OrderPlaced is emitted";
+                    }
                 }
             }
         `);
@@ -133,8 +142,10 @@ describe('Parsing tests', () => {
         expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
         expect(behaviorParts[1].method?.$refText).toBe('OrderId.normalize');
         expect(behaviorParts[2].text).toBe(' before creating');
-        const command = context.members.find(member => member.$type === 'Command') as { fields?: Array<{ optional: boolean }> } | undefined;
-        expect(command?.fields?.[0].optional).toBe(true);
+        const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
+            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
+        } | undefined;
+        expect(applicationService?.methods?.[0].parameters[0].optional).toBe(true);
         const pricing = context.members.find(member => member.$type === 'DomainService') as {
             methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
         } | undefined;
@@ -145,12 +156,13 @@ describe('Parsing tests', () => {
         const document = await parse([
             'bounded context Ordering {',
             '    aggregate Order { method ensureOwner(); }',
-            '    command PlaceOrder {',
+            '    application service OrderApplication for Order {',
+            '    method placeOrder() {',
             '        behavior "Place the order',
             'after validation";',
             '        behavior $"Check ${Order.ensureOwner}',
             'before placing";',
-            '    }',
+            '    } }',
             '}'
         ].join('\n'));
 
@@ -166,8 +178,17 @@ describe('Parsing tests', () => {
                 }>;
             }>;
         };
-        const command = context.members.find(member => member.$type === 'Command');
-        const behaviors = command?.behaviors ?? [];
+        const service = context.members.find(member => member.$type === 'ApplicationService') as {
+            methods?: Array<{
+                behaviors: Array<{
+                    description: {
+                        plain?: string;
+                        template?: { parts: Array<{ text?: string; method?: { $refText: string } }> };
+                    };
+                }>;
+            }>;
+        } | undefined;
+        const behaviors = service?.methods?.[0].behaviors ?? [];
         const templateParts = behaviors[1].description.template?.parts ?? [];
 
         expect(behaviors[0].description.plain).toBe('Place the order\nafter validation');
@@ -179,7 +200,7 @@ describe('Parsing tests', () => {
 
     test('allows escaping a literal interpolation marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { command Run { behavior $"Literal \\${NotAReference.method} stays text"; } }'
+            'bounded context Escape { application service Runner for Run { method execute() { behavior $"Literal \\${NotAReference.method} stays text"; } } aggregate Run { root entity RunRoot { identifier id: RunId; } identifier value object RunId for RunRoot { raw: string; } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();
@@ -190,8 +211,8 @@ describe('Parsing tests', () => {
         const context = model.declarations[0] as Model['declarations'][number] & {
             members: Array<{ $type: string; behaviors?: Array<{ description: { template?: { parts: Array<{ text?: string; method?: unknown }> } } }> }>;
         };
-        const command = context.members.find(member => member.$type === 'Command');
-        const parts = command?.behaviors?.[0].description.template?.parts ?? [];
+        const service = context.members.find(member => member.$type === 'ApplicationService') as { methods?: Array<{ behaviors?: Array<{ description: { template?: { parts: Array<{ text?: string; method?: unknown }> } } }> }> } | undefined;
+        const parts = service?.methods?.[0].behaviors?.[0].description.template?.parts ?? [];
         expect(parts).toHaveLength(1);
         expect(parts[0].text).toBe('Literal ${NotAReference.method} stays text');
         expect(parts[0].method).toBeUndefined();

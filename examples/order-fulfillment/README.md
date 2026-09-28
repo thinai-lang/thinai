@@ -7,13 +7,13 @@ This example demonstrates the complete Thinai model across multiple files.
 - `strategic.tni` defines core, supporting, and generic subdomains.
 - `context-catalog.tni` declares both canonical bounded contexts and imports their subdomains.
 - `ordering.tni` extends Ordering with tactical DDD types and behavior specifications.
-- `ordering-events.tni` contributes commands, domain events, integration events, policies, read models, and hotspots.
-- `shipping.tni` extends Shipping with a local mirrored identifier and same-context module dependency.
-- `shipping-handlers.tni` handles an integration event from Ordering and contains an EventStorming board.
-- `context-map.tni` selectively imports Ordering and Shipping from the multi-context catalog and defines their relationship.
+- `ordering-events.tni` contributes application-service methods, an integration-event contract, a user-started flow, a read model, and hotspots. `ordering.tni` declares the internal domain event.
+- `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
+- `shipping-handlers.tni` contains an EventStorming reference board.
+- `context-map.tni` selectively imports Ordering and Shipping from the multi-context catalog and defines their customer-supplier and shared-kernel relationships.
 - `common-types.tni` defines a shared-kernel value object.
 
-The model demonstrates explicit aggregate-root entities, constructors and methods with signatures, all four behavior-specification kinds, inline method references, optional fields/parameters, and `List`, `Set`, and `Map` types. It also shows identifier fields, a local Shipping identifier that mirrors the Ordering identifier, component-selective imports, and a module dependency within Shipping.
+The model demonstrates explicit aggregate-root entities, constructors and methods with signatures, aggregate state transitions and event emissions, event-to-integration-event translation, incoming integration-event handling, all four behavior-specification kinds, inline method references, optional fields/parameters, and `List`, `Set`, and `Map` types. It also shows identifier fields, a local Shipping identifier that mirrors the Ordering identifier, component-selective imports, an imported context map, and a module dependency within Shipping.
 
 ## Try It
 
@@ -25,4 +25,4 @@ From the repository root, validate and generate a summary with:
 node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping-handlers.tni -d examples/order-fulfillment/generated
 ```
 
-The example uses a private `OrderPlaced` domain event and publishes the separate `OrderPlacedV1` integration event. Shipping consumes only the integration event.
+The example uses a private `OrderPlaced` domain event and maps it to the separate `OrderPlacedV1` integration contract. Shipping imports both the producer context and context map, and consumes only the IntegrationEvent.

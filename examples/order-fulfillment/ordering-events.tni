@@ -2,23 +2,26 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    command PlaceOrder
-        handled by Customer
-        targets Order
-        with items: List<OrderLine>
-        emits OrderPlaced {
+    application service OrderApplication for Order {
+        method placeOrder(items: List<OrderLine>) invokes Order.OrderRoot.place {
             precondition "The order contains at least one item.";
-            behavior $"Check ${Order.OrderRoot.ensureOwner}, then calculate the total with ${Order.OrderPricing.calculateTotal}.";
-            postcondition "OrderPlaced is emitted for the order.";
+            behavior "Place the order by invoking the aggregate root's place operation.";
+            postcondition "The order is placed.";
         }
 
-    event OrderPlaced caused by PlaceOrder for Order publishes integration OrderPlacedV1 data {
+        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 {
+            behavior "Map the internal event to the public integration contract.";
+        }
+    }
+
+    integration event OrderPlacedV1 data {
         orderId: OrderId;
     }
-    integration event OrderPlacedV1 from OrderPlaced data {
-        orderId: OrderId;
-    }
-    policy ReserveInventory when OrderPlaced then PlaceOrder;
     read model OrderSummary from OrderPlaced;
     hotspot PaymentContract note "Payment API contract is unclear";
+
+    flow PlaceOrder {
+        actor Customer;
+        invoke OrderApplication.placeOrder;
+    }
 }

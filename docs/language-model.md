@@ -5,23 +5,32 @@ across multiple `.tni` files.
 
 ## A Small Model
 
-This example declares a subdomain, bounded context, aggregate, and command:
+This example declares a subdomain, bounded context, aggregate, application-service command method, and domain event:
 
 ```thinai
 subdomain OrderManagement kind core;
 
 bounded context Ordering realizes OrderManagement {
     aggregate Order {
-        root entity OrderRoot {
+        root entity OrderRoot operations {
+            method place() emits OrderPlaced {
+                transition status from Draft to Placed;
+            }
+        } {
             identifier id: OrderId;
+            status: OrderStatus;
         }
         identifier value object OrderId for OrderRoot {
             raw: string;
         }
+        enum OrderStatus { Draft, Placed }
     }
 
-    command PlaceOrder targets Order emits OrderPlaced;
-    event OrderPlaced for Order;
+    event OrderPlaced;
+
+    application service OrderApplication for Order {
+        method placeOrder() invokes Order.OrderRoot.place;
+    }
 }
 ```
 
@@ -54,7 +63,7 @@ bounded context Ordering {}
 bounded context Shipping {}
 
 context map FulfillmentMap {
-    Ordering customer supplier Shipping;
+    Shipping customer supplier Ordering;
 }
 ```
 
@@ -86,21 +95,24 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    command PlaceOrder targets Order emits OrderPlaced;
-    event OrderPlaced for Order;
+    application service OrderApplication for Order { method placeOrder() invokes Order.OrderRoot.place {} }
+    event OrderPlaced;
 }
 ```
 
-When an imported file declares several bounded contexts or shared kernels,
-select the components needed by the importing file. An alias applies to the
-selected component:
+When an imported file declares several bounded contexts, context maps, or shared kernels,
+select the components needed by the importing file. A context map can also be
+selected and imported when a cross-context IntegrationEvent is consumed. An
+alias applies to the selected component:
 
 ```thinai
 import "./contexts.tni" { Ordering as Orders, Shipping };
 ```
 
 The older file-level form `import "./file.tni" as Alias;` is supported only
-when that file contains exactly one bounded context or shared kernel.
+when that file contains exactly one bounded context, context map, or shared
+kernel. Cross-context IntegrationEvent use requires an imported context map
+with an authorized relationship; DomainEvents remain private to their context.
 
 ## Language Tooling
 
