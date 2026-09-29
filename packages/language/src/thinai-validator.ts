@@ -9,7 +9,6 @@ import {
     isReference
 } from 'langium';
 import type {
-    Actor,
     Aggregate,
     ApplicationService,
     BoundedContext,
@@ -67,7 +66,6 @@ export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
     const validator = services.validation.ThinaiValidator;
     const checks: ValidationChecks<ThinaiAstType> = {
-        Actor: validator.checkNamedDeclaration,
         Aggregate: validator.checkAggregate,
         AstNode: validator.checkReferences,
         BoundedContext: validator.checkBoundedContext,
@@ -571,7 +569,7 @@ export class ThinaiValidator {
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
-            'Actor', 'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService',
+            'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService',
             'Factory', 'Flow', 'IntegrationEvent', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
@@ -685,7 +683,7 @@ export class ThinaiValidator {
     }
 
     checkNamedDeclaration(
-        node: Actor | Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
+        node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
         Factory | Flow | IntegrationEvent | Module | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
@@ -693,7 +691,7 @@ export class ThinaiValidator {
     }
 
     private checkDuplicateDeclaration(
-        node: Actor | Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
+        node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
         Factory | Flow | IntegrationEvent | Method | Module | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {

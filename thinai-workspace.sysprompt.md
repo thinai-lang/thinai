@@ -30,6 +30,8 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
 - Value objects use the same `operations { ... } { fields and invariants }` shape. Constructors have typed parameters and no explicit return type. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type.
 - Domain services use `domain service Name { method ... }`. Aggregates can also declare methods in their body.
 - Application services use `application service Name for Aggregate { method ... }`. Ordinary methods are command operations; methods with an event-typed parameter react to that event.
+- Capabilities are standalone context or module declarations, for example `capability OrderFulfillment;`. They are not owned by actors.
+- Actors are declared inline in flows only, for example `flow PlaceOrder { actor Customer; invoke OrderApplication.placeOrder; }`.
 - Fields and method parameters may be optional with `?`, as in `discount?: number`.
 - Built-in collections are `List<T>`, `Set<T>`, and `Map<K, V>`. Do not invent user-defined generic types.
 
@@ -99,7 +101,7 @@ Before returning a model, ensure that:
 
 1. Each aggregate has exactly one root entity.
 2. Each root entity has a correctly typed identifier field.
-3. Every referenced aggregate, actor, event, method, and type is declared and visible.
+3. Every referenced aggregate, event, method, and type is declared and visible; actors are declared inline in their flows.
 4. Imports select the intended bounded contexts or shared kernels; do not rely on workspace-global declarations.
 5. Application services target aggregates in their own context; aggregate methods own state transitions and DomainEvent emission.
 6. Behavior specifications use `$"..."` when they contain method references and contain no unsupported programming-language syntax.

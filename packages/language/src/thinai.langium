@@ -71,7 +71,6 @@ ContextMember:
     | DomainService
     | Repository
     | Factory
-    | Actor
     | DomainEvent
     | IntegrationEvent
     | Flow
@@ -106,7 +105,6 @@ ModuleMember:
     | DomainService
     | Repository
     | Factory
-    | Actor
     | DomainEvent
     | IntegrationEvent
     | Flow
@@ -117,7 +115,7 @@ Subdomain:
     'subdomain' name=ID ('kind' kind=SubdomainKind)? ';'?;
 
 Capability:
-    'capability' name=ID ('owned' 'by' owner=[Actor:QualifiedName])? ';'?;
+    'capability' name=ID ';'?;
 
 Aggregate:
     'aggregate' name=ID '{'
@@ -197,9 +195,6 @@ Repository:
 Factory:
     'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
 
-Actor:
-    'actor' name=ID ('role' role=StringLiteral)? ';'?;
-
 DomainEvent:
     'event' name=ID
     ('data' '{' fields+=Field* '}')?
@@ -212,7 +207,7 @@ IntegrationEvent:
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
-type NamedDeclaration = Actor | Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
+type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
     EnumType | Factory | Flow | IntegrationEvent | Method | Module |
     Repository | Subdomain | ValueObject;
 
@@ -220,7 +215,7 @@ Flow:
     'flow' name=ID '{' elements+=FlowElement* '}' ';'?;
 
 FlowElement:
-    'actor' actor=[Actor:QualifiedName] ';'?
+    'actor' actor=ID ';'?
     | 'invoke' method=[Method:QualifiedName] ';'?;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;

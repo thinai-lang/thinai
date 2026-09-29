@@ -4,8 +4,7 @@ import "./context-map.tni" { FulfillmentMap };
 
 part of bounded context Ordering {
 
-    actor Customer;
-    capability OrderFulfillment owned by Customer;
+    capability OrderFulfillment;
 
     aggregate Order {
         root entity OrderRoot operations {

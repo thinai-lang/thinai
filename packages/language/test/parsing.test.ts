@@ -24,7 +24,6 @@ describe('Parsing tests', () => {
 
             bounded context Ordering realizes OrderManagement {
                 capability OrderFulfillment;
-                actor Customer;
                 aggregate Order {
                     root entity OrderRoot {
                         identifier id: OrderId;
@@ -56,7 +55,13 @@ describe('Parsing tests', () => {
             'Subdomain',
             'BoundedContext'
         ]);
-        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(8);
+        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(7);
+
+        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
+            members?: Array<{ $type: string; elements?: Array<{ actor?: string }> }>;
+        };
+        const flow = context.members?.find(member => member.$type === 'Flow');
+        expect(flow?.elements?.[0]).toMatchObject({ actor: 'Customer' });
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
         expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[1])).toBe(true);

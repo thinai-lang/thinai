@@ -108,8 +108,9 @@ flow PlaceOrder {
 }
 ```
 
-Flow order is significant. Emitted events are derived from the invoked methods
-and need not be repeated in the flow.
+The actor is declared inline in the flow, not as a separate bounded-context or
+module declaration. Flow order is significant. Emitted events are derived from
+the invoked methods and need not be repeated in the flow.
 
 See the [Order Fulfillment example](../examples/order-fulfillment/README.md)
 for a multi-file model with an integration-event consumer.

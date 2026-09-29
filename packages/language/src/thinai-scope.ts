@@ -23,7 +23,6 @@ import {
 } from './generated/ast.js';
 
 const exportedTypes = new Set([
-    'Actor',
     'Aggregate',
     'ApplicationService',
     'BoundedContext',
