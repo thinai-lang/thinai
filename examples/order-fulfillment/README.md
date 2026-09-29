@@ -7,7 +7,7 @@ This example demonstrates the complete Thinai model across multiple files.
 - `strategic.tni` defines core, supporting, and generic subdomains.
 - `context-catalog.tni` declares both canonical bounded contexts and imports their subdomains.
 - `ordering.tni` extends Ordering with tactical DDD types and behavior specifications.
-- `ordering-events.tni` contributes application-service methods, an integration-event contract, and a user-started flow with its inline actor. `ordering.tni` declares the internal domain event and an independent business capability.
+- `ordering-events.tni` contributes application-service methods, an integration-event contract, and a user-started flow that names its initiating actor inline. `ordering.tni` declares the internal domain event and a business capability at context scope.
 - `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
 - `context-map.tni` selectively imports Ordering and Shipping, maps their customer-supplier integration patterns, and connects them through the named `CommonTypes` shared kernel.
 - `common-types.tni` defines a shared-kernel value object.

@@ -112,8 +112,8 @@ declaration order is significant.
 Flows are ordered, user-started sequences of ordinary application-service
 command methods. Event-triggered reactions are represented by event-typed
 methods, not flows. Declare an actor directly in a flow with `actor Customer;`.
-Actors are flow-local; capabilities are declared independently and are not
-owned by actors.
+Actors belong to flow definitions; capabilities are declared at context or
+module scope.
 
 Thinai supports modules, aggregates, root entities, identifier and mirrored
 value objects, entities, value objects, typed methods and constructors, domain
