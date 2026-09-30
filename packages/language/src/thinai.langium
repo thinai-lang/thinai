@@ -57,7 +57,7 @@ SharedKernelRelationship:
 
 ContextMapEndpoint:
     context=[BoundedContext:QualifiedName]
-    ('{' 'integrationPatterns' ':' '[' integrationPatterns+=IntegrationPattern (',' integrationPatterns+=IntegrationPattern)* ']' ';'? '}')?;
+    ('{' 'integrationPatterns' ':' '[' integrationPatterns+=StringLiteral (',' integrationPatterns+=StringLiteral)* ']' ';'? '}')?;
 
 ApplicationService:
     'application' 'service' name=ID 'for' aggregate=[Aggregate:QualifiedName] '{'
@@ -250,12 +250,6 @@ PrimitiveType returns string:
 
 SubdomainKind returns string:
     'core' | 'supporting' | 'generic';
-
-IntegrationPattern returns string:
-    'Conformist'
-    | 'AntiCorruptionLayer'
-    | 'OpenHostService'
-    | 'PublishedLanguage';
 
 QualifiedName returns string:
     ID ('.' ID)*;

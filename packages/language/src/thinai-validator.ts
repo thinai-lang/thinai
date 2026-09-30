@@ -62,6 +62,13 @@ import {
 import type { ThinaiServices } from './thinai-module.js';
 import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
 
+const INTEGRATION_PATTERNS = new Set([
+    'Conformist',
+    'AntiCorruptionLayer',
+    'OpenHostService',
+    'PublishedLanguage'
+]);
+
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
     const validator = services.validation.ThinaiValidator;
@@ -671,6 +678,14 @@ export class ThinaiValidator {
                     property: 'integrationPatterns'
                 });
             }
+            for (const pattern of endpoint.integrationPatterns) {
+                if (!INTEGRATION_PATTERNS.has(pattern)) {
+                    accept('error', `Unknown integration pattern '${pattern}'. Expected one of: ${[...INTEGRATION_PATTERNS].join(', ')}.`, {
+                        node: endpoint,
+                        property: 'integrationPatterns'
+                    });
+                }
+            }
         }
     }
 
@@ -756,20 +771,16 @@ export class ThinaiValidator {
     }
 
     private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {
-        if (isCustomerSupplierRelationship(relationship) &&
-            relationship.customer.context.ref?.name === consumer && relationship.supplier.context.ref?.name === producer) {
-            return true;
+        if (isCustomerSupplierRelationship(relationship)) {
+            return relationship.customer.context.ref?.name === consumer &&
+                relationship.supplier.context.ref?.name === producer;
         }
-
-        const endpoints = this.getContextMapEndpoints(relationship);
-        const consumerEndpoint = endpoints.find(endpoint => endpoint.context.ref?.name === consumer);
-        const producerEndpoint = endpoints.find(endpoint => endpoint.context.ref?.name === producer);
-        if (!consumerEndpoint || !producerEndpoint) {
-            return false;
+        if (isPartnershipRelationship(relationship)) {
+            const left = relationship.left.context.ref?.name;
+            const right = relationship.right.context.ref?.name;
+            return (left === consumer && right === producer) || (right === consumer && left === producer);
         }
-
-        return consumerEndpoint.integrationPatterns.some(pattern => pattern === 'Conformist' || pattern === 'AntiCorruptionLayer') ||
-            producerEndpoint.integrationPatterns.includes('PublishedLanguage');
+        return false;
     }
 
     private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {

@@ -102,13 +102,28 @@ describe('Validating', () => {
             bounded context Ordering {}
             bounded context Shipping {}
             context map Fulfillment {
-                customer Shipping { integrationPatterns: [AntiCorruptionLayer, AntiCorruptionLayer]; }
+                customer Shipping { integrationPatterns: ["AntiCorruptionLayer", "AntiCorruptionLayer"]; }
                     -> supplier Ordering;
             }
         `);
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'An integration pattern may only be listed once per bounded context'
+        ))).toBe(true);
+    });
+
+    test('rejects unknown integration pattern labels', async () => {
+        const document = await parse(`
+            bounded context Ordering {}
+            bounded context Shipping {}
+            context map Fulfillment {
+                customer Shipping { integrationPatterns: ["AntiCorruptionLayre"]; }
+                    -> supplier Ordering;
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            "Unknown integration pattern 'AntiCorruptionLayre'"
         ))).toBe(true);
     });
 

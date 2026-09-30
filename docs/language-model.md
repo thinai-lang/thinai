@@ -65,9 +65,9 @@ shared kernel CommonTypes {}
 
 context map FulfillmentMap {
     customer Shipping {
-        integrationPatterns: [AntiCorruptionLayer];
+        integrationPatterns: ["AntiCorruptionLayer"];
     } -> supplier Ordering {
-        integrationPatterns: [OpenHostService, PublishedLanguage];
+        integrationPatterns: ["OpenHostService", "PublishedLanguage"];
     }
 
     partner Ordering <-> partner Shipping;
@@ -84,9 +84,15 @@ upstream supplier; it describes the relationship direction, not message flow.
 Each endpoint may list its own `integrationPatterns`: `Conformist` and
 `AntiCorruptionLayer` typically describe the downstream side, while
 `OpenHostService` and `PublishedLanguage` describe the upstream side. These are
-PascalCase pattern values, not declarations of implementation artifacts.
+quoted labels from a predefined set, recorded as descriptive metadata. They do
+not assert that an implementation conforms to a pattern or affect event
+authorization. Only their spelling and uniqueness are validated; unknown and
+duplicate labels are rejected.
 
-`partner ... <-> partner ...` expresses a symmetric partnership.
+`partner ... <-> partner ...` expresses a symmetric partnership. An imported
+customer-supplier relationship authorizes the customer to consume the
+supplier's IntegrationEvents; an imported partnership authorizes consumption
+in either direction. Pattern labels do not affect this authorization.
 `separateWays ... -x- ...` expresses a deliberate lack of integration and does
 not take integration patterns. A `sharedKernel` relationship names the actual
 shared-kernel component and lists the bounded contexts that share it.

@@ -78,15 +78,17 @@ declarations visible. A context map must also be imported for an authorized
 cross-context integration-event relationship. Only IntegrationEvents cross
 bounded-context boundaries; DomainEvents remain private. Customer-supplier
 relationships point from customer/downstream to supplier/upstream, while
-`integrationPatterns` are listed on the context endpoint where they apply. An
-event consumer is authorized by the customer-supplier relationship, a consumer
-side `Conformist` or `AntiCorruptionLayer`, or a producer side
-`PublishedLanguage`. `OpenHostService` alone does not authorize event handling.
+`integrationPatterns` are quoted labels from a predefined set, listed on the
+endpoint they describe. They are descriptive metadata: they do not assert
+implementation conformance and do not affect event authorization. A
+customer-supplier relationship authorizes the customer to consume supplier
+IntegrationEvents; a partnership authorizes consumption in either direction.
 
 Partnerships use a bidirectional `<->` edge and may list side-specific
 integration patterns. `SeparateWays` uses the symmetric `-x-` edge and does not
-allow integration patterns. A `sharedKernel` relationship references the
-declared shared-kernel component and lists its participating bounded contexts.
+allow integration patterns or authorize event consumption. A `sharedKernel`
+relationship references the declared shared-kernel component and lists its
+participating bounded contexts; it does not authorize event consumption.
 
 For an IntegrationEvent nested in a module, import its owning bounded context
 and use the qualified module path. Modules organize one bounded context;

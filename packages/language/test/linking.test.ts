@@ -70,8 +70,7 @@ describe('Linking tests', () => {
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
             `import "./ordering.tni"; import "./shipping.tni"; context map Fulfillment {
-                customer Shipping { integrationPatterns: [AntiCorruptionLayer]; }
-                    -> supplier Ordering { integrationPatterns: [OpenHostService, PublishedLanguage]; };
+                customer Shipping -> supplier Ordering;
             }`
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
@@ -184,7 +183,7 @@ describe('Linking tests', () => {
         ))).toBe(true);
     });
 
-    test('authorizes event consumption through integration patterns on the correct endpoints', async () => {
+    test('authorizes event consumption across a partnership without pattern labels', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
             'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
@@ -193,8 +192,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/context-map.tni'),
             `import "./contexts.tni";
              context map Fulfillment {
-                 partner Shipping { integrationPatterns: [AntiCorruptionLayer]; }
-                    <-> partner Ordering { integrationPatterns: [PublishedLanguage]; }
+                 partner Shipping <-> partner Ordering
              }`
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
@@ -216,7 +214,7 @@ describe('Linking tests', () => {
         ))).toBe(false);
     });
 
-    test('does not authorize event consumption from an open-host-service pattern alone', async () => {
+    test('pattern labels do not control event authorization', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
             'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
@@ -225,7 +223,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/context-map.tni'),
             `import "./contexts.tni";
              context map Fulfillment {
-                 partner Shipping <-> partner Ordering { integrationPatterns: [OpenHostService]; }
+                 partner Shipping <-> partner Ordering { integrationPatterns: ["OpenHostService"]; }
              }`
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
@@ -242,6 +240,96 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(false);
+    });
+
+    test('customer-supplier authorization does not permit supplier consumption of customer events', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping { integration event ShipmentSentV1; }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni";
+             context map Fulfillment {
+                 customer Shipping -> supplier Ordering;
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+             part of bounded context Ordering {
+                 application service OrderApplication for Order {
+                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(true);
+    });
+
+    test('authorizes partnership event consumption in the reverse direction too', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1; }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni";
+             context map Fulfillment {
+                 partner Shipping <-> partner Ordering;
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+             part of bounded context Ordering {
+                 application service OrderApplication for Order {
+                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(false);
+    });
+
+    test('separate-ways relationships do not authorize event consumption', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1; }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni";
+             context map Fulfillment {
+                 separateWays Ordering -x- Shipping;
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+             part of bounded context Ordering {
+                 application service OrderApplication for Order {
+                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'requires an imported context map with an authorized relationship'
         ))).toBe(true);
     });

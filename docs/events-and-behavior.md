@@ -91,10 +91,12 @@ to a committed domain event; broker and outbox mechanics are outside the DSL.
 Cross-context integration-event use requires an explicit bounded-context
 import and an imported context map with an authorized, correctly directed
 relationship. The customer-to-supplier arrow points from the downstream
-consumer to the upstream producer. The consumer is authorized by that
-relationship, a consumer-side `Conformist` or `AntiCorruptionLayer`, or a
-producer-side `PublishedLanguage`. `OpenHostService` alone does not authorize
-event handling. Context maps do not make domain events public.
+consumer to the upstream producer. This relationship authorizes the customer to
+consume the supplier's IntegrationEvents; a partnership authorizes consumption
+in either direction. `integrationPatterns` are descriptive labels and do not
+affect authorization or assert implementation conformance. Separate-ways and
+shared-kernel relationships do not authorize event handling. Context maps do
+not make domain events public.
 
 ## Flows
 

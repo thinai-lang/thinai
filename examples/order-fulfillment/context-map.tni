@@ -3,9 +3,9 @@ import "./common-types.tni" { CommonTypes };
 
 context map FulfillmentMap {
     customer Shipping {
-        integrationPatterns: [AntiCorruptionLayer];
+        integrationPatterns: ["AntiCorruptionLayer"];
     } -> supplier Orders {
-        integrationPatterns: [OpenHostService, PublishedLanguage];
+        integrationPatterns: ["OpenHostService", "PublishedLanguage"];
     }
 
     sharedKernel CommonTypes {
