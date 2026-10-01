@@ -5,22 +5,22 @@ import "./context-map.tni" { FulfillmentMap };
 import "./common-types.tni" as Common;
 
 part of bounded context Shipping {
-    identifier value object OrderId mirrors Ordering.Order.OrderId {
+    value object OrderId mirrors Ordering.Order.OrderId {
         raw: string;
     }
 
     aggregate Shipment {
-        root entity ShipmentRoot operations {
+        root entity Shipment {
             method start() emits ShipmentStarted {
                 transition status from Pending to Started;
             }
-        } {
+
             identifier id: ShipmentId;
             orderId: OrderId;
             status: ShipmentStatus;
             currency: Common.Currency;
         }
-        identifier value object ShipmentId for ShipmentRoot {
+        value object ShipmentId {
             raw: string;
         }
     }
@@ -37,7 +37,7 @@ part of bounded context Shipping {
     }
 
     application service ShipmentApplication for Shipment {
-        method createShipment(orderId: OrderId) invokes Shipment.ShipmentRoot.start {
+        method createShipment(orderId: OrderId) invokes Shipment.Shipment.start {
             behavior "First, authorize the Common.Role.FulfillmentOperator role for creating a shipment with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment by invoking the aggregate root's start operation.";
         }
 

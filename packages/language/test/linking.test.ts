@@ -31,17 +31,18 @@ describe('Linking tests', () => {
                 subdomain OrderManagement kind core;
                 bounded context Ordering realizes OrderManagement {
                     aggregate Order {
-                        root entity OrderRoot operations { method place() emits OrderPlaced {} } {
+                        root entity Order {
+                            method place() emits OrderPlaced {}
                             identifier id: OrderId;
                             status: OrderStatus;
                         }
-                        identifier value object OrderId for OrderRoot {
+                        value object OrderId {
                             raw: string;
                         }
                         enum OrderStatus { Draft, Placed }
                     }
                     application service OrderApplication for Order {
-                        method placeOrder() invokes Order.OrderRoot.place {}
+                        method placeOrder() invokes Order.Order.place {}
                         method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 {}
                     }
                     event OrderPlaced;
@@ -63,7 +64,7 @@ describe('Linking tests', () => {
         const shippingContext = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             `bounded context Shipping {
-                aggregate Shipment { root entity ShipmentRoot { identifier id: ShipmentId; } identifier value object ShipmentId for ShipmentRoot { raw: string; } }
+                aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
                 application service ShipmentApplication for Shipment { method createShipment() {} }
             }`
         );
@@ -138,10 +139,10 @@ describe('Linking tests', () => {
 
                 bounded context Shipping {
                     aggregate Shipment {
-                        root entity ShipmentRoot {
+                        root entity Shipment {
                             identifier id: ShipmentId;
                         }
-                        identifier value object ShipmentId for ShipmentRoot {
+                        value object ShipmentId {
                             raw: string;
                         }
                     }
@@ -168,7 +169,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `import "./ordering.tni";
              bounded context Shipping {
-                 aggregate Shipment { root entity ShipmentRoot { identifier id: ShipmentId; } identifier value object ShipmentId for ShipmentRoot { raw: string; } }
+                 aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
                  application service ShipmentApplication for Shipment {
                      method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1) {}
                  }
@@ -346,11 +347,11 @@ describe('Linking tests', () => {
 
                 bounded context Ordering {
                     aggregate Order {
-                        root entity OrderRoot {
+                        root entity Order {
                             identifier id: OrderId;
                             currency: CommonTypes.Currency;
                         }
-                        identifier value object OrderId for OrderRoot {
+                        value object OrderId {
                             raw: string;
                         }
                     }
@@ -367,16 +368,16 @@ describe('Linking tests', () => {
                 import "./ordering.tni";
 
                 bounded context Shipping {
-                    identifier value object OrderId mirrors Ordering.Order.OrderId {
+                    value object OrderId mirrors Ordering.Order.OrderId {
                         raw: string;
                     };
 
                     aggregate Shipment {
-                        root entity ShipmentRoot {
+                        root entity Shipment {
                             identifier id: ShipmentId;
                             orderId: OrderId;
                         }
-                        identifier value object ShipmentId for ShipmentRoot {
+                        value object ShipmentId {
                             raw: string;
                         };
                     };
@@ -412,7 +413,7 @@ describe('Linking tests', () => {
         const shippingModel = shipping.parseResult.value as Model;
         const orderingContext = orderingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
         const orderAggregate = orderingContext.members.find(member => member.$type === 'Aggregate');
-        const orderRoot = orderAggregate?.members?.find(member => member.name === 'OrderRoot');
+        const orderRoot = orderAggregate?.members?.find(member => member.name === 'Order');
         const shippingPart = shippingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
         const mirroredId = shippingPart.members.find(member => member.$type === 'ValueObject' && member.mirrors);
         const publicModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Public');
@@ -453,18 +454,17 @@ describe('Linking tests', () => {
             URI.file('/workspace/ordering.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot operations {
+                    root entity Order {
                         method ensureOwner();
-                    } {
                         identifier id: OrderId;
                     }
-                    identifier value object OrderId for OrderRoot {
+                    value object OrderId {
                         raw: string;
                     }
                 }
                 application service OrderApplication for Order {
-                    method placeOrder() invokes Order.OrderRoot.ensureOwner {
-                        behavior "Check [[Order.OrderRoot.ensureOwner]] before placing.";
+                    method placeOrder() invokes Order.Order.ensureOwner {
+                        behavior "Check [[Order.Order.ensureOwner]] before placing.";
                     }
                 }
             }`
@@ -497,7 +497,7 @@ describe('Linking tests', () => {
         expect(part?.target?.ref).toBe(method);
         expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
 
-        const methodOffset = ordering.textDocument.getText().indexOf('Order.OrderRoot.ensureOwner') + 'Order.OrderRoot.'.length;
+        const methodOffset = ordering.textDocument.getText().indexOf('Order.Order.ensureOwner') + 'Order.Order.'.length;
         const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(ordering, {
             textDocument: { uri: ordering.uri.toString() },
             position: ordering.textDocument.positionAt(methodOffset)
@@ -510,18 +510,18 @@ describe('Linking tests', () => {
             URI.file('/workspace/factory-links.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot {
+                    root entity Order {
                         identifier id: OrderId;
                         status: string;
                     }
-                    identifier value object OrderId for OrderRoot { raw: string; }
+                    value object OrderId { raw: string; }
                     factory OrderFactory for Order operations {
-                        method createOrder(id: OrderId) returns OrderRoot;
+                        method createOrder(id: OrderId) returns Order;
                     }
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.OrderRoot.status]] and [[Order.OrderId.raw]].";
+                        behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
                     }
                 }
             }`
@@ -564,8 +564,8 @@ describe('Linking tests', () => {
             URI.file('/workspace/invalid-factory.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot { identifier id: OrderId; }
-                    identifier value object OrderId for OrderRoot { raw: string; }
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
                     value object Other { value: string; }
                     factory OrderFactory for Order operations {
                         method createOrder() returns Other;
@@ -616,16 +616,16 @@ describe('Linking tests', () => {
             URI.file('/workspace/unresolved-behavior.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot {
+                    root entity Order {
                         identifier id: OrderId;
                     }
-                    identifier value object OrderId for OrderRoot {
+                    value object OrderId {
                         raw: string;
                     }
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior "Check [[Order.OrderRoot.missingMethod]] before placing.";
+                        behavior "Check [[Order.Order.missingMethod]] before placing.";
                     }
                 }
             }`
@@ -635,7 +635,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes("Could not resolve reference to BehaviorSpecificationTarget named 'Order.OrderRoot.missingMethod'"))
+            String(diagnostic.message).includes("Could not resolve reference to BehaviorSpecificationTarget named 'Order.Order.missingMethod'"))
         ).toBe(true);
     });
 });

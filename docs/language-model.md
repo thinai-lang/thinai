@@ -12,15 +12,14 @@ subdomain OrderManagement kind core;
 
 bounded context Ordering realizes OrderManagement {
     aggregate Order {
-        root entity OrderRoot operations {
+        root entity Order {
             method place() emits OrderPlaced {
                 transition status from Draft to Placed;
             }
-        } {
             identifier id: OrderId;
             status: OrderStatus;
         }
-        identifier value object OrderId for OrderRoot {
+        value object OrderId {
             raw: string;
         }
         enum OrderStatus { Draft, Placed }
@@ -29,14 +28,14 @@ bounded context Ordering realizes OrderManagement {
     event OrderPlaced;
 
     application service OrderApplication for Order {
-        method placeOrder() invokes Order.OrderRoot.place;
+        method placeOrder() invokes Order.Order.place;
     }
 }
 ```
 
 An aggregate has exactly one root entity. The root and its identifier value
 object are siblings inside the aggregate, and the root has an `identifier`
-field typed by that identifier value object.
+field typed by that value object.
 
 ## Subdomains and Bounded Contexts
 
@@ -121,7 +120,7 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    application service OrderApplication for Order { method placeOrder() invokes Order.OrderRoot.place {} }
+    application service OrderApplication for Order { method placeOrder() invokes Order.Order.place {} }
     event OrderPlaced;
 }
 ```

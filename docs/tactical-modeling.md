@@ -15,14 +15,14 @@ optional with `?`. Built-in collections are `List<T>`, `Set<T>`, and
 ```thinai
 bounded context Ordering {
     aggregate Order {
-        root entity OrderRoot {
+        root entity Order {
             identifier id: OrderId;
             status: OrderStatus;
             lines: List<OrderLine>;
             customerMemo?: string;
         }
 
-        identifier value object OrderId for OrderRoot {
+        value object OrderId {
             raw: string;
         }
 
@@ -45,7 +45,7 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 bounded context Shipping {
-    identifier value object OrderId mirrors Ordering.Order.OrderId {
+    value object OrderId mirrors Ordering.Order.OrderId {
         raw: string;
     }
 }
@@ -53,30 +53,31 @@ bounded context Shipping {
 
 ## Operations and Domain Constraints
 
-Entity and value-object constructors and methods go in an `operations` block,
-before the fields and invariants block. Constructors take typed parameters and
-return their owning type implicitly. Methods may declare a return type with
-`returns`:
+Entity and value-object bodies contain fields, constructors, and methods at the
+same level; write constructors and methods before fields. Invariants may appear
+in constructor and method bodies, but not beside fields. Constructors take typed
+parameters and return their owning type implicitly. Methods may declare a return
+type with `returns`:
 
 ```thinai
 bounded context Ordering {
     aggregate Order {
-        root entity OrderRoot operations {
+        root entity Order {
             constructor(id: OrderId) {
                 precondition "The identifier is non-empty.";
                 postcondition "The order has an identifier.";
             }
-            method ensureOwner() returns boolean;
-        } {
+            method ensureOwner() returns boolean {
+                invariant "An order has an owner; check [[Order.owner]].";
+            }
             identifier id: OrderId;
             owner: string;
-            invariant "An order must have an owner; check [[OrderRoot.owner]] and [[OrderRoot.ensureOwner]].";
         }
-        identifier value object OrderId for OrderRoot {
+        value object OrderId {
             raw: string;
         }
         factory OrderFactory for Order operations {
-            method createOrder() returns OrderRoot;
+            method createOrder() returns Order;
         }
     }
 }
@@ -96,10 +97,10 @@ Repositories and factories refer to their target aggregate:
 ```thinai
 bounded context Ordering {
     aggregate Order {
-        root entity OrderRoot {
+        root entity Order {
             identifier id: OrderId;
         }
-        identifier value object OrderId for OrderRoot {
+        value object OrderId {
             raw: string;
         }
         repository OrderRepository for Order;

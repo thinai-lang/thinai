@@ -284,8 +284,8 @@ export class ThinaiValidator {
             return;
         }
         const identifierType = field.type?.ref;
-        if (!identifierType || !isValueObject(identifierType) || !identifierType.identifier) {
-            accept('error', 'An identifier field must reference an identifier value object.', {
+        if (!identifierType || !isValueObject(identifierType)) {
+            accept('error', 'An identifier field must reference a value object.', {
                 node: field,
                 property: 'type'
             });
@@ -498,31 +498,10 @@ export class ThinaiValidator {
     checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(valueObject, accept);
         this.checkFieldMethodNameConflicts(valueObject.fields, valueObject.methods, accept);
-        if (valueObject.identifier && !valueObject.identifierOf && !valueObject.mirrors) {
-            accept('error', 'An identifier value object must identify an entity or mirror another identifier.', {
-                node: valueObject,
-                property: 'name'
-            });
-        }
-        if (valueObject.identifierOf?.ref) {
-            const entity = valueObject.identifierOf.ref;
-            if (!entity.root) {
-                accept('error', 'An identifier value object must identify an aggregate root entity.', {
-                    node: valueObject,
-                    property: 'identifierOf'
-                });
-            }
-            if (entity.$container !== valueObject.$container) {
-                accept('error', 'An identifier value object must be declared in the same aggregate as its entity.', {
-                    node: valueObject,
-                    property: 'identifierOf'
-                });
-            }
-        }
         if (valueObject.mirrors?.ref) {
             const source = valueObject.mirrors.ref;
-            if (!source.identifier) {
-                accept('error', 'A mirrored value object must target an identifier value object.', {
+            if (!this.isIdentifierValueObject(source)) {
+                accept('error', 'A mirrored value object must target a value object used as an aggregate-root identifier.', {
                     node: valueObject,
                     property: 'mirrors'
                 });
@@ -533,13 +512,23 @@ export class ThinaiValidator {
                     property: 'mirrors'
                 });
             }
-            if (!valueObject.identifier) {
-                accept('error', 'A mirrored identifier must be declared as an identifier value object.', {
-                    node: valueObject,
-                    property: 'mirrors'
-                });
-            }
         }
+    }
+
+    private isIdentifierValueObject(valueObject: ValueObject, visited = new Set<ValueObject>()): boolean {
+        if (visited.has(valueObject)) {
+            return false;
+        }
+        visited.add(valueObject);
+
+        const aggregate = valueObject.$container;
+        const isRootIdentifier = isAggregate(aggregate) && aggregate.members.some(member =>
+            isEntity(member) && member.root && member.fields.some(field =>
+                field.identifier && field.type?.ref === valueObject
+            )
+        );
+        return isRootIdentifier || (valueObject.mirrors?.ref !== undefined &&
+            this.isIdentifierValueObject(valueObject.mirrors.ref, visited));
     }
 
     checkModule(module: Module, accept: ValidationAcceptor): void {

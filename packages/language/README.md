@@ -13,15 +13,14 @@ subdomain OrderManagement kind core;
 
 bounded context Ordering realizes OrderManagement {
     aggregate Order {
-        root entity OrderRoot operations {
+        root entity Order {
             method place() emits OrderPlaced {
                 transition status from Draft to Placed;
             }
-        } {
             identifier id: OrderId;
             status: OrderStatus;
         }
-        identifier value object OrderId for OrderRoot { raw: string; }
+        value object OrderId { raw: string; }
         enum OrderStatus { Draft, Placed }
     }
     event OrderPlaced;
@@ -34,7 +33,7 @@ import "./ordering.tni";
 
 part of bounded context Ordering {
     application service OrderApplication for Order {
-        method placeOrder(items: List<OrderLine>) invokes Order.OrderRoot.place {
+        method placeOrder(items: List<OrderLine>) invokes Order.Order.place {
             behavior "Place the order through its aggregate root.";
         }
 

@@ -132,15 +132,12 @@ AggregateMember:
 
 Entity:
     (root?='root')? 'entity' name=ID ('extends' base=[Entity:QualifiedName])?
-    ('operations' '{' constructors+=Constructor* methods+=Method* '}')?
-    ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
+    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
 
 ValueObject:
-    (identifier?='identifier')? 'value' 'object' name=ID
-    ('for' identifierOf=[Entity:QualifiedName])?
+    'value' 'object' name=ID
     ('mirrors' mirrors=[ValueObject:QualifiedName])?
-    ('operations' '{' constructors+=Constructor* methods+=Method* '}')?
-    ('{' fields+=Field* invariants+=Invariant* '}')? ';'?;
+    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
 
 EnumType:
     'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ';'?;

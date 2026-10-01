@@ -25,21 +25,20 @@ describe('Validating', () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot operations {
+                    root entity Order {
                         method place() emits OrderPlaced, OrderAudited {
                             transition status from Draft to Placed;
                         }
-                    } {
                         identifier id: OrderId;
                         status: OrderStatus;
                     }
-                    identifier value object OrderId for OrderRoot {
+                    value object OrderId {
                         raw: string;
                     }
                     enum OrderStatus { Draft, Placed }
                 }
                 application service OrderApplication for Order {
-                    method placeOrder() invokes Order.OrderRoot.place {}
+                    method placeOrder() invokes Order.Order.place {}
                 }
                 event OrderPlaced;
                 event OrderAudited;
@@ -49,10 +48,24 @@ describe('Validating', () => {
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
+    test('requires identifier fields to reference value objects', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: string; }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'An identifier field must reference a value object.'
+        ))).toBe(true);
+    });
+
     test('requires services to target an aggregate in their own context', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { aggregate Order { root entity OrderRoot { identifier id: OrderId; } identifier value object OrderId for OrderRoot { raw: string; } } }'
+            'bounded context Ordering { aggregate Order { root entity Order { identifier id: OrderId; } value object OrderId { raw: string; } } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),

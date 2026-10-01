@@ -22,15 +22,16 @@ describe('LSP services', () => {
             URI.file('/workspace/behavior-highlighting.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot operations { method place(); } {
+                    root entity Order {
+                        method place();
                         identifier id: OrderId;
                         status: string;
                     }
-                    identifier value object OrderId for OrderRoot { raw: string; }
+                    value object OrderId { raw: string; }
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior "Place with [[Order.OrderRoot.place]] while status is [[Order.OrderRoot.status]]";
+                        behavior "Place with [[Order.Order.place]] while status is [[Order.Order.status]]";
                     }
                 }
             }`
@@ -47,8 +48,8 @@ describe('LSP services', () => {
         const decoded = SemanticTokensDecoder.decode(tokens, provider!.tokenTypes, source);
 
         expect(decoded.filter(token => token.text.startsWith('Order.')).map(token => [token.text, token.tokenType])).toEqual([
-            ['Order.OrderRoot.place', 'method'],
-            ['Order.OrderRoot.status', 'property']
+            ['Order.Order.place', 'method'],
+            ['Order.Order.status', 'property']
         ]);
     });
 

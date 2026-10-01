@@ -28,10 +28,10 @@ Welcome to your Langium VSCode extension. This folder contains all necessary fil
 
 ## Debug the extension host runtime
 
-To start VS Code with the extension-host inspector enabled on port `9230`, run this from the workspace root:
+To launch VS Code with the local Thinai extension loaded in development mode and the extension-host inspector enabled on port `9230`, run this from the workspace root:
 
 ```bash
-code --inspect-extensions=9230 .
+code --inspect-extensions=9230 --extensionDevelopmentPath="$PWD/packages/extension" "$PWD"
 ```
 
 In the workspace's **Run and Debug** view, select **Attach to Thinai Extension Host (temporary)** and start debugging to attach to that runtime. This configuration is in [`.vscode/launch.json`](../../.vscode/launch.json).

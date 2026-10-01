@@ -20,16 +20,15 @@ domain events:
 ```thinai
 bounded context Ordering {
     aggregate Order {
-        root entity OrderRoot operations {
+        root entity Order {
             method place() emits OrderPlaced {
                 transition status from Draft to Placed;
             }
-        } {
             status: OrderStatus;
         }
         enum OrderStatus { Draft, Placed }
         factory OrderFactory for Order operations {
-            method createOrder() returns OrderRoot;
+            method createOrder() returns Order;
         }
     }
 
@@ -37,9 +36,9 @@ bounded context Ordering {
 
     application service OrderApplication for Order {
         method placeOrder(items: List<OrderLine>)
-            invokes Order.OrderRoot.place, Order.OrderFactory.createOrder {
+            invokes Order.Order.place, Order.OrderFactory.createOrder {
             precondition "The order contains at least one item.";
-            behavior "Create the order through [[Order.OrderFactory.createOrder]], then place it using [[Order.OrderRoot.place]] while its status is [[Order.OrderRoot.status]].";
+            behavior "Create the order through [[Order.OrderFactory.createOrder]], then place it using [[Order.Order.place]] while its status is [[Order.Order.status]].";
         }
     }
 }

@@ -25,7 +25,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('generates a valid single-file ordering model', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai model for an Ordering bounded context. Declare root entity OrderRoot and identifier value object OrderId for OrderRoot as sibling members inside aggregate Order; never nest the value object in the entity. Give OrderRoot the field identifier id: OrderId; and OrderId the field raw: string;. Declare event OrderPlaced. Give OrderRoot a place method that emits OrderPlaced. Add application service OrderApplication for Order with method placeOrder that invokes Order.OrderRoot.place. Keep all declarations in the same file and make all references resolve.',
+            'Generate a valid, single-file Thinai model for an Ordering bounded context. Declare root entity Order and value object OrderId as sibling members inside aggregate Order; never nest the value object in the entity. Give Order the field identifier id: OrderId; and OrderId the field raw: string;. Declare event OrderPlaced. Give Order a place method that emits OrderPlaced. Add application service OrderApplication for Order with method placeOrder that invokes Order.Order.place. Keep all declarations in the same file and make all references resolve.',
             context
         );
         return {
@@ -38,7 +38,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('uses linked behavior specifications for command logic', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai Ordering model. Use the exact structure root entity OrderRoot operations { method ensureOwner(); method place() emits OrderPlaced; } { identifier id: OrderId; invariant "A valid order has an owner; check [[OrderRoot.ensureOwner]]."; } followed by sibling declaration identifier value object OrderId for OrderRoot { raw: string; }. Do not put the value object inside the entity. Define application service OrderApplication for Order with method placeOrder invokes Order.OrderRoot.place { precondition "The order can be placed."; behavior "Check [[Order.OrderRoot.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
+            'Generate a valid, single-file Thinai Ordering model. Use the structure root entity Order { constructor(id: OrderId) { invariant "A valid order has an identifier."; } method ensureOwner() { invariant "A valid order has an owner."; } method place() emits OrderPlaced; identifier id: OrderId; } followed by sibling declaration value object OrderId { raw: string; }. Do not put the value object inside the entity. Define application service OrderApplication for Order with method placeOrder invokes Order.Order.place { precondition "The order can be placed."; behavior "Check [[Order.Order.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
             context
         );
         const lowerCode = generated.code.toLowerCase();
@@ -60,13 +60,13 @@ describe('Thinai understanding evaluations', () => {
     evaluation('explains a behavior specification and its method reference', async (context: EvalContext) => {
         const source = `bounded context Ordering {
             aggregate Order {
-                root entity OrderRoot operations {
-                    method ensureOwner();
-                } {
+                root entity Order {
+                    method ensureOwner() {
+                        invariant "An order must have an owner; check [[Order.Order.ensureOwner]]";
+                    }
                     identifier id: OrderId;
-                    invariant "An order must have an owner; check [[OrderRoot.ensureOwner]]";
                 }
-                identifier value object OrderId for OrderRoot {
+                value object OrderId {
                     raw: string;
                 }
             }

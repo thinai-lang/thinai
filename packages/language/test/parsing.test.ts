@@ -25,17 +25,16 @@ describe('Parsing tests', () => {
             bounded context Ordering realizes OrderManagement {
                 capability OrderFulfillment;
                 aggregate Order {
-                    root entity OrderRoot {
+                    root entity Order {
                         identifier id: OrderId;
-                        invariant "An order must have an owner";
                     }
-                    identifier value object OrderId for OrderRoot {
+                    value object OrderId {
                         raw: string;
                     }
                 }
 
                 application service OrderApplication for Order {
-                    method placeOrder(items: string) invokes Order.OrderRoot.place {}
+                    method placeOrder(items: string) invokes Order.Order.place {}
                     method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1, OrderPlacedAuditV1 {}
                 }
                 event OrderPlaced data {
@@ -84,36 +83,34 @@ describe('Parsing tests', () => {
         const document = await parse(s`
             bounded context Ordering {
                 aggregate Order {
-                    root entity OrderRoot operations {
+                    root entity Order {
                         constructor(id: OrderId) {
                             invariant "An order must have an identifier";
                             precondition "The id must be non-empty";
                             behavior "Normalize an order's id with [[OrderId.normalize]] before creating";
                             postcondition "The identifier is set";
                         }
-                        method ensureOwner();
-                    }
-                    {
+                        method ensureOwner() {
+                            invariant "An order has a valid owner.";
+                        }
                         identifier id: OrderId;
                     }
-                    identifier value object OrderId for OrderRoot operations {
+                    value object OrderId {
                         method normalize() returns string;
-                    }
-                    {
                         raw: string;
                     }
-                    invariant "Placed orders retain [[OrderRoot.ensureOwner]]";
+                    invariant "Placed orders retain [[Order.ensureOwner]]";
                     method addLines(lines: List<OrderLine>) returns Order;
                 }
                 domain service Pricing {
                     method calculate(lines: List<OrderLine>, currency?: Currency) returns Money {
-                        behavior "Calculate a total for [[Order.OrderRoot.ensureOwner]]";
+                        behavior "Calculate a total for [[Order.Order.ensureOwner]]";
                     }
                 }
                 application service OrderApplication for Order {
                     method placeOrder(description?: string) {
                         precondition "The order can be placed";
-                        behavior "Validate with [[Order.OrderRoot.ensureOwner]] then place";
+                        behavior "Validate with [[Order.Order.ensureOwner]] then place";
                         postcondition "OrderPlaced is emitted";
                     }
                 }
@@ -129,17 +126,19 @@ describe('Parsing tests', () => {
             $type: string;
             name: string;
             members?: MemberShape[];
-            constructors?: Array<{ behaviors: BehaviorShape[] }>;
-            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
+            constructors?: Array<{ behaviors: BehaviorShape[]; invariants: unknown[] }>;
+            methods?: Array<{ parameters: Array<{ optional: boolean }>; invariants: unknown[] }>;
         };
         const context = model?.declarations[0] as Model['declarations'][number] & { members: MemberShape[] };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
-        const root = aggregate?.members?.find(member => member.name === 'OrderRoot');
+        const root = aggregate?.members?.find(member => member.name === 'Order');
         const behaviorParts = root?.constructors?.[0].behaviors[0].description.parts ?? [];
         expect(behaviorParts).toHaveLength(3);
         expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
         expect(behaviorParts[1].target?.$refText).toBe('OrderId.normalize');
         expect(behaviorParts[2].text).toBe(' before creating');
+        expect(root?.constructors?.[0].invariants).toHaveLength(1);
+        expect(root?.methods?.[0].invariants).toHaveLength(1);
         const applicationService = context.members.find(member => member.$type === 'ApplicationService');
         expect(applicationService?.methods?.[0].parameters[0].optional).toBe(true);
         const pricing = context.members.find(member => member.$type === 'DomainService');
@@ -187,7 +186,7 @@ describe('Parsing tests', () => {
 
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { application service Runner for Run { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity RunRoot { identifier id: RunId; } identifier value object RunId for RunRoot { raw: string; } } }'
+            'bounded context Escape { application service Runner for Run { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity Run { identifier id: RunId; } value object RunId { raw: string; } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();

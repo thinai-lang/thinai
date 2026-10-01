@@ -7,9 +7,9 @@ part of bounded context Ordering {
     capability OrderFulfillment;
 
     aggregate Order {
-        root entity OrderRoot operations {
+        root entity Order {
             constructor(id: OrderId, owner: string) {
-                invariant "An order must have an identifier and an owner.";
+                invariant "An order must have an owner; check [[Order.ensureOwner]].";
                 precondition "The supplied identifier is non-empty.";
                 behavior "Normalize the identifier with [[OrderId.normalize]] before creating the order.";
                 postcondition "The order has an identifier and owner.";
@@ -18,7 +18,7 @@ part of bounded context Ordering {
             method place() emits OrderPlaced {
                 transition status from Draft to Placed;
             }
-        } {
+
             identifier id: OrderId;
             owner: string;
             currency: Common.Currency;
@@ -28,19 +28,18 @@ part of bounded context Ordering {
             labels: Set<string>;
             quantities: Map<string, number>;
             externalReference?: string;
-            invariant "An order must have an owner; check [[OrderRoot.ensureOwner]].";
         }
 
-        identifier value object OrderId for OrderRoot operations {
+        value object OrderId {
             constructor(raw: string) {
+                invariant "An order identifier is non-empty.";
                 precondition "The raw identifier is non-empty.";
                 behavior "Normalize the value with [[OrderId.normalize]].";
                 postcondition "The identifier value is normalized.";
             }
             method normalize() returns string;
-        } {
+
             raw: string;
-            invariant "An order identifier is non-empty.";
         }
 
         value object OrderLine {
@@ -55,7 +54,7 @@ part of bounded context Ordering {
         domain service OrderPricing {
             method calculateTotal(amount: number, adjustments?: List<number>) returns number {
                 precondition "The amount is non-negative.";
-                behavior "Validate the order with [[OrderRoot.ensureOwner]], then calculate its total.";
+                behavior "Validate the order with [[Order.ensureOwner]], then calculate its total.";
                 postcondition "The returned total includes all adjustments.";
             }
         }

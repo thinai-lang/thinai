@@ -12,8 +12,8 @@ describe('TextMate highlighting', () => {
         expect(grammar.repository['template-interpolation']).toBeUndefined();
         expect(grammar.patterns.filter((pattern: { name?: string }) => pattern.name === 'string.quoted.double.thinai' || pattern.name === 'string.quoted.single.thinai')).toHaveLength(2);
         expect(reference.patterns[0].name).toBe('variable.other.reference.thinai');
-        expect(referenceStart.test('[[Order.OrderRoot.place]]')).toBe(true);
+        expect(referenceStart.test('[[Order.Order.place]]')).toBe(true);
         expect(referenceStart.test('\\[[NotAReference.method]]')).toBe(false);
-        expect(referenceStart.test('\\\\[[Order.OrderRoot.place]]')).toBe(true);
+        expect(referenceStart.test('\\\\[[Order.Order.place]]')).toBe(true);
     });
 });
