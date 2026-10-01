@@ -69,6 +69,14 @@ part of bounded context Ordering {
         factory OrderFactory for Order;
     }
 
+    domain service Authorization {
+        method authorize(role: Common.Role, action: string) returns boolean {
+            precondition "The role and requested action are known.";
+            behavior "Allow the action only when the supplied role is authorized for it.";
+            postcondition "The result indicates whether the role is authorized for the action.";
+        }
+    }
+
     event OrderPlaced data {
         orderId: OrderId;
     }

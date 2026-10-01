@@ -2,4 +2,6 @@ shared kernel CommonTypes {
     value object Currency {
         code: string;
     }
+
+    enum Role { Customer, FulfillmentOperator, System }
 }
