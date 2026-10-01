@@ -193,7 +193,8 @@ Repository:
     'repository' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
 
 Factory:
-    'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
+    'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName]
+    ('operations' '{' methods+=Method* '}')? ';'?;
 
 DomainEvent:
     'event' name=ID
@@ -240,7 +241,9 @@ BehaviorSpecificationText:
 TemplateStringPart:
     text=DOUBLE_STRING_TEXT
     | text=SINGLE_STRING_TEXT
-    | '${' method=[Method:QualifiedName] INTERPOLATION_END;
+    | '${' target=[BehaviorSpecificationTarget:QualifiedName] INTERPOLATION_END;
+
+type BehaviorSpecificationTarget = Method | Field;
 
 StringLiteral returns string:
     STRING;

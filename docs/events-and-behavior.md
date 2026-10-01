@@ -5,6 +5,11 @@ integration events, and user-started flows. Behavior specifications remain
 descriptive; structured clauses such as `invokes`, `emits`, and `transition`
 provide navigable semantic relationships.
 
+Interpolated specifications (`$"..."`) can link to methods and to fields on
+entities or value objects. A field or method link identifies a model element;
+it does not evaluate an expression or invoke the method. Plain quoted
+specifications remain unlinked text.
+
 ## Aggregate Effects and Application Services
 
 An ordinary application-service method is a command operation. It coordinates
@@ -22,19 +27,26 @@ bounded context Ordering {
             status: OrderStatus;
         }
         enum OrderStatus { Draft, Placed }
+        factory OrderFactory for Order operations {
+            method createOrder() returns OrderRoot;
+        }
     }
 
     event OrderPlaced;
 
     application service OrderApplication for Order {
         method placeOrder(items: List<OrderLine>)
-            invokes Order.OrderRoot.place {
+            invokes Order.OrderRoot.place, Order.OrderFactory.createOrder {
             precondition "The order contains at least one item.";
-            behavior "Place the order through its aggregate root.";
+            behavior $"Create the order through ${Order.OrderFactory.createOrder}, then place it using ${Order.OrderRoot.place} while its status is ${Order.OrderRoot.status}.";
         }
     }
 }
 ```
+
+Factory operations are methods that create the aggregate root. A factory method
+returns that root entity, and behavior specifications link to the method rather
+than to a constructor or the factory declaration itself.
 
 Aggregate methods may emit multiple domain events. Emissions are listed in
 order. Application-service command methods invoke aggregate methods rather

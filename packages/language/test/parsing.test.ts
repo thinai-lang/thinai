@@ -124,14 +124,14 @@ describe('Parsing tests', () => {
         const model = document.parseResult.value;
         expect(model && isModel(model)).toBe(true);
         const context = model?.declarations[0] as Model['declarations'][number] & {
-            members: Array<{ $type: string; name: string; members?: Array<{ $type: string; name: string; constructors?: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ $type: string; text?: string; method?: { $refText: string } }> } } }> }> }> }>;
+            members: Array<{ $type: string; name: string; members?: Array<{ $type: string; name: string; constructors?: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ $type: string; text?: string; target?: { $refText: string } }> } } }> }> }> }>;
         };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
         const root = aggregate?.members?.find(member => member.name === 'OrderRoot');
         const behaviorParts = root?.constructors?.[0].behaviors[0].description.template?.parts ?? [];
         expect(behaviorParts).toHaveLength(3);
         expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
-        expect(behaviorParts[1].method?.$refText).toBe('OrderId.normalize');
+        expect(behaviorParts[1].target?.$refText).toBe('OrderId.normalize');
         expect(behaviorParts[2].text).toBe(' before creating');
         const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
             methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
@@ -164,7 +164,7 @@ describe('Parsing tests', () => {
                 behaviors?: Array<{
                     description: {
                         plain?: string;
-                        template?: { parts: Array<{ text?: string; method?: { $refText: string } }> };
+                        template?: { parts: Array<{ text?: string; target?: { $refText: string } }> };
                     };
                 }>;
             }>;
@@ -174,7 +174,7 @@ describe('Parsing tests', () => {
                 behaviors: Array<{
                     description: {
                         plain?: string;
-                        template?: { parts: Array<{ text?: string; method?: { $refText: string } }> };
+                        template?: { parts: Array<{ text?: string; target?: { $refText: string } }> };
                     };
                 }>;
             }>;
@@ -185,7 +185,7 @@ describe('Parsing tests', () => {
         expect(behaviors[0].description.plain).toBe('Place the order\nafter validation');
         expect(templateParts).toHaveLength(3);
         expect(templateParts[0].text).toBe('Check ');
-        expect(templateParts[1].method?.$refText).toBe('Order.ensureOwner');
+        expect(templateParts[1].target?.$refText).toBe('Order.ensureOwner');
         expect(templateParts[2].text).toBe('\nbefore placing');
     });
 

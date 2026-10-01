@@ -46,6 +46,7 @@ import {
     isApplicationService,
     isDomainEvent,
     isEntity,
+    isField,
     isIntegrationEvent,
     isImportableComponent,
     isContextMap,
@@ -247,6 +248,7 @@ export class ThinaiValidator {
 
     checkEntity(entity: Entity, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(entity, accept);
+        this.checkFieldMethodNameConflicts(entity.fields, entity.methods, accept);
         const ancestors = new Set<Entity>([entity]);
         let base = entity.base?.ref;
         while (base) {
@@ -287,6 +289,18 @@ export class ThinaiValidator {
                 node: field,
                 property: 'type'
             });
+        }
+    }
+
+    private checkFieldMethodNameConflicts(fields: Field[], methods: Method[], accept: ValidationAcceptor): void {
+        const methodNames = new Set(methods.map(method => method.name));
+        for (const field of fields) {
+            if (methodNames.has(field.name)) {
+                accept('error', `Field and method names cannot both be '${field.name}'.`, {
+                    node: field,
+                    property: 'name'
+                });
+            }
         }
     }
 
@@ -483,6 +497,7 @@ export class ThinaiValidator {
 
     checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(valueObject, accept);
+        this.checkFieldMethodNameConflicts(valueObject.fields, valueObject.methods, accept);
         if (valueObject.identifier && !valueObject.identifierOf && !valueObject.mirrors) {
             accept('error', 'An identifier value object must identify an entity or mirror another identifier.', {
                 node: valueObject,
@@ -599,10 +614,19 @@ export class ThinaiValidator {
             if (!target) {
                 return;
             }
+            if (isField(target) && !isEntity(target.$container) && !isValueObject(target.$container)) {
+                accept('error', 'Behavior specifications can reference only entity and value-object fields.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+                return;
+            }
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
-            if (target.$type === 'Method' && this.isCrossContextOwned(referenceInfo.container, target) && !isInSharedKernel(target)) {
-                accept('error', 'A behavior specification cannot reference a private method from another bounded context.', {
+            if ((target.$type === 'Method' || isField(target)) && this.isCrossContextOwned(referenceInfo.container, target) && !isInSharedKernel(target)) {
+                accept('error', isField(target)
+                    ? 'A behavior specification cannot reference a private field from another bounded context.'
+                    : 'A behavior specification cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -615,8 +639,9 @@ export class ThinaiValidator {
                 return;
             }
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.ref === targetModule);
+            const exposureTarget = isField(target) ? target.$container : target;
             const exposed = targetModule.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.ref === target)
+                exposure.declarations.some(declaration => declaration.ref === exposureTarget)
             );
             if (!dependsOn || !exposed) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
@@ -644,6 +669,15 @@ export class ThinaiValidator {
                 node: factory,
                 property: 'aggregate'
             });
+        }
+        const root = factory.aggregate.ref?.members.find(member => isEntity(member) && member.root);
+        for (const method of factory.methods) {
+            if (!root || method.returnType?.ref !== root) {
+                accept('error', 'A factory method must return the root entity of its associated aggregate.', {
+                    node: method,
+                    property: 'returnType'
+                });
+            }
         }
     }
 

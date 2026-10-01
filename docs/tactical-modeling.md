@@ -70,14 +70,21 @@ bounded context Ordering {
         } {
             identifier id: OrderId;
             owner: string;
-            invariant $"An order must have an owner; check ${OrderRoot.ensureOwner}.";
+            invariant $"An order must have an owner; check ${OrderRoot.owner} and ${OrderRoot.ensureOwner}.";
         }
         identifier value object OrderId for OrderRoot {
             raw: string;
         }
+        factory OrderFactory for Order operations {
+            method createOrder() returns OrderRoot;
+        }
     }
 }
 ```
+
+Factory operations are methods that return the root entity of the aggregate
+named by `for`. Behavior specifications can link to these methods, just as they
+can link to other methods; constructors themselves are not link targets.
 
 Aggregates can also declare methods and invariants in their body. Domain
 services group methods. Behavior specifications are explained in

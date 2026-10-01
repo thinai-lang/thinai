@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
+import { EmptyFileSystem, type AstNode, type LangiumDocument, URI } from 'langium';
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
 import type { Model } from 'thinai-language';
@@ -488,13 +488,13 @@ describe('Linking tests', () => {
         const root = aggregate?.members.find(isEntity);
         const method = root?.methods[0];
         const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ method?: { ref?: unknown } }> } } }> }>;
+            methods: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ target?: { ref?: unknown } }> } } }> }>;
         } | undefined;
         const commandMethod = applicationService?.methods[0];
-        const part = commandMethod?.behaviors[0].description.template?.parts.find(part => part.method);
+        const part = commandMethod?.behaviors[0].description.template?.parts.find(part => part.target);
 
         expect(method).toBeDefined();
-        expect(part?.method?.ref).toBe(method);
+        expect(part?.target?.ref).toBe(method);
         expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
 
         const methodOffset = ordering.textDocument.getText().indexOf('Order.OrderRoot.ensureOwner') + 'Order.OrderRoot.'.length;
@@ -503,6 +503,83 @@ describe('Linking tests', () => {
             position: ordering.textDocument.positionAt(methodOffset)
         });
         expect(definitions?.some(definition => definition.targetUri === ordering.uri.toString())).toBe(true);
+    });
+
+    test('links entity fields and factory creation methods in behavior specifications', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/factory-links.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot {
+                        identifier id: OrderId;
+                        status: string;
+                    }
+                    identifier value object OrderId for OrderRoot { raw: string; }
+                    factory OrderFactory for Order operations {
+                        method createOrder(id: OrderId) returns OrderRoot;
+                    }
+                }
+                application service OrderApplication for Order {
+                    method placeOrder() {
+                        behavior $"Create through ${'${Order.OrderFactory.createOrder}'} using ${'${Order.OrderRoot.status}'} and ${'${Order.OrderId.raw}'}.";
+                    }
+                }
+            }`
+        );
+        documents = [ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(ordering.parseResult.parserErrors).toHaveLength(0);
+        expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const model = ordering.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[0];
+        expect(context && isBoundedContext(context)).toBe(true);
+        if (!context || !isBoundedContext(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const root = aggregate?.members.find(isEntity);
+        const factory = aggregate?.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
+        const service = context.members.find(member => member.$type === 'ApplicationService') as {
+            methods: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ target?: { ref?: AstNode } }> } } }> }>;
+        } | undefined;
+        const targets = service?.methods[0].behaviors[0].description.template?.parts
+            .map(part => part.target?.ref).filter((target): target is AstNode => target !== undefined) ?? [];
+
+        expect(factory?.methods[0].name).toBe('createOrder');
+        expect(targets.map(target => target.$type)).toEqual(['Method', 'Field', 'Field']);
+        expect(targets[0]).toBe(factory?.methods[0]);
+        expect(targets[1]).toBe(root?.fields.find(field => field.name === 'status'));
+        const identifier = aggregate?.members.find(member => member.$type === 'ValueObject') as { fields: Array<AstNode & { name: string }> } | undefined;
+        expect(targets[2]).toBe(identifier?.fields.find(field => field.name === 'raw'));
+    });
+
+    test('requires factory methods to return their aggregate root', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invalid-factory.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot { identifier id: OrderId; }
+                    identifier value object OrderId for OrderRoot { raw: string; }
+                    value object Other { value: string; }
+                    factory OrderFactory for Order operations {
+                        method createOrder() returns Other;
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A factory method must return the root entity of its associated aggregate.')
+        )).toBe(true);
     });
 
     test('selectively imports bounded contexts from a multi-context file', async () => {
@@ -558,7 +635,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes("Could not resolve reference to Method named 'Order.OrderRoot.missingMethod'"))
+            String(diagnostic.message).includes("Could not resolve reference to BehaviorSpecificationTarget named 'Order.OrderRoot.missingMethod'"))
         ).toBe(true);
     });
 });

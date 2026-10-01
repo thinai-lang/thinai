@@ -108,8 +108,11 @@ organization within a bounded context or shared kernel.
 
 Use `invariant`, `precondition`, `postcondition`, and `behavior` for descriptive
 domain meaning. Structured `invokes`, `emits`, and `transition` clauses are
-navigable semantic relationships. A method may emit multiple events; their
-declaration order is significant.
+navigable semantic relationships. Interpolated specifications can link to
+methods and entity/value-object fields, but links do not evaluate expressions
+or invoke methods. Factory creation methods are ordinary methods that return
+their aggregate root and can be linked or invoked. A method may emit multiple
+events; their declaration order is significant.
 
 Flows are ordered, user-started sequences of ordinary application-service
 command methods. Event-triggered reactions are represented by event-typed

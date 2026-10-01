@@ -15,10 +15,13 @@ import {
     type Import,
     isBoundedContext,
     isBoundedContextPart,
+    isEntity,
+    isField,
     isModel,
     isModule,
     isSharedKernel,
     isImportComponent,
+    isValueObject,
     type Module
 } from './generated/ast.js';
 
@@ -34,6 +37,7 @@ const exportedTypes = new Set([
     'EnumType',
     'Flow',
     'Factory',
+    'Field',
     'IntegrationEvent',
     'Method',
     'Module',
@@ -46,6 +50,9 @@ const exportedTypes = new Set([
 type NamedNode = AstNode & { name: string };
 
 function isNamedExport(node: AstNode): node is NamedNode {
+    if (isField(node) && !isEntity(node.$container) && !isValueObject(node.$container)) {
+        return false;
+    }
     return exportedTypes.has(node.$type) && typeof (node as Partial<NamedNode>).name === 'string';
 }
 
@@ -182,14 +189,24 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             for (const exposure of targetModule.exposures) {
                 for (const declaration of exposure.declarations) {
                     const target = declaration.ref;
-                    if (!target || !this.reflection.isSubtype(target.$type, referenceType)) {
+                    if (!target) {
                         continue;
                     }
-                    const name = this.nameProvider.getName(target);
-                    if (name) {
-                        descriptions.push(this.descriptions.createDescription(target, name));
+                    if (this.reflection.isSubtype(target.$type, referenceType)) {
+                        const name = this.nameProvider.getName(target);
+                        if (name) {
+                            descriptions.push(this.descriptions.createDescription(target, name));
+                        }
+                        descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
                     }
-                    descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
+                    if ((isEntity(target) || isValueObject(target)) && this.reflection.isSubtype('Field', referenceType)) {
+                        for (const field of target.fields) {
+                            const fieldName = getExportedName(field);
+                            for (const name of this.getUnaliasedNames(fieldName)) {
+                                descriptions.push(this.descriptions.createDescription(field, name));
+                            }
+                        }
+                    }
                 }
             }
         }
