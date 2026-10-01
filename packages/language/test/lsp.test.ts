@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
+import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from 'thinai-language';
 
@@ -16,6 +17,41 @@ afterEach(async () => {
 });
 
 describe('LSP services', () => {
+    test('highlights linked behavior references as methods and fields', async () => {
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/behavior-highlighting.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity OrderRoot operations { method place(); } {
+                        identifier id: OrderId;
+                        status: string;
+                    }
+                    identifier value object OrderId for OrderRoot { raw: string; }
+                }
+                application service OrderApplication for Order {
+                    method placeOrder() {
+                        behavior $"Place with \${Order.OrderRoot.place} while status is \${Order.OrderRoot.status}";
+                    }
+                }
+            }`
+        );
+        documents = [source];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const provider = services.Thinai.lsp.SemanticTokenProvider;
+        expect(provider).toBeDefined();
+        const tokens = await provider!.semanticHighlight(source, {
+            textDocument: { uri: source.uri.toString() }
+        });
+        const decoded = SemanticTokensDecoder.decode(tokens, provider!.tokenTypes, source);
+
+        expect(decoded.filter(token => token.text.startsWith('Order.')).map(token => [token.text, token.tokenType])).toEqual([
+            ['Order.OrderRoot.place', 'method'],
+            ['Order.OrderRoot.status', 'property']
+        ]);
+    });
+
     test('suggests workspace files inside import paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),

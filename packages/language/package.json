@@ -30,9 +30,9 @@
         "clean": "shx rm -fr *.tsbuildinfo out",
         "build": "echo 'No build step'",
         "build:clean": "npm run clean && npm run build",
-        "langium:generate": "langium generate",
-        "langium:watch": "langium generate --watch",
-        "test": "vitest run"
+        "langium:generate": "langium generate && node scripts/patch-textmate.mjs",
+        "langium:watch": "npm run langium:generate && node scripts/watch-langium.mjs",
+        "test": "npm run langium:generate && vitest run"
     },
     "dependencies": {
         "chevrotain": "~13.2.0",
