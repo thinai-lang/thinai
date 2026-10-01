@@ -5,10 +5,11 @@ integration events, and user-started flows. Behavior specifications remain
 descriptive; structured clauses such as `invokes`, `emits`, and `transition`
 provide navigable semantic relationships.
 
-Interpolated specifications (`$"..."`) can link to methods and to fields on
-entities or value objects. A field or method link identifies a model element;
-it does not evaluate an expression or invoke the method. Plain quoted
-specifications remain unlinked text.
+Quoted specifications can link to methods and to fields on entities or value
+objects by surrounding a qualified name with `[[` and `]]`. A link identifies a
+model element; it does not evaluate an expression or invoke the method. Plain
+quoted specifications remain unlinked text. Multiline quoted specifications
+dedent their content when a newline follows the opening quote.
 
 ## Aggregate Effects and Application Services
 
@@ -38,7 +39,7 @@ bounded context Ordering {
         method placeOrder(items: List<OrderLine>)
             invokes Order.OrderRoot.place, Order.OrderFactory.createOrder {
             precondition "The order contains at least one item.";
-            behavior $"Create the order through ${Order.OrderFactory.createOrder}, then place it using ${Order.OrderRoot.place} while its status is ${Order.OrderRoot.status}.";
+            behavior "Create the order through [[Order.OrderFactory.createOrder]], then place it using [[Order.OrderRoot.place]] while its status is [[Order.OrderRoot.status]].";
         }
     }
 }

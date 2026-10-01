@@ -30,7 +30,7 @@ describe('LSP services', () => {
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior $"Place with \${Order.OrderRoot.place} while status is \${Order.OrderRoot.status}";
+                        behavior "Place with [[Order.OrderRoot.place]] while status is [[Order.OrderRoot.status]]";
                     }
                 }
             }`

@@ -88,7 +88,7 @@ describe('Parsing tests', () => {
                         constructor(id: OrderId) {
                             invariant "An order must have an identifier";
                             precondition "The id must be non-empty";
-                            behavior $"Normalize an order's id with ${'${OrderId.normalize}'} before creating";
+                            behavior "Normalize an order's id with [[OrderId.normalize]] before creating";
                             postcondition "The identifier is set";
                         }
                         method ensureOwner();
@@ -102,18 +102,18 @@ describe('Parsing tests', () => {
                     {
                         raw: string;
                     }
-                    invariant $"Placed orders retain ${'${OrderRoot.ensureOwner}'}";
+                    invariant "Placed orders retain [[OrderRoot.ensureOwner]]";
                     method addLines(lines: List<OrderLine>) returns Order;
                 }
                 domain service Pricing {
                     method calculate(lines: List<OrderLine>, currency?: Currency) returns Money {
-                        behavior $"Calculate a total for ${'${Order.OrderRoot.ensureOwner}'}";
+                        behavior "Calculate a total for [[Order.OrderRoot.ensureOwner]]";
                     }
                 }
                 application service OrderApplication for Order {
                     method placeOrder(description?: string) {
                         precondition "The order can be placed";
-                        behavior $"Validate with ${'${Order.OrderRoot.ensureOwner}'} then place";
+                        behavior "Validate with [[Order.OrderRoot.ensureOwner]] then place";
                         postcondition "OrderPlaced is emitted";
                     }
                 }
@@ -123,27 +123,30 @@ describe('Parsing tests', () => {
         expect(checkDocumentValid(document)).toBeUndefined();
         const model = document.parseResult.value;
         expect(model && isModel(model)).toBe(true);
-        const context = model?.declarations[0] as Model['declarations'][number] & {
-            members: Array<{ $type: string; name: string; members?: Array<{ $type: string; name: string; constructors?: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ $type: string; text?: string; target?: { $refText: string } }> } } }> }> }> }>;
+        type TextPart = { $type: string; text?: string; target?: { $refText: string } };
+        type BehaviorShape = { description: { parts: TextPart[] } };
+        type MemberShape = {
+            $type: string;
+            name: string;
+            members?: MemberShape[];
+            constructors?: Array<{ behaviors: BehaviorShape[] }>;
+            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
         };
+        const context = model?.declarations[0] as Model['declarations'][number] & { members: MemberShape[] };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
         const root = aggregate?.members?.find(member => member.name === 'OrderRoot');
-        const behaviorParts = root?.constructors?.[0].behaviors[0].description.template?.parts ?? [];
+        const behaviorParts = root?.constructors?.[0].behaviors[0].description.parts ?? [];
         expect(behaviorParts).toHaveLength(3);
         expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
         expect(behaviorParts[1].target?.$refText).toBe('OrderId.normalize');
         expect(behaviorParts[2].text).toBe(' before creating');
-        const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
-        } | undefined;
+        const applicationService = context.members.find(member => member.$type === 'ApplicationService');
         expect(applicationService?.methods?.[0].parameters[0].optional).toBe(true);
-        const pricing = context.members.find(member => member.$type === 'DomainService') as {
-            methods?: Array<{ parameters: Array<{ optional: boolean }> }>;
-        } | undefined;
+        const pricing = context.members.find(member => member.$type === 'DomainService');
         expect(pricing?.methods?.[0].parameters[1].optional).toBe(true);
     });
 
-    test('preserves multiline behavior text in quoted and interpolated strings', async () => {
+    test('preserves multiline behavior text and links in quoted strings', async () => {
         const document = await parse([
             'bounded context Ordering {',
             '    aggregate Order { method ensureOwner(); }',
@@ -151,47 +154,40 @@ describe('Parsing tests', () => {
             '    method placeOrder() {',
             '        behavior "Place the order',
             'after validation";',
-            '        behavior $"Check ${Order.ensureOwner}',
+            '        behavior "Check [[Order.ensureOwner]]',
             'before placing";',
+            '        behavior "',
+            '            Check [[Order.ensureOwner]]',
+            '            before placing.',
+            '            ";',
             '    } }',
             '}'
         ].join('\n'));
 
         expect(checkDocumentValid(document)).toBeUndefined();
-        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
-            members: Array<{
-                $type: string;
-                behaviors?: Array<{
-                    description: {
-                        plain?: string;
-                        template?: { parts: Array<{ text?: string; target?: { $refText: string } }> };
-                    };
-                }>;
-            }>;
+        type Part = { text?: string; target?: { $refText: string } };
+        type BehaviorShape = { description: { parts: Part[] } };
+        type MethodShape = { behaviors: BehaviorShape[] };
+        const context = document.parseResult.value?.declarations[0] as {
+            members: Array<{ $type: string; methods?: MethodShape[] }>;
         };
-        const service = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods?: Array<{
-                behaviors: Array<{
-                    description: {
-                        plain?: string;
-                        template?: { parts: Array<{ text?: string; target?: { $refText: string } }> };
-                    };
-                }>;
-            }>;
-        } | undefined;
+        const service = context.members.find(member => member.$type === 'ApplicationService');
         const behaviors = service?.methods?.[0].behaviors ?? [];
-        const templateParts = behaviors[1].description.template?.parts ?? [];
+        const linkedParts = behaviors[1].description.parts ?? [];
+        const dedentedParts = behaviors[2].description.parts ?? [];
 
-        expect(behaviors[0].description.plain).toBe('Place the order\nafter validation');
-        expect(templateParts).toHaveLength(3);
-        expect(templateParts[0].text).toBe('Check ');
-        expect(templateParts[1].target?.$refText).toBe('Order.ensureOwner');
-        expect(templateParts[2].text).toBe('\nbefore placing');
+        expect(behaviors[0].description.parts.map(part => part.text).join('')).toBe('Place the order\nafter validation');
+        expect(linkedParts).toHaveLength(3);
+        expect(linkedParts[0].text).toBe('Check ');
+        expect(linkedParts[1].target?.$refText).toBe('Order.ensureOwner');
+        expect(linkedParts[2].text).toBe('\nbefore placing');
+        expect(dedentedParts.map(part => part.text ?? '').join('')).toBe('Check \nbefore placing.');
+        expect(dedentedParts[1].target?.$refText).toBe('Order.ensureOwner');
     });
 
-    test('allows escaping a literal interpolation marker in a behavior specification', async () => {
+    test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { application service Runner for Run { method execute() { behavior $"Literal \\${NotAReference.method} stays text"; } } aggregate Run { root entity RunRoot { identifier id: RunId; } identifier value object RunId for RunRoot { raw: string; } } }'
+            'bounded context Escape { application service Runner for Run { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity RunRoot { identifier id: RunId; } identifier value object RunId for RunRoot { raw: string; } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();
@@ -199,14 +195,21 @@ describe('Parsing tests', () => {
         if (!model || !isModel(model)) {
             return;
         }
+        type Part = { text?: string; target?: unknown };
+        type BehaviorShape = { description: { parts: Part[] } };
         const context = model.declarations[0] as Model['declarations'][number] & {
-            members: Array<{ $type: string; behaviors?: Array<{ description: { template?: { parts: Array<{ text?: string; method?: unknown }> } } }> }>;
+            members: Array<{ $type: string; methods?: Array<{ behaviors?: BehaviorShape[] }> }>;
         };
-        const service = context.members.find(member => member.$type === 'ApplicationService') as { methods?: Array<{ behaviors?: Array<{ description: { template?: { parts: Array<{ text?: string; method?: unknown }> } } }> }> } | undefined;
-        const parts = service?.methods?.[0].behaviors?.[0].description.template?.parts ?? [];
+        const service = context.members.find(member => member.$type === 'ApplicationService');
+        const parts = service?.methods?.[0].behaviors?.[0].description.parts ?? [];
         expect(parts).toHaveLength(1);
-        expect(parts[0].text).toBe('Literal ${NotAReference.method} stays text');
-        expect(parts[0].method).toBeUndefined();
+        expect(parts[0].text).toBe('Literal [[NotAReference.method]] stays text');
+        expect(parts[0].target).toBeUndefined();
+    });
+
+    test('rejects the former dollar-prefixed reference syntax', async () => {
+        const document = await parse('bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}"; } }');
+        expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 });
 

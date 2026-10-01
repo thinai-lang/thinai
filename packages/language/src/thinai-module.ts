@@ -8,6 +8,7 @@ import { ThinaiCompletionProvider } from './thinai-completion.js';
 import { ThinaiCodeActionProvider } from './thinai-code-actions.js';
 import { ThinaiValueConverter } from './thinai-value-converter.js';
 import { ThinaiTokenBuilder } from './thinai-token-builder.js';
+import { createThinaiParser } from './thinai-parser.js';
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
 
 /**
@@ -43,7 +44,8 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
     },
     parser: {
         TokenBuilder: () => new ThinaiTokenBuilder(),
-        ValueConverter: () => new ThinaiValueConverter()
+        ValueConverter: () => new ThinaiValueConverter(),
+        LangiumParser: services => createThinaiParser(services)
     },
     lsp: {
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),

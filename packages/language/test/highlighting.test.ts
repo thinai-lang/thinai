@@ -4,15 +4,16 @@ import { describe, expect, test } from 'vitest';
 const grammarPath = new URL('../syntaxes/thinai.tmLanguage.json', import.meta.url);
 
 describe('TextMate highlighting', () => {
-    test('recognizes interpolation references in both template string styles', async () => {
+    test('recognizes linked references in both quoted string styles', async () => {
         const grammar = JSON.parse(await readFile(grammarPath, 'utf8'));
-        const interpolation = grammar.repository['template-interpolation'];
-        const interpolationStart = new RegExp(interpolation.begin);
+        const reference = grammar.repository['linked-reference'];
+        const referenceStart = new RegExp(reference.begin);
 
-        expect(grammar.patterns.filter((pattern: { begin?: string }) => pattern.begin === '\\$"' || pattern.begin === "\\$'")).toHaveLength(2);
-        expect(interpolation.patterns[0].name).toBe('variable.other.reference.thinai');
-        expect(interpolationStart.test('${Order.OrderRoot.place}')).toBe(true);
-        expect(interpolationStart.test('\\${NotAReference.method}')).toBe(false);
-        expect(interpolationStart.test('\\\\${Order.OrderRoot.place}')).toBe(true);
+        expect(grammar.repository['template-interpolation']).toBeUndefined();
+        expect(grammar.patterns.filter((pattern: { name?: string }) => pattern.name === 'string.quoted.double.thinai' || pattern.name === 'string.quoted.single.thinai')).toHaveLength(2);
+        expect(reference.patterns[0].name).toBe('variable.other.reference.thinai');
+        expect(referenceStart.test('[[Order.OrderRoot.place]]')).toBe(true);
+        expect(referenceStart.test('\\[[NotAReference.method]]')).toBe(false);
+        expect(referenceStart.test('\\\\[[Order.OrderRoot.place]]')).toBe(true);
     });
 });

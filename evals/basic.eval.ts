@@ -38,11 +38,11 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('uses linked behavior specifications for command logic', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai Ordering model. Use the exact structure root entity OrderRoot operations { method ensureOwner(); method place() emits OrderPlaced; } { identifier id: OrderId; invariant $"A valid order has an owner; check ${OrderRoot.ensureOwner}."; } followed by sibling declaration identifier value object OrderId for OrderRoot { raw: string; }. Do not put the value object inside the entity. Define application service OrderApplication for Order with method placeOrder invokes Order.OrderRoot.place { precondition "The order can be placed."; behavior $"Check ${Order.OrderRoot.ensureOwner} before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
+            'Generate a valid, single-file Thinai Ordering model. Use the exact structure root entity OrderRoot operations { method ensureOwner(); method place() emits OrderPlaced; } { identifier id: OrderId; invariant "A valid order has an owner; check [[OrderRoot.ensureOwner]]."; } followed by sibling declaration identifier value object OrderId for OrderRoot { raw: string; }. Do not put the value object inside the entity. Define application service OrderApplication for Order with method placeOrder invokes Order.OrderRoot.place { precondition "The order can be placed."; behavior "Check [[Order.OrderRoot.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
             context
         );
         const lowerCode = generated.code.toLowerCase();
-        const requiredFeatures = ['invariant', 'precondition', 'behavior', 'postcondition', 'ensureowner', '${'];
+        const requiredFeatures = ['invariant', 'precondition', 'behavior', 'postcondition', 'ensureowner', '[['];
         const featureScore = requiredFeatures.filter(feature => lowerCode.includes(feature)).length / requiredFeatures.length;
         const score = generated.valid ? featureScore : 0;
         return {
@@ -64,7 +64,7 @@ describe('Thinai understanding evaluations', () => {
                     method ensureOwner();
                 } {
                     identifier id: OrderId;
-                    invariant $"An order must have an owner; check ${'${OrderRoot.ensureOwner}'}";
+                    invariant "An order must have an owner; check [[OrderRoot.ensureOwner]]";
                 }
                 identifier value object OrderId for OrderRoot {
                     raw: string;

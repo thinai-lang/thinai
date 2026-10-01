@@ -21,11 +21,11 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         };
         const createVariant = (
             source: TokenType,
-            action: { push_mode?: string; pop_mode?: boolean; line_breaks?: boolean } = {}
+            action: { push_mode?: string; pop_mode?: boolean; line_breaks?: boolean; pattern?: RegExp | string } = {}
         ): TokenType => {
             const config: Parameters<typeof createToken>[0] = {
                 name: source.name,
-                pattern: source.PATTERN!,
+                pattern: action.pattern ?? source.PATTERN!,
                 line_breaks: action.line_breaks ?? source.LINE_BREAKS
             };
             if (source.GROUP !== undefined) {
@@ -40,14 +40,14 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
             return createToken(config);
         };
 
-        const doubleOpen = token('TEMPLATE_STRING_START');
-        const doubleClose = token('TEMPLATE_STRING_END');
-        const singleOpen = token('SINGLE_TEMPLATE_STRING_START');
-        const singleClose = token('SINGLE_TEMPLATE_STRING_END');
+        const doubleOpen = token('DOUBLE_STRING_START');
+        const doubleClose = token('DOUBLE_STRING_END');
+        const singleOpen = token('SINGLE_STRING_START');
+        const singleClose = token('SINGLE_STRING_END');
         const doubleStringText = token('DOUBLE_STRING_TEXT');
         const singleStringText = token('SINGLE_STRING_TEXT');
-        const interpolationStart = token('${');
-        const interpolationEnd = token('INTERPOLATION_END');
+        const referenceStart = token('[[');
+        const referenceEnd = token('REFERENCE_END');
         const id = token('ID');
         const whitespace = token('WS');
         const dot = token('.');
@@ -57,8 +57,8 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
             singleClose.name,
             doubleStringText.name,
             singleStringText.name,
-            interpolationStart.name,
-            interpolationEnd.name
+            referenceStart.name,
+            referenceEnd.name
         ]);
         const defaultSources = vocabulary.filter(candidate => !internalNames.has(candidate.name));
         const defaultSourceSet = new Set(defaultSources);
@@ -86,24 +86,24 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         }
         const defaultMode = defaultSources.map(source => defaultMap.get(source)!);
 
-        const interpolationStartInString = createVariant(interpolationStart, { push_mode: REFERENCE_MODE });
+        const referenceStartInString = createVariant(referenceStart, { push_mode: REFERENCE_MODE });
         const doubleStringTextToken = createVariant(doubleStringText, { line_breaks: true });
         const singleStringTextToken = createVariant(singleStringText, { line_breaks: true });
         const doubleStringMode = [
             doubleStringTextToken,
-            createVariant(doubleClose, { pop_mode: true }),
-            interpolationStartInString
+            createVariant(doubleClose, { pattern: /"/, pop_mode: true }),
+            referenceStartInString
         ];
         const singleStringMode = [
             singleStringTextToken,
-            createVariant(singleClose, { pop_mode: true }),
-            interpolationStartInString
+            createVariant(singleClose, { pattern: /'/, pop_mode: true }),
+            referenceStartInString
         ];
         const referenceMode = [
             defaultMap.get(id)!,
             defaultMap.get(dot)!,
             defaultMap.get(whitespace)!,
-            createVariant(interpolationEnd, { pop_mode: true })
+            createVariant(referenceEnd, { pop_mode: true })
         ];
 
         return {

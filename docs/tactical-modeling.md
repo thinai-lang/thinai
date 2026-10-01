@@ -70,7 +70,7 @@ bounded context Ordering {
         } {
             identifier id: OrderId;
             owner: string;
-            invariant $"An order must have an owner; check ${OrderRoot.owner} and ${OrderRoot.ensureOwner}.";
+            invariant "An order must have an owner; check [[OrderRoot.owner]] and [[OrderRoot.ensureOwner]].";
         }
         identifier value object OrderId for OrderRoot {
             raw: string;

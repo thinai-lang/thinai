@@ -464,7 +464,7 @@ describe('Linking tests', () => {
                 }
                 application service OrderApplication for Order {
                     method placeOrder() invokes Order.OrderRoot.ensureOwner {
-                        behavior $"Check ${'${Order.OrderRoot.ensureOwner}'} before placing.";
+                        behavior "Check [[Order.OrderRoot.ensureOwner]] before placing.";
                     }
                 }
             }`
@@ -488,10 +488,10 @@ describe('Linking tests', () => {
         const root = aggregate?.members.find(isEntity);
         const method = root?.methods[0];
         const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ target?: { ref?: unknown } }> } } }> }>;
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: unknown } }> } }> }>;
         } | undefined;
         const commandMethod = applicationService?.methods[0];
-        const part = commandMethod?.behaviors[0].description.template?.parts.find(part => part.target);
+        const part = commandMethod?.behaviors[0].description.parts.find(part => part.target);
 
         expect(method).toBeDefined();
         expect(part?.target?.ref).toBe(method);
@@ -521,7 +521,7 @@ describe('Linking tests', () => {
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior $"Create through ${'${Order.OrderFactory.createOrder}'} using ${'${Order.OrderRoot.status}'} and ${'${Order.OrderId.raw}'}.";
+                        behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.OrderRoot.status]] and [[Order.OrderId.raw]].";
                     }
                 }
             }`
@@ -546,9 +546,9 @@ describe('Linking tests', () => {
         const root = aggregate?.members.find(isEntity);
         const factory = aggregate?.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
         const service = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods: Array<{ behaviors: Array<{ description: { template?: { parts: Array<{ target?: { ref?: AstNode } }> } } }> }>;
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: AstNode } }> } }> }>;
         } | undefined;
-        const targets = service?.methods[0].behaviors[0].description.template?.parts
+        const targets = service?.methods[0].behaviors[0].description.parts
             .map(part => part.target?.ref).filter((target): target is AstNode => target !== undefined) ?? [];
 
         expect(factory?.methods[0].name).toBe('createOrder');
@@ -625,7 +625,7 @@ describe('Linking tests', () => {
                 }
                 application service OrderApplication for Order {
                     method placeOrder() {
-                        behavior $"Check ${'${Order.OrderRoot.missingMethod}'} before placing.";
+                        behavior "Check [[Order.OrderRoot.missingMethod]] before placing.";
                     }
                 }
             }`

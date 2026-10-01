@@ -18,12 +18,12 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
   root entity OrderRoot operations {
       constructor(id: OrderId) {
           invariant "An order ID is required.";
-          postcondition $"The ID is normalized by ${OrderId.normalize}.";
+          postcondition "The ID is normalized by [[OrderId.normalize]].";
       }
       method ensureOwner();
   } {
       identifier id: OrderId;
-      invariant $"A valid order has an owner; see ${OrderRoot.ensureOwner}.";
+      invariant "A valid order has an owner; see [[OrderRoot.ensureOwner]].";
   }
   ```
 
@@ -78,10 +78,10 @@ In particular, put `OrderRoot` and `OrderId` as sibling members of `Order`; do n
 Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Plain quoted text is valid; use an interpolated template string to link a method inline:
 
 ```thinai
-behavior $"Check ${Order.OrderRoot.ensureOwner}, then calculate the total with ${Pricing.calculateTotal}.";
+behavior "Check [[Order.OrderRoot.ensureOwner]], then calculate the total with [[Pricing.calculateTotal]].";
 ```
 
-Each `${...}` interpolation must name a declared method visible from the current context and module. It is a navigable reference, not an expression or executable call. Use `\${` for a literal interpolation marker. Behavior text is descriptive prose; do not model assignments, return statements, loops, or general-purpose control flow in it.
+Each `[[...]]` reference must name a declared method or field visible from the current context and module. It is a navigable reference, not an expression or executable call. Escape `[[` as `\[[` to include a literal marker. Multiline behavior text dedents common indentation when the opening quote is followed by a newline. Behavior text is descriptive prose; do not model assignments, return statements, loops, or general-purpose control flow in it.
 
 An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these to the relevant type, constructor, or method. Structured `invokes`, `emits`, and `transition` clauses are navigable semantic relationships; behavior text is descriptive, not executable.
 
@@ -105,4 +105,4 @@ Before returning a model, ensure that:
 3. Every referenced aggregate, event, method, and type is declared and visible; actors are declared inline in their flows.
 4. Imports select the intended bounded contexts or shared kernels; do not rely on workspace-global declarations.
 5. Application services target aggregates in their own context; aggregate methods own state transitions and DomainEvent emission.
-6. Behavior specifications use `$"..."` when they contain method references and contain no unsupported programming-language syntax.
+6. Behavior specifications use quoted text with `[[QualifiedName]]` references, and contain no unsupported programming-language syntax.

@@ -230,23 +230,20 @@ CollectionType:
 CollectionKind returns string:
     'List' | 'Set' | 'Map';
 
-TemplateString:
-    TEMPLATE_STRING_START (parts+=TemplateStringPart)* TEMPLATE_STRING_END
-    | SINGLE_TEMPLATE_STRING_START (parts+=TemplateStringPart)* SINGLE_TEMPLATE_STRING_END;
-
 BehaviorSpecificationText:
-    plain=STRING
-    | template=TemplateString;
+    DOUBLE_STRING_START (parts+=BehaviorSpecificationTextPart)* DOUBLE_STRING_END
+    | SINGLE_STRING_START (parts+=BehaviorSpecificationTextPart)* SINGLE_STRING_END;
 
-TemplateStringPart:
+BehaviorSpecificationTextPart:
     text=DOUBLE_STRING_TEXT
     | text=SINGLE_STRING_TEXT
-    | '${' target=[BehaviorSpecificationTarget:QualifiedName] INTERPOLATION_END;
+    | '[[' target=[BehaviorSpecificationTarget:QualifiedName] REFERENCE_END;
 
 type BehaviorSpecificationTarget = Method | Field;
 
 StringLiteral returns string:
-    STRING;
+    DOUBLE_STRING_START (DOUBLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* DOUBLE_STRING_END
+    | SINGLE_STRING_START (SINGLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* SINGLE_STRING_END;
 
 PrimitiveType returns string:
     'string' | 'number' | 'boolean' | 'date';
@@ -259,14 +256,14 @@ QualifiedName returns string:
 
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w_]*/;
-terminal TEMPLATE_STRING_START: /\$"/;
-terminal TEMPLATE_STRING_END: /"/;
-terminal SINGLE_TEMPLATE_STRING_START: /\$'/;
-terminal SINGLE_TEMPLATE_STRING_END: /'/;
-terminal INTERPOLATION_END: /\}/;
-terminal DOUBLE_STRING_TEXT: /(\\.|[^"\\$]|\$(?!\{))+/;
-terminal SINGLE_STRING_TEXT: /(\\.|[^'\\$]|\$(?!\{))+/;
-terminal STRING: /"(\\.|[^"\\])*"|'(\\.|[^'\\])*'/;
+terminal DOUBLE_STRING_START: /"/;
+// The token builder remaps the sentinel-prefixed endings to quote tokens in string modes.
+terminal DOUBLE_STRING_END: /\u0000"/;
+terminal SINGLE_STRING_START: /'/;
+terminal SINGLE_STRING_END: /\u0000'/;
+terminal REFERENCE_END: /\]\]/;
+terminal DOUBLE_STRING_TEXT: /(\\.|[^"\\\[]|\[(?!\[))+/;
+terminal SINGLE_STRING_TEXT: /(\\.|[^'\\\[]|\[(?!\[))+/;
 
 hidden terminal ML_COMMENT: /\/\*[\s\S]*?\*\//;
 hidden terminal SL_COMMENT: /\/\/[^\n\r]*/;
