@@ -19,6 +19,7 @@ import type {
     ContextRelationship,
     CollectionType,
     Constructor,
+    DataObject,
     DomainEvent,
     DomainService,
     Entity,
@@ -61,6 +62,9 @@ import {
     isModule,
     isPartnershipRelationship,
     isProjector,
+    isDataObject,
+    isQueryRepository,
+    isParameter,
     isRepository,
     isQueryService,
     isReadModel,
@@ -92,6 +96,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Constructor: validator.checkConstructor,
         ContextRelationship: validator.checkContextRelationship,
         ContextMap: validator.checkNamedDeclaration,
+        DataObject: validator.checkDataObject,
         DomainEvent: validator.checkDomainEvent,
         DomainService: validator.checkNamedDeclaration,
         Entity: validator.checkEntity,
@@ -320,6 +325,24 @@ export class ThinaiValidator {
         const typeReferences = this.collectTypeReferences(field.type, field.collection);
         this.checkCrossContextTypeUse(field, typeReferences, accept);
         this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModel(field.$container));
+        const isDataObjectField = isDataObject(field.$container);
+        if (field.identifier && isDataObjectField) {
+            accept('error', 'Data objects have no entity identity.', { node: field, property: 'identifier' });
+        }
+        if (!isDataObjectField && typeReferences.some(reference => isDataObject(reference.ref))) {
+            accept('error', 'Data objects may be used in method signatures or nested in other data objects, not as domain or read-model state.', {
+                node: field,
+                property: 'type'
+            });
+        }
+        if (isDataObjectField && typeReferences.some(reference =>
+            isEntity(reference.ref) || isReadModel(reference.ref)
+        )) {
+            accept('error', 'Data objects may contain value data, but not entities or read models.', {
+                node: field,
+                property: 'type'
+            });
+        }
         if (isReadModel(field.$container) && field.identifier) {
             accept('error', 'Read-model fields are projection data, not DDD entity identifiers.', {
                 node: field,
@@ -571,14 +594,9 @@ export class ThinaiValidator {
             if (eventParameters.length > 0 || method.events.length > 0 || method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
                 accept('error', 'A query cannot handle events, emit events, create aggregates, save aggregates, or delete aggregates.', {
                     node: method,
-                    property: 'readRepositories'
+                    property: 'returnType'
                 });
             }
-        } else if (method.readRepositories.length > 0) {
-            accept('error', 'Only query-service methods may use query repositories.', {
-                node: method,
-                property: 'readRepositories'
-            });
         }
         if (method.updatesRepository && !projector) {
             accept('error', 'Only projectors may update query repositories.', {
@@ -800,6 +818,11 @@ export class ThinaiValidator {
         this.checkDuplicateFieldNames(readModel.fields, accept);
     }
 
+    checkDataObject(dataObject: DataObject, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(dataObject, accept);
+        this.checkDuplicateFieldNames(dataObject.fields, accept);
+    }
+
     checkProjector(projector: Projector, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(projector, accept);
         if (projector.readModel.ref && getOwningContextName(projector.readModel.ref) !== getOwningContextName(projector)) {
@@ -814,21 +837,22 @@ export class ThinaiValidator {
         if (method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
             accept('error', 'A query service cannot load, create, delete, save, or transact on aggregates.', {
                 node: method,
-                property: 'readRepositories'
+                property: 'behaviors'
             });
         }
-        if (method.readRepositories.length === 0) {
+        const repositories = this.getQueryRepositoryReferences(method);
+        if (repositories.length === 0) {
             accept('error', 'A query-service method must read from at least one query repository.', {
                 node: method,
-                property: 'readRepositories'
+                property: 'behaviors'
             });
         }
         const queryContext = getOwningContextName(service);
-        for (const repository of method.readRepositories) {
-            if (repository.ref && getOwningContextName(repository.ref) !== queryContext) {
+        for (const repository of repositories) {
+            if (getOwningContextName(repository) !== queryContext) {
                 accept('error', 'A query service may read only query repositories in its own bounded context.', {
                     node: method,
-                    property: 'readRepositories'
+                    property: 'behaviors'
                 });
             }
         }
@@ -860,13 +884,23 @@ export class ThinaiValidator {
                 property: 'returnType'
             });
         }
-        if (method.invocations.length > 0 || method.loadRepository || method.readRepositories.length > 0 ||
+        if (method.invocations.length > 0 || method.loadRepository ||
             method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional || method.events.length > 0) {
             accept('error', 'A projector may update its read model but cannot invoke domain/application methods or write aggregates.', {
                 node: method,
                 property: 'updatesRepository'
             });
         }
+    }
+
+    private getQueryRepositoryReferences(node: AstNode): QueryRepository[] {
+        const repositories = new Set<QueryRepository>();
+        AstUtils.streamAst(node).forEach(child => AstUtils.streamReferences(child).forEach(referenceInfo => {
+            if (isReference(referenceInfo.reference) && isQueryRepository(referenceInfo.reference.ref)) {
+                repositories.add(referenceInfo.reference.ref);
+            }
+        }));
+        return [...repositories];
     }
 
     checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
@@ -1117,8 +1151,9 @@ export class ThinaiValidator {
                 return;
             }
             if (isField(target) && !isEntity(target.$container) && !isValueObject(target.$container) &&
-                !isDomainEvent(target.$container) && !isIntegrationEvent(target.$container) && !isReadModel(target.$container)) {
-                accept('error', 'Behavior specifications can reference only entity and value-object fields.', {
+                !isDomainEvent(target.$container) && !isIntegrationEvent(target.$container) && !isReadModel(target.$container) &&
+                !isDataObject(target.$container)) {
+                accept('error', 'Specification text can reference only declared domain, event, data-object, or read-model fields.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -1133,8 +1168,8 @@ export class ThinaiValidator {
                     this.hasAuthorizedEventRelationship(referenceInfo.container, event);
                 if (!authorizedPublicField) {
                     accept('error', isDomainEvent(target.$container)
-                        ? 'A behavior specification cannot reference a private DomainEvent field from another bounded context.'
-                        : 'A behavior specification cannot reference a private field from another bounded context.', {
+                        ? 'Specification text cannot reference a private DomainEvent field from another bounded context.'
+                        : 'Specification text cannot reference a private field from another bounded context.', {
                         node: referenceInfo.container,
                         property: referenceInfo.property
                     });
@@ -1142,7 +1177,15 @@ export class ThinaiValidator {
                 }
             }
             if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target)) {
-                accept('error', 'A behavior specification cannot reference a private method from another bounded context.', {
+                accept('error', 'Specification text cannot reference a private method from another bounded context.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+                return;
+            }
+            if (crossesContext && !isInSharedKernel(target) &&
+                (isParameter(target) || isDataObject(target) || isReadModel(target) || isQueryRepository(target))) {
+                accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -1155,7 +1198,7 @@ export class ThinaiValidator {
                 return;
             }
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.ref === targetModule);
-            const exposureTarget = isField(target) ? target.$container : target;
+            const exposureTarget = isField(target) || isParameter(target) ? target.$container : target;
             const exposed = targetModule.exposures.some(exposure =>
                 exposure.declarations.some(declaration => declaration.ref === exposureTarget)
             );
@@ -1372,8 +1415,22 @@ export class ThinaiValidator {
         const identifierType = isEntity(root)
             ? root.fields.find(field => field.identifier)?.type?.ref
             : undefined;
-        const parameter = method.parameters.find(candidate => candidate.name === method.loadParameter);
-        if (!parameter || !identifierType || parameter.type?.ref !== identifierType) {
+        const path = (method.loadParameter ?? '').split('.');
+        const parameter = method.parameters.find(candidate => candidate.name === path[0]);
+        let resolvedType = parameter?.type?.ref;
+        let valid = parameter !== undefined && !parameter.optional && identifierType !== undefined;
+        for (const segment of path.slice(1)) {
+            const fields = resolvedType && 'fields' in resolvedType
+                ? (resolvedType as DataObject | ReadModel | ValueObject).fields
+                : [];
+            const field = fields.find(candidate => candidate.name === segment);
+            if (!field || field.optional || field.collection || !field.type?.ref) {
+                valid = false;
+                break;
+            }
+            resolvedType = field.type.ref;
+        }
+        if (!valid || !identifierType || resolvedType !== identifierType) {
             accept('error', 'A repository load must use a method parameter typed as the aggregate root identifier.', {
                 node: method,
                 property: 'loadParameter'
@@ -1459,7 +1516,7 @@ export class ThinaiValidator {
 
     checkNamedDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        Factory | Flow | IntegrationEvent | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        DataObject | Factory | Flow | IntegrationEvent | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         this.checkDuplicateDeclaration(node, accept);
@@ -1467,7 +1524,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        Factory | Flow | IntegrationEvent | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        DataObject | Factory | Flow | IntegrationEvent | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);

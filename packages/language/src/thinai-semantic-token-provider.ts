@@ -1,7 +1,7 @@
 import type { AstNode } from 'langium';
 import { AbstractSemanticTokenProvider, type SemanticTokenAcceptor } from 'langium/lsp';
 import { SemanticTokenTypes } from 'vscode-languageserver';
-import { isBehaviorSpecificationTextPart, isField, isMethod } from './generated/ast.js';
+import { isSpecificationTextPart, isField, isMethod } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 
 export class ThinaiSemanticTokenProvider extends AbstractSemanticTokenProvider {
@@ -10,7 +10,7 @@ export class ThinaiSemanticTokenProvider extends AbstractSemanticTokenProvider {
     }
 
     protected override highlightElement(node: AstNode, acceptor: SemanticTokenAcceptor): void {
-        if (!isBehaviorSpecificationTextPart(node)) {
+        if (!isSpecificationTextPart(node)) {
             return;
         }
 

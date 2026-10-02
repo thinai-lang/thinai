@@ -119,8 +119,17 @@ aggregate and `creates` / `invokes` / `saves` when creating one. Deletion uses
 `loads` / `invokes` / `deletes`. A load and write operation must use the same
 repository for the application's aggregate; `id` must be a parameter typed by
 the root's identifier value object. Each aggregate has one write repository.
+Use identity-free data objects for operation input/output shapes. They can contain
+primitives, collections, enums, value objects, and nested data objects, but not
+entities or read models; they have no identifiers or behavior. Prefer value
+objects for shapes that represent domain concepts.
+
 Queries use bounded-context query repositories/read models, can read from several
-of them, and do not save, create, delete, or emit events. For example:
+of them, and do not save, create, delete, or emit events. Mention the repositories
+in the query method's descriptive specification text rather than declaring a
+separate `reads` clause. Queries can return primitives, data objects, read models,
+or collections of these; application-service methods must not return entities.
+For example:
 
 ```thinai
 bounded context Ordering {
@@ -149,8 +158,12 @@ bounded context Ordering {
         transactional method createOrder() creates Order.OrderFactory.create saves OrderRepository;
     }
     query service OrderQueries {
-        method getOrderStatus(id: OrderId) returns string reads OrderSearchRepository;
-        method searchOrders(term: string) returns List<string> reads OrderSearchRepository;
+        method getOrderStatus(id: OrderId) returns string {
+            behavior "Read [[OrderSearchRepository]] for the selected order.";
+        }
+        method searchOrders(term: string) returns List<string> {
+            behavior "Search [[OrderSearchRepository]] for orders matching the term.";
+        }
     }
 }
 ```

@@ -156,25 +156,29 @@ Field:
     ('initial' initialState=ID)? ';'?;
 
 Invariant:
-    'invariant' description=BehaviorSpecificationText ';'?;
+    'invariant' description=SpecificationText ';'?;
 
 Precondition:
-    'precondition' description=BehaviorSpecificationText ';'?;
+    'precondition' description=SpecificationText ';'?;
 
 Postcondition:
-    'postcondition' description=BehaviorSpecificationText ';'?;
+    'postcondition' description=SpecificationText ';'?;
 
 Behavior:
-    'behavior' description=BehaviorSpecificationText ';'?;
+    'behavior' description=SpecificationText ';'?;
 
 TypeDeclaration:
     Entity
     | ValueObject
     | EnumType
-    | ReadModel;
+    | ReadModel
+    | DataObject;
 
 ReadModel:
     'read' 'model' name=ID '{' fields+=Field* '}' ';'?;
+
+DataObject:
+    'data' 'object' name=ID '{' fields+=Field* '}' ';'?;
 
 Projector:
     'projector' name=ID 'for' readModel=[ReadModel:QualifiedName] '{' methods+=Method* '}' ';'?;
@@ -185,8 +189,7 @@ DomainService:
 Method:
     transactional?='transactional'? 'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
-    ('loads' loadRepository=[Repository:QualifiedName] 'by' loadParameter=ID)?
-    ('reads' readRepositories+=[QueryRepository:QualifiedName] (',' readRepositories+=[QueryRepository:QualifiedName])*)?
+    ('loads' loadRepository=[Repository:QualifiedName] 'by' loadParameter=QualifiedName)?
     ('updates' updatesRepository=[QueryRepository:QualifiedName])?
     ('creates' creationMethod=[Method:QualifiedName])?
     ('invokes' invocations+=[Method:QualifiedName] (',' invocations+=[Method:QualifiedName])*)?
@@ -233,7 +236,7 @@ IntegrationEvent:
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
 type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
-    EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector |
+    DataObject | EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector |
     QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 
 Flow:
@@ -241,7 +244,7 @@ Flow:
 
 FlowElement:
     'actor' actor=ID ';'?
-    | 'invoke' method=[Method:QualifiedName] ('when' guard=BehaviorSpecificationText)? ';'?;
+    | 'invoke' method=[Method:QualifiedName] ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 
@@ -254,16 +257,16 @@ CollectionType:
 CollectionKind returns string:
     'List' | 'Set' | 'Map';
 
-BehaviorSpecificationText:
-    DOUBLE_STRING_START (parts+=BehaviorSpecificationTextPart)* DOUBLE_STRING_END
-    | SINGLE_STRING_START (parts+=BehaviorSpecificationTextPart)* SINGLE_STRING_END;
+SpecificationText:
+    DOUBLE_STRING_START (parts+=SpecificationTextPart)* DOUBLE_STRING_END
+    | SINGLE_STRING_START (parts+=SpecificationTextPart)* SINGLE_STRING_END;
 
-BehaviorSpecificationTextPart:
+SpecificationTextPart:
     text=DOUBLE_STRING_TEXT
     | text=SINGLE_STRING_TEXT
-    | '[[' target=[BehaviorSpecificationTarget:QualifiedName] REFERENCE_END;
+    | '[[' target=[SpecificationTarget:QualifiedName] REFERENCE_END;
 
-type BehaviorSpecificationTarget = Method | Field;
+type SpecificationTarget = DataObject | Field | Method | Parameter | QueryRepository | ReadModel;
 
 StringLiteral returns string:
     DOUBLE_STRING_START (DOUBLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* DOUBLE_STRING_END

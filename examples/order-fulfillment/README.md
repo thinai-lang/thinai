@@ -6,13 +6,13 @@ This example demonstrates the complete Thinai model across multiple files.
 
 - `strategic.tni` defines core, supporting, and generic subdomains.
 - `context-catalog.tni` declares both canonical bounded contexts and imports their subdomains.
-- `ordering.tni` extends Ordering with tactical DDD types, an authorization domain service, and behavior specifications.
-- `ordering-events.tni` contributes application-service methods, an integration-event contract, and a user-started flow that names its initiating actor inline. `ordering.tni` declares the internal domain event and a business capability at context scope.
+- `ordering.tni` extends Ordering with tactical DDD types, an authorization domain service, a child entity with its own identity/state, and behavior specifications.
+- `ordering-events.tni` contributes separate command services for Order, data-object inputs and results, bounded-context query services whose repository prose is linked, read models, event projectors, an exposed integration contract, and user-started flows with descriptive `with`/`when` text. `ordering.tni` declares the internal domain events and a business capability at context scope.
 - `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
 - `context-map.tni` selectively imports Ordering and Shipping, maps their customer-supplier integration patterns, and connects them through the named `CommonTypes` shared kernel.
 - `common-types.tni` defines a shared-kernel value object and the `Role` enum used by both contexts.
 
-The model demonstrates explicit aggregate-root entities, transactional repository workflows, aggregate state transitions, event-to-integration-event translation after commit, incoming integration-event handling, all four behavior-specification kinds, inline method references, optional fields/parameters, and `List`, `Set`, and `Map` types. Application-service behavior specifications describe authorization as each method's first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows identifier fields, a local Shipping identifier that mirrors the Ordering identifier, component-selective imports, an imported context map, and a module dependency within Shipping.
+The model demonstrates root and child entity identities and transitions, single-aggregate transactional create/update/delete workflows, multiple command services per aggregate, query projections reused across aggregates, post-commit projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive query/command flows. Application-service behavior specifications describe authorization as each method's first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, and module dependencies.
 
 ## Try It
 

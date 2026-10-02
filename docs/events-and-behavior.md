@@ -146,15 +146,19 @@ A flow describes an ordered user-started sequence of application-service
 command methods in one bounded context. Each command keeps its own
 single-aggregate transaction; a flow
 does not combine its steps into a multi-aggregate transaction. A flow may also
-include read-only query-service methods and descriptive `when` guards. Guards
-are linked prose, not executable conditions; the command must still enforce its
-own invariant. Event-triggered methods are not flow steps:
+include read-only query-service methods and descriptive `with` input mappings
+and `when` guards. They are linked prose, not executable data flow or
+conditions; the command must still enforce its own invariant. Event-triggered
+methods are not flow steps:
 
 ```thinai
 flow PlaceOrder {
     actor Customer;
-    invoke Ordering.OrderQueries.canPlaceOrder;
+    invoke Ordering.OrderQueries.canPlaceOrder
+        with "orderId from [[OrderSummary.orderId]]"
+        when "The customer requests an eligibility check for the selected order.";
     invoke Ordering.OrderApplication.placeOrder
+        with "orderId from [[OrderSummary.orderId]] and items from the selected order lines"
         when "The eligibility check [[Ordering.OrderQueries.canPlaceOrder]] allows this order.";
 }
 ```

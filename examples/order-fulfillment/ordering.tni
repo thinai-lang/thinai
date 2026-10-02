@@ -18,13 +18,21 @@ part of bounded context Ordering {
             method place() emits OrderPlaced {
                 transition status from Draft to Placed;
             }
+            method pay() {
+                transition status from Placed to Paid;
+            }
+            method fulfillItem(itemId: OrderItemId) invokes Order.OrderItem.ship;
+            method validateCanDelete() {
+                precondition "Only a draft order can be deleted.";
+            }
 
             identifier id: OrderId;
             owner: string;
             currency: Common.Currency;
-            orderId: OrderId;
-            status: OrderStatus;
+            customerId: CustomerId;
+            status: OrderStatus initial Draft;
             lines: List<OrderLine>;
+            items: List<OrderItem>;
             labels: Set<string>;
             quantities: Map<string, number>;
             externalReference?: string;
@@ -47,9 +55,20 @@ part of bounded context Ordering {
             quantity: number;
         }
 
+        entity OrderItem {
+            method ship() {
+                transition status from Open to Shipped;
+            }
+            identifier id: OrderItemId;
+            line: OrderLine;
+            status: OrderItemStatus initial Open;
+        }
+        value object OrderItemId { raw: string; }
+
         enum OrderStatus {
             Draft, Placed, Paid
         }
+        enum OrderItemStatus { Open, Shipped }
 
         domain service OrderPricing {
             method calculateTotal(amount: number, adjustments?: List<number>) returns number {
@@ -68,6 +87,26 @@ part of bounded context Ordering {
         factory OrderFactory for Order;
     }
 
+    aggregate Customer {
+        root entity Customer {
+            method register() emits CustomerRegistered;
+            identifier id: CustomerId;
+            name: string;
+        }
+        value object CustomerId { raw: string; }
+        repository CustomerRepository for Customer;
+        factory CustomerFactory for Customer operations {
+            method createCustomer(id: CustomerId, name: string) returns Customer;
+        }
+    }
+
+    application service CustomerRegistration for Customer {
+        transactional method registerCustomer(id: CustomerId, name: string)
+            creates Customer.CustomerFactory.createCustomer
+            invokes Customer.Customer.register
+            saves Customer.CustomerRepository;
+    }
+
     domain service Authorization {
         method authorize(role: Common.Role, action: string) returns boolean {
             precondition "The role and requested action are known.";
@@ -78,5 +117,12 @@ part of bounded context Ordering {
 
     event OrderPlaced data {
         orderId: OrderId;
+        customerId: CustomerId;
+        status: OrderStatus;
+    }
+
+    event CustomerRegistered data {
+        customerId: CustomerId;
+        name: string;
     }
 }

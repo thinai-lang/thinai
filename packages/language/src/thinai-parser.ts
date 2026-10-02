@@ -1,5 +1,5 @@
 import { createLangiumParser, type AstNode, type LangiumCoreServices } from 'langium';
-import { isBehaviorSpecificationText, type BehaviorSpecificationText } from './generated/ast.js';
+import { isSpecificationText, type SpecificationText } from './generated/ast.js';
 
 const REFERENCE_MARKER_START = '\uE000thinai-reference-';
 const REFERENCE_MARKER_END = '\uE001';
@@ -10,7 +10,7 @@ export function createThinaiParser(services: LangiumCoreServices) {
     parser.parse = ((input, options) => {
         const result = parse(input, options);
         for (const node of streamNodes(result.value)) {
-            if (isBehaviorSpecificationText(node)) {
+            if (isSpecificationText(node)) {
                 dedentBehaviorText(node);
             }
         }
@@ -40,7 +40,7 @@ function* streamNodes(root: AstNode): Iterable<AstNode> {
     }
 }
 
-function dedentBehaviorText(node: BehaviorSpecificationText): void {
+function dedentBehaviorText(node: SpecificationText): void {
     const source = node.$cstNode?.text;
     if (!source || source.length < 2) {
         return;

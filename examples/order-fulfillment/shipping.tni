@@ -45,7 +45,7 @@ part of bounded context Shipping {
             behavior "First, authorize the Common.Role.FulfillmentOperator role for creating a shipment with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment by invoking the aggregate root's start operation.";
         }
 
-        method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes createShipment {
+        method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1) invokes createShipment {
             behavior "First, authorize the Common.Role.System role for handling the incoming event with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment from the order identifier in the incoming event.";
         }
     }

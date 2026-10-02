@@ -650,7 +650,8 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes("Could not resolve reference to BehaviorSpecificationTarget named 'Order.Order.missingMethod'"))
+            String(diagnostic.message).includes("Could not resolve reference") &&
+            String(diagnostic.message).includes("Order.Order.missingMethod"))
         ).toBe(true);
     });
 });

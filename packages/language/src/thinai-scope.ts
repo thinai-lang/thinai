@@ -13,17 +13,28 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import {
     type Import,
+    type Constructor,
+    type DataObject,
+    type FlowElement,
+    type Method,
+    type ReadModel,
+    isConstructor,
     isBoundedContext,
     isBoundedContextPart,
     isDomainEvent,
+    isDataObject,
     isEntity,
     isField,
+    isFlowElement,
     isIntegrationEvent,
     isModel,
+    isMethod,
     isModule,
     isSharedKernel,
     isImportComponent,
     isReadModel,
+    isSpecificationTextPart,
+    isQueryService,
     isValueObject,
     type Module
 } from './generated/ast.js';
@@ -36,6 +47,7 @@ const exportedTypes = new Set([
     'Capability',
     'DomainEvent',
     'DomainService',
+    'DataObject',
     'Entity',
     'EnumType',
     'Flow',
@@ -58,7 +70,8 @@ type NamedNode = AstNode & { name: string };
 
 function isNamedExport(node: AstNode): node is NamedNode {
     if (isField(node) && !isEntity(node.$container) && !isValueObject(node.$container) &&
-        !isDomainEvent(node.$container) && !isIntegrationEvent(node.$container) && !isReadModel(node.$container)) {
+        !isDomainEvent(node.$container) && !isIntegrationEvent(node.$container) && !isReadModel(node.$container) &&
+        !isDataObject(node.$container)) {
         return false;
     }
     return exportedTypes.has(node.$type) && typeof (node as Partial<NamedNode>).name === 'string';
@@ -179,7 +192,111 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         for (let index = localScopes.length - 1; index >= 0; index--) {
             result = this.createScope(localScopes[index], result);
         }
+        const specificationSymbols = this.getSpecificationSymbols(context, referenceType);
+        if (specificationSymbols.length > 0) {
+            result = this.createScope(specificationSymbols, result);
+        }
         return result;
+    }
+
+    private getSpecificationSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
+        const pending: AstNodeDescription[] = [];
+        if (referenceType !== 'SpecificationTarget' || !isSpecificationTextPart(context.container)) {
+            return pending;
+        }
+        let current: AstNode | undefined = context.container;
+        let operation: Method | Constructor | undefined;
+        let flowElement: FlowElement | undefined;
+        while (current) {
+            if (isFlowElement(current)) {
+                flowElement = current;
+                operation = current.method?.ref;
+                break;
+            }
+            if (isMethod(current) || isConstructor(current)) {
+                operation = current;
+                break;
+            }
+            current = current.$container;
+        }
+        if (!operation) {
+            return pending;
+        }
+
+        for (const parameter of operation.parameters) {
+            this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
+            const parameterType = parameter.type?.ref;
+            if (parameterType && (isDataObject(parameterType) || isReadModel(parameterType) || isValueObject(parameterType))) {
+                this.addShapeFields(pending, parameterType, parameter.name, referenceType, new Set());
+            }
+            if (parameter.collection) {
+                const elementType = parameter.collection.elementType?.ref;
+                if (elementType && (isDataObject(elementType) || isReadModel(elementType) || isValueObject(elementType))) {
+                    this.addShapeFields(pending, elementType, parameter.name, referenceType, new Set());
+                }
+            }
+        }
+
+        if (isMethod(operation)) {
+            const resultType = operation.returnType?.ref;
+            if (resultType && (isDataObject(resultType) || isReadModel(resultType) || isValueObject(resultType))) {
+                this.addShapeFields(pending, resultType, 'result', referenceType, new Set());
+            }
+            if (operation.returnCollection) {
+                const elementType = operation.returnCollection.elementType?.ref;
+                if (elementType && (isDataObject(elementType) || isReadModel(elementType) || isValueObject(elementType))) {
+                    this.addShapeFields(pending, elementType, 'result', referenceType, new Set());
+                }
+            }
+        }
+        if (flowElement) {
+            const flowContext = getOwningContextName(flowElement);
+            for (const description of this.indexManager.allElements('Method').toArray()) {
+                const queryMethod = description.node;
+                if (!isMethod(queryMethod) || !isQueryService(queryMethod.$container) ||
+                    getOwningContextName(queryMethod) !== flowContext) {
+                    continue;
+                }
+                const shape = queryMethod.returnType?.ref ?? queryMethod.returnCollection?.elementType?.ref;
+                if (!shape || (!isDataObject(shape) && !isReadModel(shape) && !isValueObject(shape))) {
+                    continue;
+                }
+                this.addShapeFields(pending, shape, `${getExportedName(queryMethod as AstNode & { name: string })}.result`, referenceType, new Set());
+            }
+        }
+        return pending;
+    }
+
+    private addShapeFields(
+        descriptions: AstNodeDescription[],
+        shape: DataObject | ReadModel | import('./generated/ast.js').ValueObject,
+        prefix: string,
+        referenceType: string,
+        visited: Set<AstNode>
+    ): void {
+        if (visited.has(shape)) {
+            return;
+        }
+        visited.add(shape);
+        for (const field of shape.fields) {
+            const name = `${prefix}.${field.name}`;
+            this.addSpecificationSymbol(descriptions, field, name, referenceType);
+            const nested = field.type?.ref;
+            if (nested && (isDataObject(nested) || isReadModel(nested) || isValueObject(nested))) {
+                this.addShapeFields(descriptions, nested, name, referenceType, visited);
+            }
+        }
+    }
+
+    private addSpecificationSymbol(
+        descriptions: AstNodeDescription[],
+        node: AstNode,
+        name: string,
+        referenceType: string
+    ): void {
+        if (this.reflection.isSubtype(node.$type, referenceType)) {
+            descriptions.push(this.descriptions.createDescription(node, name, AstUtils.getDocument(node)));
+        }
     }
 
     private getModuleSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
@@ -207,7 +324,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                         }
                         descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
                     }
-                    if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) || isIntegrationEvent(target) || isReadModel(target)) &&
+                    if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) || isIntegrationEvent(target) || isReadModel(target) || isDataObject(target)) &&
                         this.reflection.isSubtype('Field', referenceType)) {
                         for (const field of target.fields) {
                             const fieldName = getExportedName(field);

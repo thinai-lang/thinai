@@ -54,6 +54,45 @@ describe('Thinai generation evaluations', () => {
             ...generated.result.data
         };
     });
+
+    evaluation('models DataObject inputs and results with descriptive Flow references', async (context: EvalContext) => {
+        const generated = await evaluateGeneratedCode(
+            'Generate a valid single-file Thinai Ordering model. Declare aggregate Order with root entity Order (identifier id: OrderId; method place();), value object OrderId { raw: string; }, enum OrderStatus { Draft, Placed }, and repository OrderRepository for Order. Declare nested identity-free data objects OrderLineInput { sku: string; quantity: number; }, PlaceOrderInput { orderId: OrderId; lines: List<OrderLineInput>; }, PlaceOrderResult { orderId: OrderId; status: OrderStatus; }, and EligibilityResult { eligible: boolean; }. Declare read model OrderSummary { orderId: OrderId; }, query repository OrderSummaryRepository for OrderSummary, and query service OrderQueries with method checkEligibility(orderId: OrderId) returns EligibilityResult; its behavior specification must describe reading [[OrderSummaryRepository]] and returning [[result.eligible]]. Declare application service OrderCommands for Order with transactional method place(input: PlaceOrderInput) returns PlaceOrderResult loads OrderRepository by input.orderId invokes Order.Order.place saves OrderRepository; its behavior should reference [[input.orderId]] and [[result.status]]. Add flow PlaceOrder with actor Customer. Write the two Flow steps with the exact singular keyword syntax `invoke OrderCommands.place ...;` followed by `invoke OrderQueries.checkEligibility ...;` (never `invokes`). On the command step, use a descriptive `with` mapping that references its local parameter as [[input.orderId]] and a relevant field as [[OrderSummary.orderId]], plus a `when` link to [[Ordering.OrderQueries.checkEligibility.result.eligible]], even though the query step appears later. Do not qualify the command parameter with its method name. This is descriptive text, not executable ordering. Do not use a reads clause, and ensure every reference resolves.',
+            context
+        );
+        const lowerCode = generated.code.toLowerCase();
+        const requiredFeatures = [
+            'data object placeorderinput',
+            'data object orderlineinput',
+            'data object placeorderresult',
+            'returns placeorderresult',
+            'loads orderrepository by input.orderid',
+            '[[input.orderid]]',
+            '[[result.status]]',
+            '[[ordersummaryrepository]]',
+            'with',
+            'when',
+            '[[ordering.orderqueries.checkeligibility.result.eligible]]'
+        ];
+        const missingFeatures = requiredFeatures.filter(feature => !lowerCode.includes(feature));
+        const hasRemovedReadsClause = /\breads\s+[A-Z_]/.test(generated.code);
+        const flowOrderIsDescriptive = generated.code.indexOf('invoke OrderCommands.place') >= 0 &&
+            generated.code.indexOf('invoke OrderCommands.place') < generated.code.indexOf('invoke OrderQueries.checkEligibility');
+        const featureScore = (requiredFeatures.length - missingFeatures.length + (hasRemovedReadsClause ? 0 : 1)) /
+            (requiredFeatures.length + 1);
+        return {
+            score: generated.valid ? featureScore * (flowOrderIsDescriptive ? 1 : 0.5) : 0,
+            valid: generated.valid,
+            featureScore,
+            missingFeatures,
+            hasRemovedReadsClause,
+            flowOrderIsDescriptive,
+            generatedCode: generated.code,
+            errorCount: generated.errors.length,
+            validationErrors: generated.errors.map(error => error.message),
+            ...generated.result.data
+        };
+    });
 });
 
 describe('Thinai understanding evaluations', () => {
@@ -75,13 +114,74 @@ describe('Thinai understanding evaluations', () => {
             `Explain what the following Thinai model states, including the invariant and what its inline method reference points to:\n\n\`\`\`thinai\n${source}\n\`\`\``,
             { systemPrompt: context.systemPrompt }
         );
-        const lowerExplanation = explanation.toLowerCase();
+        const plainExplanation = explanation.replace(/[*_`]/g, '');
+        const lowerExplanation = plainExplanation.toLowerCase();
         const expectedConcepts = ['order', 'owner', 'ensureowner'];
         const matchedConcepts = expectedConcepts.filter(concept => lowerExplanation.includes(concept));
         return {
             score: matchedConcepts.length / expectedConcepts.length,
             matchedConcepts,
             expectedConcepts
+        };
+    });
+
+    evaluation('understands DataObjects and descriptive Flow text', async (context: EvalContext) => {
+        const explanation = await generateResponse(
+            'In plain English, explain the difference between a value object and a DataObject used as a command input. Explain that Flow with/when text is descriptive rather than executable. A when clause may link to the result of a query that is declared in the model but is not invoked by that Flow, or is invoked later; explicitly state whether Thinai requires that query to appear or execute earlier. Do not impose an ordering requirement.',
+            { systemPrompt: context.systemPrompt }
+        );
+        const plainExplanation = explanation.replace(/[*_`]/g, '');
+        const lowerExplanation = plainExplanation.toLowerCase();
+        const expectedConcepts = [
+            { name: 'DataObject input shape', alternatives: ['data object', 'input'] },
+            { name: 'value object is a domain concept', alternatives: ['value object'] },
+            { name: 'Flow text is descriptive', alternatives: ['descriptive', 'not executable', 'does not execute'] },
+            { name: 'query reference has no ordering requirement', alternatives: [] }
+        ];
+        const queryOrderIsOptional = /\b(?:not required|need not|needn't|does not require|doesn't require|does not need|doesn't need|not necessary|no requirement|without requiring|does not have to|doesn't have to)\b.{0,180}\b(?:earlier|before|prior|precede|appear|occur|invoke|execute)\b/i.test(plainExplanation) ||
+            /\bno\s+(?:execution\s+)?(?:ordering|sequence)\s+(?:requirement|constraint)\b/i.test(plainExplanation);
+        const matchedConcepts = expectedConcepts.filter(concept => concept.alternatives.some(alternative =>
+            lowerExplanation.includes(alternative)
+        ));
+        if (queryOrderIsOptional) {
+            matchedConcepts.push(expectedConcepts[3]);
+        }
+        return {
+            score: matchedConcepts.length / expectedConcepts.length,
+            matchedConcepts: matchedConcepts.map(concept => concept.name),
+            missingConcepts: expectedConcepts.filter(concept => !matchedConcepts.includes(concept)).map(concept => concept.name),
+            expectedConcepts: expectedConcepts.length,
+            explanation
+        };
+    });
+
+    evaluation('understands imports, modules, and bounded-context boundaries', async (context: EvalContext) => {
+        const explanation = await generateResponse(
+            'In plain English, explain these Thinai rules: imports are direct and relative; when a file imports multiple components it selects them and may alias a selected component; a `part of bounded context` file must directly import the canonical context; module references require both dependency and exposure; and only IntegrationEvents may cross bounded-context boundaries, with an authorized imported context map. Explain that DomainEvents stay private.',
+            { systemPrompt: context.systemPrompt }
+        );
+        const normalized = explanation.replace(/[*_`]/g, '').toLowerCase();
+        const expectedConcepts = [
+            ['relative', 'direct import'],
+            ['select', 'component selector'],
+            ['alias'],
+            ['part of', 'canonical context'],
+            ['dependency', 'depends'],
+            ['exposure', 'exposes'],
+            ['integrationevent'],
+            ['authorized', 'context map'],
+            ['domainevent', 'private']
+        ];
+        const matchedConcepts = expectedConcepts.filter(concept =>
+            concept.some(keyword => normalized.includes(keyword))
+        );
+        return {
+            score: matchedConcepts.length / expectedConcepts.length,
+            matchedConceptCount: matchedConcepts.length,
+            totalConcepts: expectedConcepts.length,
+            missingConcepts: expectedConcepts.filter(concept => !concept.some(keyword => normalized.includes(keyword)))
+                .map(concept => concept[0]),
+            explanation
         };
     });
 });

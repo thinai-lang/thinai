@@ -428,7 +428,9 @@ describe('Validating', () => {
                 }
                 read model OrderLookup { eligible: boolean; }
                 query service OrderQueries {
-                    method lookup() returns boolean reads OrderLookupRepository;
+                    method lookup() returns boolean {
+                        behavior "Read [[OrderLookupRepository]] to determine whether the order can be placed.";
+                    }
                 }
                 query repository OrderLookupRepository for OrderLookup;
                 application service OrderCommands for Order {
@@ -437,7 +439,7 @@ describe('Validating', () => {
                 flow LookupOrder {
                     actor Customer;
                     invoke OrderQueries.lookup;
-                    invoke OrderCommands.placeOrder when "The check [[OrderQueries.lookup]] reports that the order can be placed.";
+                    invoke OrderCommands.placeOrder with "id from [[OrderId.raw]]" when "The check [[OrderQueries.lookup]] reports that the order can be placed.";
                 }
             }
         `);
@@ -498,11 +500,13 @@ describe('Validating', () => {
                     transactional method activateCustomer(id: CustomerId) loads CustomerWriteRepository by id invokes Customer.Customer.activate saves CustomerWriteRepository;
                 }
                 query service OrderingReports {
-                    method findOrders(text: string) returns string reads OrderSearchRepository, CustomerHistoryRepository;
+                    method findOrders(text: string) returns string {
+                        behavior "Combine [[OrderSearchRepository]] with [[CustomerHistoryRepository]] for the report.";
+                    }
                 }
                 flow ActivateCustomerAndPlaceOrder {
-                    invoke CustomerCommands.activateCustomer;
-                    invoke OrderCommands.placeOrder;
+                    invoke CustomerCommands.activateCustomer with "id from [[CustomerId.raw]]";
+                    invoke OrderCommands.placeOrder with "id from [[OrderId.raw]]";
                 }
             }
         `);
@@ -522,6 +526,14 @@ describe('Validating', () => {
                     enum OrderStatus { Draft, Placed }
                     repository OrderRepository for Order;
                 }
+                data object PlaceOrderInput {
+                    orderId: OrderId;
+                    requestedStatus: OrderStatus;
+                }
+                data object PlaceOrderResult {
+                    orderId: OrderId;
+                    status: OrderStatus;
+                }
                 read model OrderEligibility {
                     orderId: OrderId;
                     status: OrderStatus;
@@ -531,24 +543,54 @@ describe('Validating', () => {
                 event OrderPlaced data { orderId: string; }
                 projector OrderEligibilityProjector for OrderEligibility {
                     method onOrderPlaced(source: event OrderPlaced) updates OrderEligibilityRepository after commit {
-                        behavior "Copy [[OrderPlaced.orderId]] into [[OrderEligibility.orderId]].";
+                        behavior "Copy [[OrderPlaced.orderId]] into [[OrderEligibility.orderId]], then update [[OrderEligibility.status]].";
                     }
                 }
                 query service OrderQueries {
-                    method canPlace(id: OrderId) returns OrderEligibility reads OrderEligibilityRepository;
+                    method canPlace(orderId: OrderId) returns OrderEligibility {
+                        behavior "Read [[OrderEligibilityRepository]] and return [[result.eligible]] for [[orderId]].";
+                    }
                 }
                 application service OrderCommands for Order {
-                    transactional method place(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository;
+                    transactional method place(input: PlaceOrderInput) returns PlaceOrderResult
+                        loads OrderRepository by input.orderId invokes Order.Order.place saves OrderRepository {
+                        behavior "Place the order for [[input.orderId]] and return its [[result.status]].";
+                    }
                 }
                 flow PlaceOrder {
                     actor Customer;
-                    invoke OrderQueries.canPlace;
-                    invoke OrderCommands.place when "The eligibility query [[OrderQueries.canPlace]] reports that placement is allowed.";
+                    invoke OrderQueries.canPlace with "orderId from [[OrderEligibility.orderId]]";
+                    invoke OrderCommands.place with "input.orderId from [[OrderEligibility.orderId]] and input.requestedStatus from the customer selection"
+                        when "The eligibility query [[Ordering.OrderQueries.canPlace.result.eligible]] reports that placement is allowed.";
                 }
             }
         `);
 
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+    });
+
+    test('allows nested data objects but rejects entity and read-model fields', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                    entity OrderLine { identifier id: OrderLineId; }
+                    value object OrderLineId { raw: string; }
+                }
+                read model OrderSummary { status: string; }
+                data object Address { street: string; }
+                data object ShippingInput {
+                    address: Address;
+                    line: OrderLine;
+                    summary: OrderSummary;
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic =>
+            String(diagnostic.message).includes('Data objects may contain value data')
+        )).toHaveLength(2);
     });
 
     test('rejects more than one write repository for an aggregate', async () => {
@@ -605,7 +647,9 @@ describe('Validating', () => {
                     transactional method deleteOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.validateDeletion deletes OrderRepository;
                 }
                 query service OrderQueries {
-                    method getOrder(id: OrderId) returns string reads OrderReadModelRepository;
+                    method getOrder(id: OrderId) returns string {
+                        behavior "Read [[OrderReadModelRepository]] for the requested order.";
+                    }
                 }
             }
         `);

@@ -34,9 +34,19 @@ bounded context Ordering realizes OrderManagement {
 import "./ordering.tni";
 
 part of bounded context Ordering {
+    data object PlaceOrderInput {
+        orderId: OrderId;
+        items: List<OrderLine>;
+    }
+    data object PlaceOrderResult {
+        orderId: OrderId;
+        status: OrderStatus;
+    }
+
     application service OrderApplication for Order {
-        transactional method placeOrder(orderId: OrderId, items: List<OrderLine>) loads OrderRepository by orderId invokes Order.Order.place saves OrderRepository {
-            behavior "Place the order through its aggregate root.";
+        transactional method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult
+            loads OrderRepository by input.orderId invokes Order.Order.place saves OrderRepository {
+            behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]].";
         }
 
         method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {
@@ -48,7 +58,7 @@ part of bounded context Ordering {
 
     flow PlaceOrder {
         actor Customer;
-        invoke OrderApplication.placeOrder;
+        invoke OrderApplication.placeOrder with "orderId from the selected order and items from the order form";
     }
 }
 ```
@@ -69,9 +79,14 @@ source event to that contract after commit. Field mapping is described in
 
 An aggregate has one write repository. A bounded context may declare multiple
 `read model` projections and `query repository` stores; projectors update those
-models, and query-service methods can combine reads from several stores. Read
-models are not DDD entities. Multiple application services may target the same aggregate. A `flow`
-can sequence commands for multiple aggregates in the same bounded context; each
+models, and query-service methods can combine reads from several stores. Name
+the query repositories in descriptive query specifications instead of using a
+`reads` clause. Queries may return primitives, data objects, read models, or
+collections. Data objects are identity-free shapes for operation inputs and
+outputs; they may nest value objects, enums, collections, and other data
+objects, but not entities or read models. Read models are not DDD entities.
+Multiple application services may target the same aggregate. A `flow` can
+sequence commands for multiple aggregates in the same bounded context; each
 command remains its own transaction.
 
 An incoming integration event can invoke a local command method:
@@ -126,20 +141,22 @@ organization within a bounded context or shared kernel.
 Use `invariant`, `precondition`, `postcondition`, and `behavior` for descriptive
 domain meaning. Structured `invokes`, `emits`, and `transition` clauses are
 navigable semantic relationships. Interpolated specifications can link to
-methods and entity/value-object fields, but links do not evaluate expressions
-or invoke methods. Factory creation methods are ordinary methods that return
+methods, parameters, and fields on entities, value objects, data objects,
+read models, and events. Links do not evaluate expressions or invoke methods.
+Factory creation methods are ordinary methods that return
 their aggregate root and can be linked or invoked. A method may emit multiple
 events; their declaration order is significant.
 
 Flows are ordered, user-started sequences of application-service commands and
-read-only query-service methods. Command steps may include a descriptive
-`when "..."` guard with linked references; the DSL does not evaluate it, so the
-command must enforce its own invariants. Event-triggered reactions are
-represented by event-typed methods, not flows. Declare actors inline with
+read-only query-service methods. Steps may include optional descriptive
+`with "..."` input mapping and `when "..."` guard text with linked references;
+the DSL does not evaluate them, so commands must enforce their own invariants.
+Event-triggered reactions are represented by event-typed methods, not flows.
+Declare actors inline with
 `actor Customer;`; capabilities are declared at context or module scope.
 
 Thinai supports modules, aggregates, root and child entities, identifiers and
-mirrored value objects, read models, projectors, query services and repositories,
+mirrored value objects, data objects, read models, projectors, query services and repositories,
 typed methods and constructors, domain services, write repositories, factories,
 events, flow-local actors, flows, and context maps.
 Built-in collections are

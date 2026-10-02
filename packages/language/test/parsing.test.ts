@@ -44,7 +44,7 @@ describe('Parsing tests', () => {
                 integration event OrderPlacedAuditV1;
                 flow PlaceOrder {
                     actor Customer;
-                    invoke OrderApplication.placeOrder;
+                    invoke OrderApplication.placeOrder with "items from the selected order";
                 }
             }
         `);
