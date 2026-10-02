@@ -15,12 +15,15 @@ import {
     type Import,
     isBoundedContext,
     isBoundedContextPart,
+    isDomainEvent,
     isEntity,
     isField,
+    isIntegrationEvent,
     isModel,
     isModule,
     isSharedKernel,
     isImportComponent,
+    isReadModel,
     isValueObject,
     type Module
 } from './generated/ast.js';
@@ -41,6 +44,10 @@ const exportedTypes = new Set([
     'IntegrationEvent',
     'Method',
     'Module',
+    'Projector',
+    'QueryRepository',
+    'QueryService',
+    'ReadModel',
     'Repository',
     'SharedKernel',
     'Subdomain',
@@ -50,7 +57,8 @@ const exportedTypes = new Set([
 type NamedNode = AstNode & { name: string };
 
 function isNamedExport(node: AstNode): node is NamedNode {
-    if (isField(node) && !isEntity(node.$container) && !isValueObject(node.$container)) {
+    if (isField(node) && !isEntity(node.$container) && !isValueObject(node.$container) &&
+        !isDomainEvent(node.$container) && !isIntegrationEvent(node.$container) && !isReadModel(node.$container)) {
         return false;
     }
     return exportedTypes.has(node.$type) && typeof (node as Partial<NamedNode>).name === 'string';
@@ -199,7 +207,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                         }
                         descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
                     }
-                    if ((isEntity(target) || isValueObject(target)) && this.reflection.isSubtype('Field', referenceType)) {
+                    if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) || isIntegrationEvent(target) || isReadModel(target)) &&
+                        this.reflection.isSubtype('Field', referenceType)) {
                         for (const field of target.fields) {
                             const fieldName = getExportedName(field);
                             for (const name of this.getUnaliasedNames(fieldName)) {

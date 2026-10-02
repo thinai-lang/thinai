@@ -1,7 +1,8 @@
 # Thinai Language
 
-Thinai models strategic DDD, tactical DDD, aggregate behavior, application
-services, domain and integration events, and user-started flows.
+Thinai is a domain-specific modeling language for expressing DDD structures,
+relationships, and behavioral intent in a shared, navigable model. It models
+strategic and tactical DDD, aggregates, application services, events, and flows.
 
 ## File Model
 
@@ -22,6 +23,7 @@ bounded context Ordering realizes OrderManagement {
         }
         value object OrderId { raw: string; }
         enum OrderStatus { Draft, Placed }
+        repository OrderRepository for Order;
     }
     event OrderPlaced;
 }
@@ -33,16 +35,16 @@ import "./ordering.tni";
 
 part of bounded context Ordering {
     application service OrderApplication for Order {
-        method placeOrder(items: List<OrderLine>) invokes Order.Order.place {
+        transactional method placeOrder(orderId: OrderId, items: List<OrderLine>) loads OrderRepository by orderId invokes Order.Order.place saves OrderRepository {
             behavior "Place the order through its aggregate root.";
         }
 
-        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 {
+        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {
             behavior "Map the internal event to the public contract.";
         }
     }
 
-    integration event OrderPlacedV1 data { orderId: OrderId; }
+    integration event OrderPlacedV1 data { orderId: string; }
 
     flow PlaceOrder {
         actor Customer;
@@ -51,17 +53,32 @@ part of bounded context Ordering {
 }
 ```
 
-Aggregate methods own state transitions and emit domain events. Ordinary
-application-service methods are command operations; methods with an
-event-typed parameter are event-triggered. Integration-event declarations
-define public schemas; the application-service method maps the source event to
-that contract. Field mapping is described in `behavior` text, not expressions.
+An entity method may transition its own enum state; the aggregate root
+coordinates child-entity changes and protects invariants. Only aggregate-root
+behavior emits domain events. Ordinary application-service
+methods are aggregate-scoped commands; methods with an event-typed parameter are
+event-triggered. Bounded-context-scoped query services model read-only
+operations. Commands
+that write aggregates are marked `transactional` and load by an identifier-typed
+parameter and save through the same repository;
+creation uses a factory followed by a repository save, and deletion loads and
+invokes the root before deleting through that repository. Integration-event
+declarations define public schemas; the application-service method maps the
+source event to that contract after commit. Field mapping is described in
+`behavior` text, not expressions.
+
+An aggregate has one write repository. A bounded context may declare multiple
+`read model` projections and `query repository` stores; projectors update those
+models, and query-service methods can combine reads from several stores. Read
+models are not DDD entities. Multiple application services may target the same aggregate. A `flow`
+can sequence commands for multiple aggregates in the same bounded context; each
+command remains its own transaction.
 
 An incoming integration event can invoke a local command method:
 
 ```thinai
 application service ShipmentApplication for Shipment {
-    method createShipment(orderId: OrderId) {}
+    transactional method createShipment(shipmentId: ShipmentId) loads Shipment.ShipmentRepository by shipmentId invokes Shipment.Shipment.start saves Shipment.ShipmentRepository;
 
     method onOrderPlaced(source: event Ordering.OrderPlacedV1)
         invokes createShipment {
@@ -89,9 +106,10 @@ allow integration patterns or authorize event consumption. A `sharedKernel`
 relationship references the declared shared-kernel component and lists its
 participating bounded contexts; it does not authorize event consumption.
 
-For an IntegrationEvent nested in a module, import its owning bounded context
-and use the qualified module path. Modules organize one bounded context;
-their names are part of the public path for nested contracts.
+For an IntegrationEvent nested in a module, expose the event, then import its
+owning bounded context and use the qualified module path. Modules organize one
+bounded context; their names are part of the public path for nested contracts.
+IntegrationEvent payloads cannot expose entities or types owned by aggregates.
 
 When a file declares multiple components, select them explicitly:
 
@@ -113,16 +131,17 @@ or invoke methods. Factory creation methods are ordinary methods that return
 their aggregate root and can be linked or invoked. A method may emit multiple
 events; their declaration order is significant.
 
-Flows are ordered, user-started sequences of ordinary application-service
-command methods. Event-triggered reactions are represented by event-typed
-methods, not flows. Declare an actor directly in a flow with `actor Customer;`.
-Actors belong to flow definitions; capabilities are declared at context or
-module scope.
+Flows are ordered, user-started sequences of application-service commands and
+read-only query-service methods. Command steps may include a descriptive
+`when "..."` guard with linked references; the DSL does not evaluate it, so the
+command must enforce its own invariants. Event-triggered reactions are
+represented by event-typed methods, not flows. Declare actors inline with
+`actor Customer;`; capabilities are declared at context or module scope.
 
-Thinai supports modules, aggregates, root entities, identifier and mirrored
-value objects, entities, value objects, typed methods and constructors, domain
-services, repositories, factories, events, flow-local actors, flows, and context
-maps.
+Thinai supports modules, aggregates, root and child entities, identifiers and
+mirrored value objects, read models, projectors, query services and repositories,
+typed methods and constructors, domain services, write repositories, factories,
+events, flow-local actors, flows, and context maps.
 Built-in collections are
 `List<T>`, `Set<T>`, and `Map<K, V>`.
 

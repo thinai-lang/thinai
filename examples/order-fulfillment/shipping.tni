@@ -23,6 +23,10 @@ part of bounded context Shipping {
         value object ShipmentId {
             raw: string;
         }
+        repository ShipmentRepository for Shipment;
+        factory ShipmentFactory for Shipment operations {
+            method createShipment(id: ShipmentId, orderId: OrderId) returns Shipment;
+        }
     }
 
     enum ShipmentStatus { Pending, Started }
@@ -37,7 +41,7 @@ part of bounded context Shipping {
     }
 
     application service ShipmentApplication for Shipment {
-        method createShipment(orderId: OrderId) invokes Shipment.Shipment.start {
+        transactional method createShipment(orderId: OrderId) creates Shipment.ShipmentFactory.createShipment invokes Shipment.Shipment.start saves Shipment.ShipmentRepository {
             behavior "First, authorize the Common.Role.FulfillmentOperator role for creating a shipment with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment by invoking the aggregate root's start operation.";
         }
 

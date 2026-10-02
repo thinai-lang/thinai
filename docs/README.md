@@ -1,8 +1,8 @@
 # Thinai Language Docs
 
-Thinai is a domain-specific language for describing domain-driven design (DDD)
-and behavior specifications in `.tni` files. Use these guides to explore the
-language by topic:
+Thinai is a domain-specific modeling language for expressing DDD structures,
+relationships, and behavioral intent in a shared, navigable model. Use these
+guides to explore the language by topic:
 
 - [Language model](language-model.md) — subdomains, bounded contexts, context
   maps, shared kernels, imports, and working across files.

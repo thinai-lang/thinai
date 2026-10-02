@@ -35,7 +35,7 @@ describe('Parsing tests', () => {
 
                 application service OrderApplication for Order {
                     method placeOrder(items: string) invokes Order.Order.place {}
-                    method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1, OrderPlacedAuditV1 {}
+                    method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1, OrderPlacedAuditV1 after commit {}
                 }
                 event OrderPlaced data {
                     orderId: OrderId;

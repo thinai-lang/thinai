@@ -14,8 +14,9 @@ dedent their content when a newline follows the opening quote.
 ## Aggregate Effects and Application Services
 
 An ordinary application-service method is a command operation. It coordinates
-aggregate behavior, while the aggregate method owns state changes and emits
-domain events:
+aggregate-root behavior; root and child entity methods own their respective
+state changes, and the aggregate root protects invariants across the aggregate.
+Domain events are emitted by aggregate-root behavior:
 
 ```thinai
 bounded context Ordering {
@@ -27,6 +28,7 @@ bounded context Ordering {
             status: OrderStatus;
         }
         enum OrderStatus { Draft, Placed }
+        repository OrderRepository for Order;
         factory OrderFactory for Order operations {
             method createOrder() returns Order;
         }
@@ -35,11 +37,11 @@ bounded context Ordering {
     event OrderPlaced;
 
     application service OrderApplication for Order {
-        method placeOrder(items: List<OrderLine>)
-            invokes Order.Order.place, Order.OrderFactory.createOrder {
+        transactional method placeOrder(orderId: OrderId, items: List<OrderLine>) loads OrderRepository by orderId invokes Order.Order.place saves OrderRepository {
             precondition "The order contains at least one item.";
-            behavior "Create the order through [[Order.OrderFactory.createOrder]], then place it using [[Order.Order.place]] while its status is [[Order.Order.status]].";
+            behavior "Place the loaded order while its status is [[Order.Order.status]].";
         }
+        transactional method createOrder() creates Order.OrderFactory.createOrder saves OrderRepository;
     }
 }
 ```
@@ -48,9 +50,13 @@ Factory operations are methods that create the aggregate root. A factory method
 returns that root entity, and behavior specifications link to the method rather
 than to a constructor or the factory declaration itself.
 
-Aggregate methods may emit multiple domain events. Emissions are listed in
-order. Application-service command methods invoke aggregate methods rather
-than repeating their state transitions or event emissions.
+Aggregate-root methods may emit multiple domain events. Emissions are listed in
+order. Transactional application-service commands model persistence explicitly: load an
+existing aggregate, invoke aggregate-root behavior, then save through the same
+repository. Creation uses a factory and saves the new aggregate through its
+repository. `transactional` declares the intended atomic boundary. Behavior
+text remains descriptive; these workflow clauses are the enforceable structure,
+not proof of runtime transaction behavior.
 
 ## Integration Events and Event-Triggered Methods
 
@@ -58,6 +64,28 @@ Domain events are private to their bounded context. To publish a fact across a
 context boundary, an application-service method can receive a domain event and
 emit one or more integration events. The integration-event declaration defines
 the public schema; the method's behavior text describes any payload mapping.
+Event payloads carry stable value data rather than entity instances or other
+aggregate-owned types. An IntegrationEvent nested in a module must be explicitly
+exposed before another bounded context can consume it.
+
+For CQRS reads, declare a separate `read model` projection and a
+`query repository` for it. A `projector` handles committed domain or authorized
+integration events and updates that repository. Query services read one or more
+projections; these are query data structures, not DDD entities. Projector
+handlers are descriptive projections and do not change aggregates:
+
+```thinai
+bounded context Ordering {
+    event OrderPlaced data { orderId: string; }
+    read model OrderSummary { orderId: string; status: string; }
+    query repository OrderSummaryRepository for OrderSummary;
+    projector OrderSummaryProjector for OrderSummary {
+        method onOrderPlaced(source: event OrderPlaced) updates OrderSummaryRepository after commit {
+            behavior "Copy [[OrderPlaced.orderId]] into [[OrderSummary.orderId]].";
+        }
+    }
+}
+```
 
 ```thinai
 bounded context Ordering {
@@ -66,13 +94,14 @@ bounded context Ordering {
     }
 
     module Contracts {
+        exposes OrderPlacedV1;
         integration event OrderPlacedV1 data {
-            orderId: OrderId;
+            orderId: string;
         }
     }
 
     application service OrderApplication for Order {
-        method publishOrderPlaced(source: event OrderPlaced) emits Contracts.OrderPlacedV1 {
+        method publishOrderPlaced(source: event OrderPlaced) emits Contracts.OrderPlacedV1 after commit {
             behavior "Map the internal event to the public contract.";
         }
     }
@@ -86,7 +115,7 @@ method:
 
 ```thinai
 application service ShipmentApplication for Shipment {
-    method createShipment(orderId: OrderId) {}
+    transactional method createShipment(shipmentId: ShipmentId) loads Shipment.ShipmentRepository by shipmentId invokes Shipment.Shipment.start saves Shipment.ShipmentRepository;
 
     method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1)
         invokes createShipment {
@@ -98,7 +127,8 @@ application service ShipmentApplication for Shipment {
 Keep the imported contract at this boundary; use local types in ordinary
 command methods and aggregates. Do not model arbitrary payload transformations
 as expressions. Integration-event publication is an application-layer reaction
-to a committed domain event; broker and outbox mechanics are outside the DSL.
+to a committed domain event; `after commit` declares that ordering. Broker and
+outbox mechanics are outside the DSL.
 
 Cross-context integration-event use requires an explicit bounded-context
 import and an imported context map with an authorized, correctly directed
@@ -113,18 +143,27 @@ not make domain events public.
 ## Flows
 
 A flow describes an ordered user-started sequence of application-service
-command methods. Event-triggered methods are not flow steps:
+command methods in one bounded context. Each command keeps its own
+single-aggregate transaction; a flow
+does not combine its steps into a multi-aggregate transaction. A flow may also
+include read-only query-service methods and descriptive `when` guards. Guards
+are linked prose, not executable conditions; the command must still enforce its
+own invariant. Event-triggered methods are not flow steps:
 
 ```thinai
 flow PlaceOrder {
     actor Customer;
-    invoke Ordering.OrderApplication.placeOrder;
+    invoke Ordering.OrderQueries.canPlaceOrder;
+    invoke Ordering.OrderApplication.placeOrder
+        when "The eligibility check [[Ordering.OrderQueries.canPlaceOrder]] allows this order.";
 }
 ```
 
 Declare the initiating actor inline in the flow with `actor Customer;`. Flow
-order is significant. Emitted events are derived from the invoked methods and
-need not be repeated in the flow.
+order is significant. A query result is not bound to a command argument or
+evaluated by the DSL; the `when` text documents intended user-flow behavior.
+Emitted events are derived from the invoked methods and need not be repeated in
+the flow.
 
 See the [Order Fulfillment example](../examples/order-fulfillment/README.md)
 for a multi-file model with an integration-event consumer.

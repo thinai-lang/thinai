@@ -40,13 +40,14 @@ describe('Linking tests', () => {
                             raw: string;
                         }
                         enum OrderStatus { Draft, Placed }
+                        repository OrderRepository for Order;
                     }
                     application service OrderApplication for Order {
-                        method placeOrder() invokes Order.Order.place {}
-                        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 {}
+                        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository {}
+                        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {}
                     }
                     event OrderPlaced;
-                    integration event OrderPlacedV1;
+                    integration event OrderPlacedV1 data { orderId: string; }
                 }
             `
         );
@@ -64,8 +65,17 @@ describe('Linking tests', () => {
         const shippingContext = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             `bounded context Shipping {
-                aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
-                application service ShipmentApplication for Shipment { method createShipment() {} }
+                aggregate Shipment {
+                    root entity Shipment { method start(); identifier id: ShipmentId; }
+                    value object ShipmentId { raw: string; }
+                    repository ShipmentRepository for Shipment;
+                    factory ShipmentFactory for Shipment operations {
+                        method createShipment() returns Shipment;
+                    }
+                }
+                application service ShipmentApplication for Shipment {
+                    transactional method createShipment() creates Shipment.ShipmentFactory.createShipment saves ShipmentRepository;
+                }
             }`
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
@@ -79,7 +89,9 @@ describe('Linking tests', () => {
             `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import "./context-map.tni" { Fulfillment };
              part of bounded context Shipping {
                   application service ShipmentEventHandler for Shipment {
-                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes ShipmentApplication.createShipment {}
+                       method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes ShipmentApplication.createShipment {
+                           behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event.";
+                       }
                   }
               }`
         );
@@ -88,6 +100,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(checkDocumentValid(context) || checkDocumentValid(part) || checkDocumentValid(consumer)).toBeUndefined();
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
         const contextModel = context.parseResult.value as Model;
         const partModel = part.parseResult.value as Model;
         const consumerModel = consumer.parseResult.value as Model;
@@ -163,7 +176,7 @@ describe('Linking tests', () => {
     test('requires an authorized imported context map to consume an integration event', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { module Contracts { integration event OrderPlacedV1; } }'
+            'bounded context Ordering { module Contracts { exposes OrderPlacedV1; integration event OrderPlacedV1; } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
@@ -461,9 +474,10 @@ describe('Linking tests', () => {
                     value object OrderId {
                         raw: string;
                     }
+                    repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    method placeOrder() invokes Order.Order.ensureOwner {
+                    transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.ensureOwner saves OrderRepository {
                         behavior "Check [[Order.Order.ensureOwner]] before placing.";
                     }
                 }
@@ -518,9 +532,10 @@ describe('Linking tests', () => {
                     factory OrderFactory for Order operations {
                         method createOrder(id: OrderId) returns Order;
                     }
+                    repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    method placeOrder() {
+                    transactional method placeOrder() creates Order.OrderFactory.createOrder saves OrderRepository {
                         behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
                     }
                 }

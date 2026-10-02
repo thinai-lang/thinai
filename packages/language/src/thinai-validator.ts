@@ -34,6 +34,10 @@ import type {
     Model,
     Module,
     Parameter,
+    Projector,
+    QueryRepository,
+    QueryService,
+    ReadModel,
     Repository,
     Subdomain,
     ThinaiAstType,
@@ -52,9 +56,14 @@ import {
     isContextMap,
     isCustomerSupplierRelationship,
     isEnumType,
+    isFactory,
     isModel,
     isModule,
     isPartnershipRelationship,
+    isProjector,
+    isRepository,
+    isQueryService,
+    isReadModel,
     isSeparateWaysRelationship,
     isSharedKernel,
     isSharedKernelRelationship,
@@ -86,7 +95,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         DomainEvent: validator.checkDomainEvent,
         DomainService: validator.checkNamedDeclaration,
         Entity: validator.checkEntity,
-        EnumType: validator.checkNamedDeclaration,
+        EnumType: validator.checkEnumType,
         Factory: validator.checkFactory,
         Field: validator.checkField,
         Import: validator.checkImport,
@@ -98,6 +107,10 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Model: validator.checkModelImports,
         Module: validator.checkModule,
         Parameter: validator.checkParameter,
+        QueryRepository: validator.checkQueryRepository,
+        QueryService: validator.checkQueryService,
+        ReadModel: validator.checkReadModel,
+        Projector: validator.checkProjector,
         Repository: validator.checkRepository,
         SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
@@ -249,9 +262,40 @@ export class ThinaiValidator {
     checkEntity(entity: Entity, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(entity, accept);
         this.checkFieldMethodNameConflicts(entity.fields, entity.methods, accept);
+        this.checkDuplicateFieldNames(entity.fields, accept);
+        this.checkDuplicateConstructorSignatures(entity.constructors, accept);
+        this.checkEntityStateGraph(entity, accept);
+        const aggregate = this.getOwningAggregate(entity);
+        if (!aggregate) {
+            accept('error', 'An entity must belong to an aggregate.', {
+                node: entity,
+                property: 'name'
+            });
+        }
+        const identifierFields = entity.fields.filter(field => field.identifier);
+        if (identifierFields.length !== 1) {
+            accept('error', 'An entity must declare exactly one identifier field.', {
+                node: entity,
+                property: 'fields'
+            });
+        }
+        const identifierType = identifierFields[0]?.type?.ref;
+        if (identifierType && aggregate && identifierType.$container !== aggregate) {
+            accept('error', 'An entity identifier value object must be declared in the same aggregate.', {
+                node: identifierFields[0],
+                property: 'type'
+            });
+        }
         const ancestors = new Set<Entity>([entity]);
         let base = entity.base?.ref;
         while (base) {
+            if (this.getOwningAggregate(base) !== aggregate) {
+                accept('error', 'Entity inheritance must stay within the same aggregate.', {
+                    node: entity,
+                    property: 'base'
+                });
+                break;
+            }
             if (ancestors.has(base)) {
                 accept('error', 'Entity inheritance cannot contain a cycle.', {
                     node: entity,
@@ -263,23 +307,88 @@ export class ThinaiValidator {
             base = base.base?.ref;
         }
         if (entity.root) {
-            const aggregate = entity.$container;
-            if (!isAggregate(aggregate)) {
+            if (!isAggregate(entity.$container)) {
                 accept('error', 'A root entity must be declared directly inside an aggregate.', {
                     node: entity,
                     keyword: 'root'
-                });
-            } else if (!entity.fields.some(field => field.identifier)) {
-                accept('error', 'A root entity must declare an identifier field.', {
-                    node: entity,
-                    property: 'name'
                 });
             }
         }
     }
 
     checkField(field: Field, accept: ValidationAcceptor): void {
-        this.checkCrossContextTypeUse(field, this.collectTypeReferences(field.type, field.collection), accept);
+        const typeReferences = this.collectTypeReferences(field.type, field.collection);
+        this.checkCrossContextTypeUse(field, typeReferences, accept);
+        this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModel(field.$container));
+        if (isReadModel(field.$container) && field.identifier) {
+            accept('error', 'Read-model fields are projection data, not DDD entity identifiers.', {
+                node: field,
+                property: 'identifier'
+            });
+        }
+        if (isReadModel(field.$container) && typeReferences.some(reference =>
+            isEntity(reference.ref)
+        )) {
+            accept('error', 'Read models must project data rather than reference entity instances.', {
+                node: field,
+                property: 'type'
+            });
+        }
+        if (field.initialState !== undefined) {
+            const stateType = field.type?.ref;
+            if (!isEntity(field.$container) || !stateType || !isEnumType(stateType) || field.optional ||
+                !stateType.values.some(value => value.name === field.initialState)) {
+                accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
+                    node: field,
+                    property: 'initialState'
+                });
+            }
+        }
+        if (isDomainEvent(field.$container) || isIntegrationEvent(field.$container)) {
+            if (typeReferences.some(reference => isEntity(reference.ref))) {
+                accept('error', 'Event payloads must not expose entity instances; use stable value data instead.', {
+                    node: field,
+                    property: 'type'
+                });
+            }
+            if (isIntegrationEvent(field.$container) && typeReferences.some(reference =>
+                reference.ref !== undefined && this.getOwningAggregate(reference.ref) !== undefined
+            )) {
+                accept('error', 'An integration-event payload must not expose types owned by an aggregate.', {
+                    node: field,
+                    property: 'type'
+                });
+            }
+            if (isIntegrationEvent(field.$container)) {
+                const contractModule = getOwningModule(field.$container);
+                const privateContractType = typeReferences.find(reference => {
+                    const target = reference.ref;
+                    if (!target || isInSharedKernel(target) || (target.$type !== 'ValueObject' && target.$type !== 'EnumType')) {
+                        return false;
+                    }
+                    return !contractModule || getOwningModule(target) !== contractModule ||
+                        !contractModule.exposures.some(exposure => exposure.declarations.some(declaration => declaration.ref === target));
+                });
+                if (privateContractType) {
+                    accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
+                        node: field,
+                        property: 'type'
+                    });
+                }
+            }
+        }
+        const sourceAggregate = this.getOwningAggregate(field);
+        for (const reference of typeReferences) {
+            const target = reference.ref;
+            const targetAggregate = target && isEntity(target) ? this.getOwningAggregate(target) : undefined;
+            if (targetAggregate && targetAggregate !== sourceAggregate) {
+                accept('error', 'An aggregate must reference another aggregate through its identifier, not its entity.', {
+                    node: field,
+                    property: 'type'
+                });
+                break;
+            }
+        }
         if (!field.identifier) {
             return;
         }
@@ -301,6 +410,113 @@ export class ThinaiValidator {
                     property: 'name'
                 });
             }
+        }
+    }
+
+    private checkDuplicateFieldNames(fields: Field[], accept: ValidationAcceptor): void {
+        const names = new Set<string>();
+        for (const field of fields) {
+            if (names.has(field.name)) {
+                accept('error', `Duplicate field '${field.name}'.`, { node: field, property: 'name' });
+            }
+            names.add(field.name);
+        }
+    }
+
+    private checkDuplicateConstructorSignatures(constructors: Constructor[], accept: ValidationAcceptor): void {
+        const signatures = new Set<string>();
+        for (const constructor of constructors) {
+            const signature = constructor.parameters.map(parameter => this.getParameterTypeSignature(parameter)).join(',');
+            if (signatures.has(signature)) {
+                accept('error', 'Duplicate constructor signature.', {
+                    node: constructor,
+                    property: 'parameters'
+                });
+            }
+            signatures.add(signature);
+        }
+    }
+
+    private getParameterTypeSignature(parameter: Parameter): string {
+        if (parameter.eventType) {
+            return `event:${parameter.eventType.ref ? getExportedName(parameter.eventType.ref as AstNode & { name: string }) : parameter.eventType.$refText}`;
+        }
+        if (parameter.primitive) {
+            return parameter.primitive;
+        }
+        if (parameter.type?.ref) {
+            return getExportedName(parameter.type.ref as AstNode & { name: string });
+        }
+        return this.getCollectionTypeSignature(parameter.collection);
+    }
+
+    private getCollectionTypeSignature(collection?: CollectionType): string {
+        if (!collection) {
+            return '?';
+        }
+        const element = collection.elementPrimitive ??
+            (collection.elementType?.ref
+                ? getExportedName(collection.elementType.ref as AstNode & { name: string })
+                : this.getCollectionTypeSignature(collection.elementCollection));
+        const value = collection.valuePrimitive ??
+            (collection.valueType?.ref
+                ? getExportedName(collection.valueType.ref as AstNode & { name: string })
+                : this.getCollectionTypeSignature(collection.valueCollection));
+        return collection.kind === 'Map' ? `Map<${element},${value}>` : `${collection.kind}<${element}>`;
+    }
+
+    private checkEntityStateGraph(entity: Entity, accept: ValidationAcceptor): void {
+        for (const field of entity.fields) {
+            const stateType = field.type?.ref;
+            if (!stateType || !isEnumType(stateType)) {
+                continue;
+            }
+            const edges = entity.methods.flatMap(method => method.transitions)
+                .filter(transition => transition.field === field.name);
+            const seenEdges = new Set<string>();
+            for (const edge of edges) {
+                const key = `${edge.from}->${edge.to}`;
+                if (seenEdges.has(key)) {
+                    accept('error', `Duplicate state transition '${edge.from} -> ${edge.to}' for '${field.name}'.`, {
+                        node: edge,
+                        property: 'from'
+                    });
+                }
+                seenEdges.add(key);
+            }
+
+            if (field.initialState === undefined) {
+                continue;
+            }
+            const reachable = new Set<string>([field.initialState]);
+            let changed = true;
+            while (changed) {
+                changed = false;
+                for (const edge of edges) {
+                    if (reachable.has(edge.from) && !reachable.has(edge.to)) {
+                        reachable.add(edge.to);
+                        changed = true;
+                    }
+                }
+            }
+            const unreachable = stateType.values.find(value => !reachable.has(value.name));
+            if (unreachable) {
+                accept('error', `State '${unreachable.name}' is unreachable from initial state '${field.initialState}'.`, {
+                    node: field,
+                    property: 'initialState'
+                });
+            }
+        }
+    }
+
+    checkEnumType(enumType: EnumType, accept: ValidationAcceptor): void {
+        this.checkNamedDeclaration(enumType, accept);
+        const names = new Set<string>();
+        for (const value of enumType.values) {
+            if (names.has(value.name)) {
+                accept('error', `Duplicate enum value '${value.name}'.`, { node: value, property: 'name' });
+            }
+            names.add(value.name);
         }
     }
 
@@ -331,9 +547,48 @@ export class ThinaiValidator {
         this.checkUniqueParameterNames(method.parameters, accept);
         const eventParameters = method.parameters.filter(parameter => parameter.eventType);
         const applicationService = isApplicationService(method.$container) ? method.$container : undefined;
+        const queryService = isQueryService(method.$container) ? method.$container : undefined;
+        const projectorService = isProjector(method.$container) ? method.$container : undefined;
+        const projector = projectorService !== undefined;
+        if (method.transactional && !applicationService) {
+            accept('error', 'Only application-service commands can declare a transaction.', {
+                node: method,
+                property: 'transactional'
+            });
+        } else if (method.transactional && !method.loadRepository && !method.creationMethod && !method.deleteRepository) {
+            accept('error', 'A transaction marker requires an aggregate write workflow.', {
+                node: method,
+                property: 'transactional'
+            });
+        }
+        if (queryService) {
+            if (!method.returnPrimitive && !method.returnType && !method.returnCollection) {
+                accept('error', 'A query must declare a result type.', {
+                    node: method,
+                    property: 'returnType'
+                });
+            }
+            if (eventParameters.length > 0 || method.events.length > 0 || method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
+                accept('error', 'A query cannot handle events, emit events, create aggregates, save aggregates, or delete aggregates.', {
+                    node: method,
+                    property: 'readRepositories'
+                });
+            }
+        } else if (method.readRepositories.length > 0) {
+            accept('error', 'Only query-service methods may use query repositories.', {
+                node: method,
+                property: 'readRepositories'
+            });
+        }
+        if (method.updatesRepository && !projector) {
+            accept('error', 'Only projectors may update query repositories.', {
+                node: method,
+                property: 'updatesRepository'
+            });
+        }
         if (eventParameters.length > 0) {
-            if (!applicationService) {
-                accept('error', 'Event-typed method parameters are allowed only on application-service methods.', {
+            if (!applicationService && !projector) {
+                accept('error', 'Event-typed method parameters are allowed only on application-service handlers and projectors.', {
                     node: method,
                     property: 'parameters'
                 });
@@ -352,15 +607,19 @@ export class ThinaiValidator {
                 });
             }
             if (event && isIntegrationEvent(event) && this.isCrossContextOwned(method, event) && !this.hasAuthorizedEventRelationship(method, event)) {
-                accept('error', 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.', {
+                accept('error', this.isIntegrationEventExposed(event)
+                    ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
+                    : 'An integration event in a module must be explicitly exposed before another bounded context can consume it.', {
                     node: eventParameters[0],
                     property: 'eventType'
                 });
             }
         }
         if (method.returnType || method.returnCollection) {
-            this.checkCrossContextTypeUse(method,
-                this.collectTypeReferences(method.returnType, method.returnCollection), accept, 'returnType');
+            const returnTypes = this.collectTypeReferences(method.returnType, method.returnCollection);
+            this.checkCrossContextTypeUse(method, returnTypes, accept, 'returnType');
+            this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', applicationService !== undefined || queryService !== undefined);
+            this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
         }
         for (const invocation of method.invocations) {
             const target = invocation.ref;
@@ -379,12 +638,96 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
+            if (isApplicationService(target.$container) && !applicationService) {
+                accept('error', 'Domain behavior cannot invoke an application-service method.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            const reachable = this.getReachableMethods(target);
+            if (!applicationService && !isApplicationService(target.$container) &&
+                reachable.some(candidate => isApplicationService(candidate.$container))) {
+                accept('error', 'Domain behavior cannot transitively invoke an application-service method.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            const serviceAggregate = applicationService?.aggregate.ref;
+            const targetIsAssociatedRoot = serviceAggregate !== undefined &&
+                this.getOwningAggregate(target) === serviceAggregate && this.isAggregateRootMethod(target, serviceAggregate);
+            if (applicationService && !isApplicationService(target.$container) && (
+                reachable.some(candidate => isApplicationService(candidate.$container)) ||
+                (!targetIsAssociatedRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined))
+            )) {
+                accept('error', 'An application service must reach aggregate behavior directly through its root, not through a domain-service call chain.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            const sourceAggregate = this.getOwningAggregate(method);
+            const targetAggregate = this.getOwningAggregate(target);
+            if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) && !isEntity(method.$container)) {
+                accept('error', 'Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (sourceAggregate && targetAggregate && targetAggregate !== sourceAggregate) {
+                accept('error', 'Domain behavior must not invoke another aggregate directly.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (!applicationService && sourceAggregate && reachable.some(candidate => {
+                const candidateAggregate = this.getOwningAggregate(candidate);
+                return candidateAggregate !== undefined && candidateAggregate !== sourceAggregate;
+            })) {
+                accept('error', 'Domain behavior must not transitively invoke another aggregate.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (applicationService && isApplicationService(target.$container) && target.$container !== applicationService &&
+                (eventParameters.length !== 1 || target.parameters.some(parameter => parameter.eventType))) {
+                accept('error', 'Only an event handler may dispatch to a command in another application service.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (queryService && (target.$container !== queryService || this.hasBehaviorSideEffects(target))) {
+                accept('error', 'A query service may invoke only read-only query helpers in the same query service.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (queryService && this.getOwningAggregate(target)) {
+                accept('error', 'A query service must read through query repositories, not aggregate methods.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
             if (applicationService && this.getOwningAggregate(target) && this.getOwningAggregate(target) !== applicationService.aggregate.ref) {
                 accept('error', 'An application service may invoke domain behavior only on its associated aggregate.', {
                     node: method,
                     property: 'invocations'
                 });
             }
+            if (applicationService && this.getOwningAggregate(target) === applicationService.aggregate.ref &&
+                !method.loadRepository && !method.creationMethod && !method.deleteRepository) {
+                accept('error', 'Aggregate behavior must be invoked in an application-service repository workflow.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+        }
+        if (applicationService) {
+            this.checkApplicationServiceWorkflow(method, applicationService, accept);
+        }
+        if (queryService) {
+            this.checkQueryServiceMethod(method, queryService, accept);
+        }
+        if (projector) {
+            this.checkProjectorMethod(method, projectorService!, accept);
         }
         const owningAggregate = this.getOwningAggregate(method);
         for (const emitted of method.events) {
@@ -397,9 +740,13 @@ export class ThinaiValidator {
                     property: 'events'
                 });
             }
-            if (isAggregate(method.$container) || owningAggregate) {
+            if (queryService) {
+                accept('error', 'A query cannot emit events.', { node: method, property: 'events' });
+                continue;
+            }
+            if (owningAggregate && this.isAggregateRootMethod(method, owningAggregate)) {
                 if (!isDomainEvent(emitted.ref)) {
-                    accept('error', 'Aggregate behavior may emit only domain events.', {
+                    accept('error', 'Aggregate-root behavior may emit only domain events.', {
                         node: method,
                         property: 'events'
                     });
@@ -410,13 +757,27 @@ export class ThinaiValidator {
                         node: method,
                         property: 'events'
                     });
+                } else if (!method.afterCommit) {
+                    accept('error', 'Integration events mapped from domain events must be emitted after commit.', {
+                        node: method,
+                        property: 'afterCommit'
+                    });
                 }
-            } else if (applicationService && method.events.length > 0) {
-                accept('error', 'Application-service command methods do not emit domain events directly; invoke aggregate behavior.', {
+            } else if (method.events.length > 0) {
+                accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
                     node: method,
                     property: 'events'
                 });
             }
+        }
+        const afterCommitBridge = applicationService && eventParameters.length === 1 &&
+            isDomainEvent(eventParameters[0]?.eventType?.ref) && method.events.some(event => isIntegrationEvent(event.ref));
+        const afterCommitProjector = projector && eventParameters.length === 1 && method.updatesRepository !== undefined;
+        if (method.afterCommit && !afterCommitBridge && !afterCommitProjector) {
+            accept('error', 'The after-commit clause is reserved for integration-event handlers and projectors.', {
+                node: method,
+                property: 'afterCommit'
+            });
         }
     }
 
@@ -430,13 +791,99 @@ export class ThinaiValidator {
         }
     }
 
+    checkQueryService(service: QueryService, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(service, accept);
+    }
+
+    checkReadModel(readModel: ReadModel, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(readModel, accept);
+        this.checkDuplicateFieldNames(readModel.fields, accept);
+    }
+
+    checkProjector(projector: Projector, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(projector, accept);
+        if (projector.readModel.ref && getOwningContextName(projector.readModel.ref) !== getOwningContextName(projector)) {
+            accept('error', 'A projector and its read model must belong to the same bounded context.', {
+                node: projector,
+                property: 'readModel'
+            });
+        }
+    }
+
+    private checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
+        if (method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
+            accept('error', 'A query service cannot load, create, delete, save, or transact on aggregates.', {
+                node: method,
+                property: 'readRepositories'
+            });
+        }
+        if (method.readRepositories.length === 0) {
+            accept('error', 'A query-service method must read from at least one query repository.', {
+                node: method,
+                property: 'readRepositories'
+            });
+        }
+        const queryContext = getOwningContextName(service);
+        for (const repository of method.readRepositories) {
+            if (repository.ref && getOwningContextName(repository.ref) !== queryContext) {
+                accept('error', 'A query service may read only query repositories in its own bounded context.', {
+                    node: method,
+                    property: 'readRepositories'
+                });
+            }
+        }
+    }
+
+    private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
+        const eventParameters = method.parameters.filter(parameter => parameter.eventType);
+        if (eventParameters.length !== 1 || method.parameters.length !== 1) {
+            accept('error', 'A projector method must handle exactly one domain or integration event.', {
+                node: method,
+                property: 'parameters'
+            });
+        }
+        if (!method.updatesRepository || method.updatesRepository.ref?.readModel.ref !== projector.readModel.ref) {
+            accept('error', 'A projector must update a query repository for its declared read model.', {
+                node: method,
+                property: 'updatesRepository'
+            });
+        }
+        if (!method.afterCommit) {
+            accept('error', 'A projector must process committed events after commit.', {
+                node: method,
+                property: 'afterCommit'
+            });
+        }
+        if (method.returnPrimitive || method.returnType || method.returnCollection) {
+            accept('error', 'A projector handler does not return a value.', {
+                node: method,
+                property: 'returnType'
+            });
+        }
+        if (method.invocations.length > 0 || method.loadRepository || method.readRepositories.length > 0 ||
+            method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional || method.events.length > 0) {
+            accept('error', 'A projector may update its read model but cannot invoke domain/application methods or write aggregates.', {
+                node: method,
+                property: 'updatesRepository'
+            });
+        }
+    }
+
     checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
         const aggregate = this.getOwningAggregate(transition);
-        const root = aggregate?.members.find(member => isEntity(member) && member.root);
-        const field = root && isEntity(root) ? root.fields.find(candidate => candidate.name === transition.field) : undefined;
+        const method = transition.$container;
+        const entity = method.$container;
+        if (!aggregate || !isEntity(entity)) {
+            accept('error', 'A state transition must be declared in an entity method inside an aggregate.', {
+                node: transition,
+                keyword: 'transition'
+            });
+            return;
+        }
+        const field = entity.fields.find(candidate => candidate.name === transition.field);
         const stateType = field?.type?.ref;
         if (!field || !stateType || !isEnumType(stateType)) {
-            accept('error', 'A transition must target an enum field on the aggregate root.', {
+            accept('error', 'A transition must target an enum field declared on the owning entity.', {
                 node: transition,
                 property: 'field'
             });
@@ -458,14 +905,19 @@ export class ThinaiValidator {
             if (!method) {
                 continue;
             }
-            if (!isApplicationService(method.$container) || method.parameters.some(parameter => parameter.eventType)) {
-                accept('error', 'A flow may invoke only ordinary application-service command methods.', {
+            const isCommand = isApplicationService(method.$container) && !method.parameters.some(parameter => parameter.eventType);
+            const isQuery = isQueryService(method.$container);
+            if (!isCommand && !isQuery) {
+                accept('error', 'A flow may invoke only application-service commands or query-service methods.', {
                     node: element,
                     property: 'method'
                 });
             }
+            if (isQuery && this.hasBehaviorSideEffects(method)) {
+                accept('error', 'A flow query step must be read-only.', { node: element, property: 'method' });
+            }
             if (this.isCrossContextOwned(flow, method)) {
-                accept('error', 'A flow may invoke only application-service methods in its own bounded context.', {
+                accept('error', 'A flow may invoke only command and query methods in its own bounded context.', {
                     node: element,
                     property: 'method'
                 });
@@ -491,13 +943,74 @@ export class ThinaiValidator {
     }
 
     checkParameter(parameter: Parameter, accept: ValidationAcceptor): void {
-        this.checkCrossContextTypeUse(parameter,
-            this.collectTypeReferences(parameter.type, parameter.collection), accept, 'type');
+        const typeReferences = this.collectTypeReferences(parameter.type, parameter.collection);
+        this.checkCrossContextTypeUse(parameter, typeReferences, accept, 'type');
+        this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
+            isApplicationService(parameter.$container.$container) || isQueryService(parameter.$container.$container));
+        this.checkReadModelTypeUse(parameter, typeReferences, accept, 'type', false);
+    }
+
+    private checkReadModelTypeUse(
+        node: AstNode,
+        references: Reference<TypeDeclaration>[],
+        accept: ValidationAcceptor,
+        property: string,
+        allowReadModel: boolean
+    ): void {
+        for (const reference of references) {
+            const target = reference.ref;
+            if (!target || !isReadModel(target)) {
+                continue;
+            }
+            if (!allowReadModel) {
+                accept('error', 'Read models may be returned by query services or composed into another read model only.', {
+                    node,
+                    property
+                });
+                return;
+            }
+            if (getOwningContextName(node) !== getOwningContextName(target)) {
+                accept('error', 'A read model can be used only within its owning bounded context.', {
+                    node,
+                    property
+                });
+                return;
+            }
+        }
+    }
+
+    private checkEntityBoundaryUse(
+        node: AstNode,
+        references: Reference<TypeDeclaration>[],
+        accept: ValidationAcceptor,
+        property: string,
+        applicationServiceSignature: boolean
+    ): void {
+        const sourceAggregate = this.getOwningAggregate(node);
+        for (const reference of references) {
+            const target = reference.ref;
+            if (!target || !isEntity(target)) {
+                continue;
+            }
+            const targetAggregate = this.getOwningAggregate(target);
+            if (applicationServiceSignature ||
+                (!target.root && sourceAggregate !== targetAggregate)) {
+                accept('error', applicationServiceSignature
+                    ? 'Application-service signatures must use identifiers or data values, not entity instances.'
+                    : 'A child entity cannot cross its aggregate boundary; pass its identifier instead.', {
+                    node,
+                    property
+                });
+                return;
+            }
+        }
     }
 
     checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(valueObject, accept);
         this.checkFieldMethodNameConflicts(valueObject.fields, valueObject.methods, accept);
+        this.checkDuplicateFieldNames(valueObject.fields, accept);
+        this.checkDuplicateConstructorSignatures(valueObject.constructors, accept);
         if (valueObject.mirrors?.ref) {
             const source = valueObject.mirrors.ref;
             if (!this.isIdentifierValueObject(source)) {
@@ -581,7 +1094,7 @@ export class ThinaiValidator {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
             'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService',
-            'Factory', 'Flow', 'IntegrationEvent', 'Repository', 'Subdomain'
+            'Factory', 'Flow', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
             if (disallowed.has(node.$type)) {
@@ -603,7 +1116,8 @@ export class ThinaiValidator {
             if (!target) {
                 return;
             }
-            if (isField(target) && !isEntity(target.$container) && !isValueObject(target.$container)) {
+            if (isField(target) && !isEntity(target.$container) && !isValueObject(target.$container) &&
+                !isDomainEvent(target.$container) && !isIntegrationEvent(target.$container) && !isReadModel(target.$container)) {
                 accept('error', 'Behavior specifications can reference only entity and value-object fields.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -612,10 +1126,23 @@ export class ThinaiValidator {
             }
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
-            if ((target.$type === 'Method' || isField(target)) && this.isCrossContextOwned(referenceInfo.container, target) && !isInSharedKernel(target)) {
-                accept('error', isField(target)
-                    ? 'A behavior specification cannot reference a private field from another bounded context.'
-                    : 'A behavior specification cannot reference a private method from another bounded context.', {
+            const crossesContext = this.isCrossContextOwned(referenceInfo.container, target);
+            if (isField(target) && crossesContext && !isInSharedKernel(target)) {
+                const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
+                const authorizedPublicField = event !== undefined && this.isIntegrationEventExposed(event) &&
+                    this.hasAuthorizedEventRelationship(referenceInfo.container, event);
+                if (!authorizedPublicField) {
+                    accept('error', isDomainEvent(target.$container)
+                        ? 'A behavior specification cannot reference a private DomainEvent field from another bounded context.'
+                        : 'A behavior specification cannot reference a private field from another bounded context.', {
+                        node: referenceInfo.container,
+                        property: referenceInfo.property
+                    });
+                    return;
+                }
+            }
+            if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target)) {
+                accept('error', 'A behavior specification cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -649,6 +1176,214 @@ export class ThinaiValidator {
                 property: 'aggregate'
             });
         }
+        if (!repository.aggregate.ref) {
+            return;
+        }
+        const writeRepositories = this.services.shared.workspace.LangiumDocuments.all.toArray()
+            .flatMap(document => document.parseResult.value
+                ? AstUtils.streamAst(document.parseResult.value).filter(isRepository)
+                    .filter(candidate => candidate.aggregate.ref === repository.aggregate.ref).toArray()
+                : []);
+        const ordered = writeRepositories.sort((left, right) => this.getDeclarationKey(left).localeCompare(this.getDeclarationKey(right)));
+        if (ordered.length > 1 && ordered[0] !== repository) {
+            accept('error', 'An aggregate may have only one write repository; use query repositories for read models.', {
+                node: repository,
+                property: 'aggregate'
+            });
+        }
+    }
+
+    private getDeclarationKey(node: AstNode): string {
+        const document = AstUtils.getDocument(node);
+        return `${document.uri.toString()}#${this.services.workspace.AstNodeLocator.getAstNodePath(node)}`;
+    }
+
+    checkQueryRepository(repository: QueryRepository, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(repository, accept);
+        if (repository.readModel.ref && getOwningContextName(repository.readModel.ref) !== getOwningContextName(repository)) {
+            accept('error', 'A query repository and its read model must belong to the same bounded context.', {
+                node: repository,
+                property: 'readModel'
+            });
+        }
+    }
+
+    private checkApplicationServiceWorkflow(method: Method, service: ApplicationService | undefined, accept: ValidationAcceptor): void {
+        const hasWorkflowClause = method.loadRepository !== undefined || method.creationMethod !== undefined ||
+            method.deleteRepository !== undefined || method.saveRepository !== undefined;
+        if (!service) {
+            if (hasWorkflowClause) {
+                accept('error', 'Repository workflow clauses are allowed only in application-service methods.', {
+                    node: method,
+                    property: 'loadRepository'
+                });
+            }
+            return;
+        }
+        if (!hasWorkflowClause && method.parameters.some(parameter => parameter.eventType)) {
+            return;
+        }
+        const aggregate = service.aggregate.ref;
+        if (!aggregate) {
+            return;
+        }
+        if (method.loadRepository) {
+            this.validateRepositoryLoadKey(method, service, accept);
+        }
+
+        const invocations = method.invocations.map(invocation => invocation.ref)
+            .filter((target): target is Method => target !== undefined);
+        const aggregateInvocations = invocations
+            .filter((target): target is Method => target !== undefined && this.getOwningAggregate(target) === aggregate);
+
+        if (!hasWorkflowClause) {
+            accept('error', 'An application-service command must declare a repository workflow for its associated aggregate.', {
+                node: method,
+                property: 'loadRepository'
+            });
+            return;
+        }
+
+        if (!method.transactional) {
+            accept('error', 'Aggregate write workflows must declare a transaction.', {
+                node: method,
+                property: 'transactional'
+            });
+        }
+
+        const loadRepository = method.loadRepository?.ref;
+        const saveRepository = method.saveRepository?.ref;
+        const deleteRepository = method.deleteRepository?.ref;
+        const isCreationWorkflow = method.creationMethod !== undefined;
+        const isDeletionWorkflow = method.deleteRepository !== undefined;
+
+        if (isCreationWorkflow || isDeletionWorkflow) {
+            const validCreation = isCreationWorkflow && !method.loadRepository && !method.deleteRepository && !!method.saveRepository;
+            const validDeletion = isDeletionWorkflow && !!method.loadRepository && aggregateInvocations.length > 0 &&
+                !method.creationMethod && !method.saveRepository;
+            if (!validCreation && !validDeletion) {
+                accept('error', 'A command must create and save, load and invoke before deleting, or load, invoke, and save an aggregate.', {
+                    node: method,
+                    property: 'loadRepository'
+                });
+                return;
+            }
+        } else if (!method.loadRepository || !method.saveRepository || aggregateInvocations.length === 0) {
+            accept('error', 'A command that invokes an existing aggregate must load and save it through a repository.', {
+                node: method,
+                property: 'loadRepository'
+            });
+            return;
+        }
+
+        if (isCreationWorkflow && (!saveRepository || saveRepository.aggregate.ref !== aggregate)) {
+            accept('error', 'A creation workflow must save through a repository for its application service aggregate.', {
+                node: method,
+                property: 'saveRepository'
+            });
+        } else if (isDeletionWorkflow && (!loadRepository || loadRepository !== deleteRepository || deleteRepository?.aggregate.ref !== aggregate)) {
+            accept('error', 'A deletion workflow must load and delete through the same repository for its application service aggregate.', {
+                node: method,
+                property: 'deleteRepository'
+            });
+        } else if (!isCreationWorkflow && !isDeletionWorkflow &&
+            (!loadRepository || loadRepository !== saveRepository || saveRepository?.aggregate.ref !== aggregate)) {
+            accept('error', 'A repository workflow must load and save through the same repository for the application service aggregate.', {
+                node: method,
+                property: 'saveRepository'
+            });
+        }
+
+        if (isCreationWorkflow) {
+            const creationMethod = method.creationMethod;
+            const factoryMethod = creationMethod?.ref;
+            const factory = factoryMethod?.$container;
+            if (!factoryMethod || !isFactory(factory) || factory.aggregate.ref !== aggregate ||
+                factoryMethod.returnType?.ref !== aggregate.members.find(member => isEntity(member) && member.root)) {
+                accept('error', 'A creation workflow must create the associated aggregate root through one of its factory methods.', {
+                    node: method,
+                    property: 'creationMethod'
+                });
+            }
+        }
+
+        this.validateAggregateInvocations(method, aggregateInvocations, aggregate, accept);
+    }
+
+    private validateAggregateInvocations(
+        source: Method,
+        targets: Method[],
+        aggregate: Aggregate,
+        accept: ValidationAcceptor
+    ): void {
+        for (const target of targets) {
+            if (!this.isAggregateRootMethod(target, aggregate)) {
+                accept('error', 'An application service may invoke only methods declared on its associated aggregate root.', {
+                    node: source,
+                    property: 'invocations'
+                });
+            }
+            if (isEntity(target.returnType?.ref) && !target.returnType.ref.root) {
+                accept('error', 'An aggregate-root method must not return a child entity across the aggregate boundary.', {
+                    node: source,
+                    property: 'invocations'
+                });
+            }
+            if (target.parameters.some(parameter => parameter.eventType)) {
+                accept('error', 'An event-triggered method cannot be invoked as aggregate behavior.', {
+                    node: source,
+                    property: 'invocations'
+                });
+            }
+        }
+    }
+
+    private hasBehaviorSideEffects(method: Method, visited = new Set<Method>()): boolean {
+        if (visited.has(method)) {
+            return false;
+        }
+        visited.add(method);
+        if (method.transitions.length > 0 || method.events.length > 0 || method.transactional ||
+            method.creationMethod !== undefined || method.deleteRepository !== undefined || method.saveRepository !== undefined) {
+            return true;
+        }
+        return method.invocations.some(invocation => invocation.ref && this.hasBehaviorSideEffects(invocation.ref, visited));
+    }
+
+    private getReachableMethods(method: Method, visited = new Set<Method>()): Method[] {
+        if (visited.has(method)) {
+            return [];
+        }
+        visited.add(method);
+        const reachable: Method[] = [];
+        for (const invocation of method.invocations) {
+            const target = invocation.ref;
+            if (!target) {
+                continue;
+            }
+            reachable.push(target, ...this.getReachableMethods(target, visited));
+        }
+        return reachable;
+    }
+
+    private validateRepositoryLoadKey(method: Method, service: ApplicationService, accept: ValidationAcceptor): void {
+        const aggregate = service.aggregate.ref;
+        const root = aggregate?.members.find(member => isEntity(member) && member.root);
+        const identifierType = isEntity(root)
+            ? root.fields.find(field => field.identifier)?.type?.ref
+            : undefined;
+        const parameter = method.parameters.find(candidate => candidate.name === method.loadParameter);
+        if (!parameter || !identifierType || parameter.type?.ref !== identifierType) {
+            accept('error', 'A repository load must use a method parameter typed as the aggregate root identifier.', {
+                node: method,
+                property: 'loadParameter'
+            });
+        }
+    }
+
+    private isAggregateRootMethod(method: Method, aggregate: Aggregate): boolean {
+        const root = aggregate.members.find(member => isEntity(member) && member.root);
+        return isEntity(root) && method.$container === root;
     }
 
     checkFactory(factory: Factory, accept: ValidationAcceptor): void {
@@ -714,15 +1449,17 @@ export class ThinaiValidator {
 
     checkDomainEvent(event: DomainEvent, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(event, accept);
+        this.checkDuplicateFieldNames(event.fields, accept);
     }
 
     checkIntegrationEvent(event: IntegrationEvent, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(event, accept);
+        this.checkDuplicateFieldNames(event.fields, accept);
     }
 
     checkNamedDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        Factory | Flow | IntegrationEvent | Module | Repository | SharedKernel | Subdomain | ValueObject,
+        Factory | Flow | IntegrationEvent | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         this.checkDuplicateDeclaration(node, accept);
@@ -730,7 +1467,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        Factory | Flow | IntegrationEvent | Method | Module | Repository | SharedKernel | Subdomain | ValueObject,
+        Factory | Flow | IntegrationEvent | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
@@ -758,6 +1495,9 @@ export class ThinaiValidator {
     }
 
     private hasAuthorizedEventRelationship(source: AstNode, event: IntegrationEvent): boolean {
+        if (!this.isIntegrationEventExposed(event)) {
+            return false;
+        }
         const consumer = getOwningContextName(source);
         const producer = getOwningContextName(event);
         if (!consumer || !producer) {
@@ -791,6 +1531,13 @@ export class ThinaiValidator {
             }
         }
         return false;
+    }
+
+    private isIntegrationEventExposed(event: IntegrationEvent): boolean {
+        const module = getOwningModule(event);
+        return module === undefined || module.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.ref === event)
+        );
     }
 
     private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {

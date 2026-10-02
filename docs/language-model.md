@@ -23,19 +23,20 @@ bounded context Ordering realizes OrderManagement {
             raw: string;
         }
         enum OrderStatus { Draft, Placed }
+        repository OrderRepository for Order;
     }
 
     event OrderPlaced;
 
     application service OrderApplication for Order {
-        method placeOrder() invokes Order.Order.place;
+        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository;
     }
 }
 ```
 
-An aggregate has exactly one root entity. The root and its identifier value
-object are siblings inside the aggregate, and the root has an `identifier`
-field typed by that value object.
+An aggregate has exactly one root entity. Every entity, including a child
+entity, has exactly one `identifier` field typed by a value object declared in
+the same aggregate. Child-entity identities are scoped to their aggregate.
 
 ## Subdomains and Bounded Contexts
 
@@ -120,7 +121,9 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    application service OrderApplication for Order { method placeOrder() invokes Order.Order.place {} }
+    application service OrderApplication for Order {
+        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository {}
+    }
     event OrderPlaced;
 }
 ```

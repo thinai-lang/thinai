@@ -66,10 +66,13 @@ ApplicationService:
 
 ContextMember:
     ApplicationService
+    | QueryService
+    | Projector
     | Capability
     | Aggregate
     | DomainService
     | Repository
+    | QueryRepository
     | Factory
     | DomainEvent
     | IntegrationEvent
@@ -100,10 +103,13 @@ Exposure:
 
 ModuleMember:
     ApplicationService
+    | QueryService
+    | Projector
     | Capability
     | Aggregate
     | DomainService
     | Repository
+    | QueryRepository
     | Factory
     | DomainEvent
     | IntegrationEvent
@@ -146,7 +152,8 @@ EnumValue:
     name=ID;
 
 Field:
-    (identifier?='identifier')? name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType) ';'?;
+    (identifier?='identifier')? name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType)
+    ('initial' initialState=ID)? ';'?;
 
 Invariant:
     'invariant' description=BehaviorSpecificationText ';'?;
@@ -163,16 +170,30 @@ Behavior:
 TypeDeclaration:
     Entity
     | ValueObject
-    | EnumType;
+    | EnumType
+    | ReadModel;
+
+ReadModel:
+    'read' 'model' name=ID '{' fields+=Field* '}' ';'?;
+
+Projector:
+    'projector' name=ID 'for' readModel=[ReadModel:QualifiedName] '{' methods+=Method* '}' ';'?;
 
 DomainService:
     'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
 
 Method:
-    'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
+    transactional?='transactional'? 'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
+    ('loads' loadRepository=[Repository:QualifiedName] 'by' loadParameter=ID)?
+    ('reads' readRepositories+=[QueryRepository:QualifiedName] (',' readRepositories+=[QueryRepository:QualifiedName])*)?
+    ('updates' updatesRepository=[QueryRepository:QualifiedName])?
+    ('creates' creationMethod=[Method:QualifiedName])?
     ('invokes' invocations+=[Method:QualifiedName] (',' invocations+=[Method:QualifiedName])*)?
+    ('deletes' deleteRepository=[Repository:QualifiedName])?
+    ('saves' saveRepository=[Repository:QualifiedName])?
     ('emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)?
+    (afterCommit?='after' 'commit')?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition)* '}')? ';'?;
 
 Transition:
@@ -188,6 +209,12 @@ Parameter:
 
 Repository:
     'repository' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
+
+QueryRepository:
+    'query' 'repository' name=ID 'for' readModel=[ReadModel:QualifiedName] ';'?;
+
+QueryService:
+    'query' 'service' name=ID '{' methods+=Method* '}' ';'?;
 
 Factory:
     'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName]
@@ -206,15 +233,15 @@ IntegrationEvent:
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
 type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
-    EnumType | Factory | Flow | IntegrationEvent | Method | Module |
-    Repository | Subdomain | ValueObject;
+    EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector |
+    QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 
 Flow:
     'flow' name=ID '{' elements+=FlowElement* '}' ';'?;
 
 FlowElement:
     'actor' actor=ID ';'?
-    | 'invoke' method=[Method:QualifiedName] ';'?;
+    | 'invoke' method=[Method:QualifiedName] ('when' guard=BehaviorSpecificationText)? ';'?;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 

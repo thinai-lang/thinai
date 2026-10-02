@@ -3,19 +3,19 @@ import "./ordering.tni";
 
 part of bounded context Ordering {
     application service OrderApplication for Order {
-        method placeOrder(items: List<OrderLine>) invokes Order.Order.place {
+        transactional method placeOrder(orderId: OrderId, items: List<OrderLine>) loads Order.OrderRepository by orderId invokes Order.Order.place saves Order.OrderRepository {
             precondition "The order contains at least one item.";
             behavior "First, authorize the Common.Role.Customer role for placing an order with [[Authorization.authorize]]; stop if authorization fails. Then place the order by invoking the aggregate root's place operation.";
             postcondition "The order is placed.";
         }
 
-        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 {
+        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {
             behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract.";
         }
     }
 
     integration event OrderPlacedV1 data {
-        orderId: OrderId;
+        orderId: string;
     }
     flow PlaceOrder {
         actor Customer;
