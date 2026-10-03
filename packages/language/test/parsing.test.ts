@@ -26,6 +26,9 @@ describe('Parsing tests', () => {
                 capability OrderFulfillment;
                 aggregate Order {
                     root entity Order {
+                        method place() {
+                            emits OrderPlaced;
+                        }
                         identifier id: OrderId;
                     }
                     value object OrderId {
@@ -34,8 +37,12 @@ describe('Parsing tests', () => {
                 }
 
                 application service OrderApplication for Order {
-                    method placeOrder(items: string) invokes Order.Order.place {}
-                    method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1, OrderPlacedAuditV1 after commit {}
+                    method placeOrder(items: string) {
+                        invokes Order.Order.place;
+                    }
+                    method publishOrderPlaced(source: event OrderPlaced) {
+                        emits OrderPlacedV1, OrderPlacedAuditV1;
+                    }
                 }
                 event OrderPlaced data {
                     orderId: OrderId;
@@ -120,7 +127,7 @@ describe('Parsing tests', () => {
         expect(checkDocumentValid(document)).toBeUndefined();
         const model = document.parseResult.value;
         expect(model && isModel(model)).toBe(true);
-        type TextPart = { $type: string; text?: string; target?: { $refText: string } };
+        type TextPart = { $type: string; text?: string; target?: { $refText: string }; targets: Array<{ $refText: string }> };
         type BehaviorShape = { description: { parts: TextPart[] } };
         type MemberShape = {
             $type: string;
@@ -135,7 +142,8 @@ describe('Parsing tests', () => {
         const behaviorParts = root?.constructors?.[0].behaviors[0].description.parts ?? [];
         expect(behaviorParts).toHaveLength(3);
         expect(behaviorParts[0].text).toBe('Normalize an order\'s id with ');
-        expect(behaviorParts[1].target?.$refText).toBe('OrderId.normalize');
+        expect(behaviorParts[1].target?.$refText).toBe('OrderId');
+        expect(behaviorParts[1].targets.map(target => target.$refText)).toEqual(['normalize']);
         expect(behaviorParts[2].text).toBe(' before creating');
         expect(root?.constructors?.[0].invariants).toHaveLength(1);
         expect(root?.methods?.[0].invariants).toHaveLength(1);
@@ -164,7 +172,7 @@ describe('Parsing tests', () => {
         ].join('\n'));
 
         expect(checkDocumentValid(document)).toBeUndefined();
-        type Part = { text?: string; target?: { $refText: string } };
+        type Part = { text?: string; target?: { $refText: string }; targets: Array<{ $refText: string }> };
         type BehaviorShape = { description: { parts: Part[] } };
         type MethodShape = { behaviors: BehaviorShape[] };
         const context = document.parseResult.value?.declarations[0] as {
@@ -178,10 +186,12 @@ describe('Parsing tests', () => {
         expect(behaviors[0].description.parts.map(part => part.text).join('')).toBe('Place the order\nafter validation');
         expect(linkedParts).toHaveLength(3);
         expect(linkedParts[0].text).toBe('Check ');
-        expect(linkedParts[1].target?.$refText).toBe('Order.ensureOwner');
+        expect(linkedParts[1].target?.$refText).toBe('Order');
+        expect(linkedParts[1].targets.map(target => target.$refText)).toEqual(['ensureOwner']);
         expect(linkedParts[2].text).toBe('\nbefore placing');
         expect(dedentedParts.map(part => part.text ?? '').join('')).toBe('Check \nbefore placing.');
-        expect(dedentedParts[1].target?.$refText).toBe('Order.ensureOwner');
+        expect(dedentedParts[1].target?.$refText).toBe('Order');
+        expect(dedentedParts[1].targets.map(target => target.$refText)).toEqual(['ensureOwner']);
     });
 
     test('allows escaping a literal reference marker in a behavior specification', async () => {

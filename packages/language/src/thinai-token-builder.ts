@@ -64,11 +64,16 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         const defaultSourceSet = new Set(defaultSources);
         const defaultMap = new Map<TokenType, TokenType>();
         for (const source of defaultSources) {
+            // The default-mode variants are custom tokens, so explicitly retain
+            // line tracking for whitespace and block comments. Otherwise the
+            // CST records targets after a newline as line 0 with an absolute column.
             const action = source.name === doubleOpen.name
                 ? { push_mode: DOUBLE_STRING_MODE }
                 : source.name === singleOpen.name
                     ? { push_mode: SINGLE_STRING_MODE }
-                    : {};
+                    : source.name === whitespace.name || source.name === 'ML_COMMENT'
+                        ? { line_breaks: true }
+                        : {};
             defaultMap.set(source, createVariant(source, action));
         }
         for (const source of defaultSources) {

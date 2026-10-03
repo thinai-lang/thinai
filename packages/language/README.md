@@ -15,7 +15,8 @@ subdomain OrderManagement kind core;
 bounded context Ordering realizes OrderManagement {
     aggregate Order {
         root entity Order {
-            method place() emits OrderPlaced {
+            method place() {
+                emits OrderPlaced;
                 transition status from Draft to Placed;
             }
             identifier id: OrderId;
@@ -44,12 +45,13 @@ part of bounded context Ordering {
     }
 
     application service OrderApplication for Order {
-        transactional method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult
-            loads OrderRepository by input.orderId invokes Order.Order.place saves OrderRepository {
+        method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
+            invokes Order.Order.place;
             behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]].";
         }
 
-        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {
+        method publishOrderPlaced(source: event OrderPlaced) {
+            emits OrderPlacedV1;
             behavior "Map the internal event to the public contract.";
         }
     }
@@ -69,34 +71,33 @@ behavior emits domain events. Ordinary application-service
 methods are aggregate-scoped commands; methods with an event-typed parameter are
 event-triggered. Bounded-context-scoped query services model read-only
 operations. Commands
-that write aggregates are marked `transactional` and load by an identifier-typed
-parameter and save through the same repository;
-creation uses a factory followed by a repository save, and deletion loads and
-invokes the root before deleting through that repository. Integration-event
-declarations define public schemas; the application-service method maps the
-source event to that contract after commit. Field mapping is described in
-`behavior` text, not expressions.
+that methods are aggregate-scoped and may link to aggregate-root or factory
+methods with `invokes`. Repository loading/saving and transaction mechanics are
+implementation details. Integration-event declarations define public schemas;
+the application-service method can `emits` a contract in response to a local
+domain event. Payload mapping is described in `behavior` text, not expressions.
 
-An aggregate has one write repository. A bounded context may declare multiple
-`read model` projections and `query repository` stores; projectors update those
-models, and query-service methods can combine reads from several stores. Name
-the query repositories in descriptive query specifications instead of using a
-`reads` clause. Queries may return primitives, data objects, read models, or
-collections. Data objects are identity-free shapes for operation inputs and
-outputs; they may nest value objects, enums, collections, and other data
-objects, but not entities or read models. Read models are not DDD entities.
+An aggregate has one write repository. `ReadModel`, `QueryRepository`, and
+`Projector` declarations are optional. A read model is a query-result shape, not
+necessarily a materialized projection or separate database; a query service may
+read through query or aggregate repositories, including from the same physical
+tables as the write side. A projector describes an event-driven projection.
+Queries may return primitives, data objects, read models, or collections. Data
+objects are identity-free input/output shapes; they may nest value objects,
+enums, collections, and other data objects, but not entities or read models.
 Multiple application services may target the same aggregate. A `flow` can
-sequence commands for multiple aggregates in the same bounded context; each
-command remains its own transaction.
+sequence commands and queries within one bounded context.
 
 An incoming integration event can invoke a local command method:
 
 ```thinai
 application service ShipmentApplication for Shipment {
-    transactional method createShipment(shipmentId: ShipmentId) loads Shipment.ShipmentRepository by shipmentId invokes Shipment.Shipment.start saves Shipment.ShipmentRepository;
+    method createShipment(shipmentId: ShipmentId) {
+        invokes Shipment.Shipment.start;
+    }
 
-    method onOrderPlaced(source: event Ordering.OrderPlacedV1)
-        invokes createShipment {
+    method onOrderPlaced(source: event Ordering.OrderPlacedV1) {
+        invokes createShipment;
         behavior "Map the incoming event to the local command input.";
     }
 }
@@ -129,7 +130,7 @@ IntegrationEvent payloads cannot expose entities or types owned by aggregates.
 When a file declares multiple components, select them explicitly:
 
 ```thinai
-import "./contexts.tni" { Ordering as Orders, Shipping };
+import { Ordering as Orders, Shipping } from "./contexts.tni";
 ```
 
 Shared value objects belong in an explicit `shared kernel`. Context maps record
@@ -139,13 +140,14 @@ organization within a bounded context or shared kernel.
 ## Behavior and Flows
 
 Use `invariant`, `precondition`, `postcondition`, and `behavior` for descriptive
-domain meaning. Structured `invokes`, `emits`, and `transition` clauses are
-navigable semantic relationships. Interpolated specifications can link to
-methods, parameters, and fields on entities, value objects, data objects,
-read models, and events. Links do not evaluate expressions or invoke methods.
-Factory creation methods are ordinary methods that return
-their aggregate root and can be linked or invoked. A method may emit multiple
-events; their declaration order is significant.
+domain meaning. Method bodies may also contain structured `invokes`, `emits`,
+and `transition` relationships. Interpolated specifications can link to
+methods, parameters, repositories, entities, value objects, enum types and
+values, read models, events, and fields. A dotted reference such as
+`[[input.address.street]]` makes each segment independently navigable. Links
+are descriptive references, not expressions or executable calls. Factory
+creation methods are ordinary methods that return their aggregate root. A
+method may emit multiple events; their declaration order is significant.
 
 Flows are ordered, user-started sequences of application-service commands and
 read-only query-service methods. Steps may include optional descriptive

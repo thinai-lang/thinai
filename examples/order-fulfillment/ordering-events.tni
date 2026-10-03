@@ -3,35 +3,29 @@ import "./ordering.tni";
 
 part of bounded context Ordering {
     application service OrderApplication for Order {
-        transactional method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult
-            loads Order.OrderRepository by input.orderId
-            invokes Order.Order.place
-            saves Order.OrderRepository {
+        method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
             precondition "The order contains at least one item.";
+            invokes Order.Order.place;
             behavior "First, authorize the Common.Role.Customer role for placing an order with [[Authorization.authorize]]; stop if authorization fails. Then place the order identified by [[input.orderId]] and return its [[result.status]].";
             postcondition "The order is placed.";
         }
 
-        method publishOrderPlaced(source: event OrderPlaced)
-            emits Contracts.OrderPlacedV1 after commit {
+        method publishOrderPlaced(source: event OrderPlaced) {
+            emits Contracts.OrderPlacedV1;
             behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract.";
         }
     }
 
     application service OrderItemFulfillment for Order {
-        transactional method fulfillItem(orderId: OrderId, itemId: OrderItemId)
-            loads Order.OrderRepository by orderId
-            invokes Order.Order.fulfillItem
-            saves Order.OrderRepository {
+        method fulfillItem(orderId: OrderId, itemId: OrderItemId) {
+            invokes Order.Order.fulfillItem;
             behavior "Ship the selected child item through the aggregate root.";
         }
     }
 
     application service OrderMaintenance for Order {
-        transactional method deleteDraftOrder(orderId: OrderId)
-            loads Order.OrderRepository by orderId
-            invokes Order.Order.validateCanDelete
-            deletes Order.OrderRepository {
+        method deleteDraftOrder(orderId: OrderId) {
+            invokes Order.Order.validateCanDelete;
             behavior "Remove the order only after its root validates the deletion rule.";
         }
     }
@@ -62,16 +56,14 @@ part of bounded context Ordering {
     query repository CustomerSummaryRepository for CustomerSummary;
 
     projector OrderSummaryProjector for OrderSummary {
-        method onOrderPlaced(source: event OrderPlaced)
-            updates OrderSummaryRepository after commit {
-            behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]].";
+        method onOrderPlaced(source: event OrderPlaced) {
+            behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]] in [[OrderSummaryRepository]].";
         }
     }
 
     projector CustomerSummaryProjector for CustomerSummary {
-        method onCustomerRegistered(source: event CustomerRegistered)
-            updates CustomerSummaryRepository after commit {
-            behavior "Project [[CustomerRegistered.customerId]] and [[CustomerRegistered.name]] into [[CustomerSummary.customerId]] and [[CustomerSummary.name]].";
+        method onCustomerRegistered(source: event CustomerRegistered) {
+            behavior "Project [[CustomerRegistered.customerId]] and [[CustomerRegistered.name]] into [[CustomerSummary.customerId]] and [[CustomerSummary.name]] in [[CustomerSummaryRepository]].";
         }
     }
 

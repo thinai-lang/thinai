@@ -13,7 +13,8 @@ subdomain OrderManagement kind core;
 bounded context Ordering realizes OrderManagement {
     aggregate Order {
         root entity Order {
-            method place() emits OrderPlaced {
+            method place() {
+                emits OrderPlaced;
                 transition status from Draft to Placed;
             }
             identifier id: OrderId;
@@ -29,7 +30,9 @@ bounded context Ordering realizes OrderManagement {
     event OrderPlaced;
 
     application service OrderApplication for Order {
-        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository;
+        method placeOrder(id: OrderId) {
+            invokes Order.Order.place;
+        }
     }
 }
 ```
@@ -122,7 +125,9 @@ import "./ordering.tni";
 
 part of bounded context Ordering {
     application service OrderApplication for Order {
-        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository {}
+        method placeOrder(id: OrderId) {
+            invokes Order.Order.place;
+        }
     }
     event OrderPlaced;
 }
@@ -134,13 +139,17 @@ selected and imported when a cross-context IntegrationEvent is consumed. An
 alias applies to the selected component:
 
 ```thinai
-import "./contexts.tni" { Ordering as Orders, Shipping };
+import { Ordering as Orders, Shipping } from "./contexts.tni";
 ```
 
-The older file-level form `import "./file.tni" as Alias;` is supported only
+The older file-level form `import "./file.tni" as Alias;` remains supported only
 when that file contains exactly one bounded context, context map, or shared
-kernel. Cross-context IntegrationEvent use requires an imported context map
-with an authorized relationship; DomainEvents remain private to their context.
+kernel. Prefer named component imports. Cross-context IntegrationEvent use
+requires an imported context map with an authorized relationship; DomainEvents
+remain private to their context.
+
+The former postfix selector form (`import "./contexts.tni" { Ordering };`) is
+replaced by the named-import form above.
 
 ## Language Tooling
 

@@ -6,9 +6,13 @@ import type { Model } from 'thinai-language';
 import {
     createThinaiServices,
     isAggregate,
+    isApplicationService,
     isBoundedContext,
+    isDataObject,
     isEntity,
-    isModel
+    isModule,
+    isModel,
+    isValueObject
 } from 'thinai-language';
 
 let services: ReturnType<typeof createThinaiServices>;
@@ -32,7 +36,7 @@ describe('Linking tests', () => {
                 bounded context Ordering realizes OrderManagement {
                     aggregate Order {
                         root entity Order {
-                            method place() emits OrderPlaced {}
+                            method place() { emits OrderPlaced; }
                             identifier id: OrderId;
                             status: OrderStatus;
                         }
@@ -41,10 +45,14 @@ describe('Linking tests', () => {
                         }
                         enum OrderStatus { Draft, Placed }
                         repository OrderRepository for Order;
+                }
+                application service OrderApplication for Order {
+                    method placeOrder(id: OrderId) {
+                        invokes Order.Order.place;
                     }
-                    application service OrderApplication for Order {
-                        transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository {}
-                        method publishOrderPlaced(source: event OrderPlaced) emits OrderPlacedV1 after commit {}
+                    method publishOrderPlaced(source: event OrderPlaced) {
+                        emits OrderPlacedV1;
+                    }
                     }
                     event OrderPlaced;
                     integration event OrderPlacedV1 data { orderId: string; }
@@ -74,7 +82,9 @@ describe('Linking tests', () => {
                     }
                 }
                 application service ShipmentApplication for Shipment {
-                    transactional method createShipment() creates Shipment.ShipmentFactory.createShipment saves ShipmentRepository;
+                    method createShipment() {
+                        invokes Shipment.ShipmentFactory.createShipment;
+                    }
                 }
             }`
         );
@@ -86,10 +96,11 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-flow.tni'),
-            `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                   application service ShipmentEventHandler for Shipment {
-                       method onOrderPlaced(source: event Ordering.OrderPlacedV1) invokes ShipmentApplication.createShipment {
+                        method onOrderPlaced(source: event Ordering.OrderPlacedV1) {
+                            invokes ShipmentApplication.createShipment;
                            behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event.";
                        }
                   }
@@ -100,7 +111,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(checkDocumentValid(context) || checkDocumentValid(part) || checkDocumentValid(consumer)).toBeUndefined();
-        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const contextModel = context.parseResult.value as Model;
         const partModel = part.parseResult.value as Model;
         const consumerModel = consumer.parseResult.value as Model;
@@ -112,10 +123,10 @@ describe('Linking tests', () => {
         expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ ref?: unknown }> }).subdomains[0].ref).toBe(contextModel.declarations[0]);
         expect(partNode.$type).toBe('BoundedContextPart');
         expect((partNode as Model['declarations'][number] & { context: { ref?: unknown } }).context.ref).toBe(contextNode);
-        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ eventType?: { ref?: unknown } }>; invocations?: Array<{ ref?: unknown }> }> }> }).members;
+        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ eventType?: { ref?: unknown } }>; invocations?: Array<{ targets: Array<{ ref?: unknown }> }> }> }> }).members;
         const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter => parameter.eventType)));
         expect(shippingService?.methods?.[0].parameters[0].eventType?.ref).toBeDefined();
-        expect(shippingService?.methods?.[0].invocations?.[0].ref).toBeDefined();
+        expect(shippingService?.methods?.[0].invocations?.[0].targets.at(-1)?.ref).toBeDefined();
 
         const contextPath = services.Thinai.workspace.AstNodeLocator.getAstNodePath(contextNode);
         const contextReferences = services.shared.workspace.IndexManager
@@ -161,7 +172,7 @@ describe('Linking tests', () => {
                     }
                     application service ShipmentApplication for Shipment {
                         method createShipment() {}
-                        method onOrderPlaced(source: event Ordering.OrderPlaced) invokes createShipment {}
+                        method onOrderPlaced(source: event Ordering.OrderPlaced) { invokes createShipment; }
                     }
                 }
             `
@@ -211,7 +222,7 @@ describe('Linking tests', () => {
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                  application service ShipmentApplication for Shipment {
                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
@@ -242,7 +253,7 @@ describe('Linking tests', () => {
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                  application service ShipmentApplication for Shipment {
                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
@@ -272,7 +283,7 @@ describe('Linking tests', () => {
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication for Order {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
@@ -302,7 +313,7 @@ describe('Linking tests', () => {
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication for Order {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
@@ -332,7 +343,7 @@ describe('Linking tests', () => {
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import "./context-map.tni" { Fulfillment };
+            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication for Order {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
@@ -356,7 +367,7 @@ describe('Linking tests', () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
-                import "./common.tni" { CommonTypes };
+                import { CommonTypes } from "./common.tni";
 
                 bounded context Ordering {
                     aggregate Order {
@@ -414,7 +425,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         type TestNode = {
             $type: string;
             name: string;
@@ -477,9 +488,10 @@ describe('Linking tests', () => {
                     repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.ensureOwner saves OrderRepository {
-                        behavior "Check [[Order.Order.ensureOwner]] before placing.";
-                    }
+                     method placeOrder(id: OrderId) {
+                         invokes Order.Order.ensureOwner;
+                         behavior "Check [[Order.Order.ensureOwner]] before placing.";
+                     }
                 }
             }`
         );
@@ -502,13 +514,14 @@ describe('Linking tests', () => {
         const root = aggregate?.members.find(isEntity);
         const method = root?.methods[0];
         const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: unknown } }> } }> }>;
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: unknown }; targets: Array<{ ref?: unknown }> }> } }> }>;
         } | undefined;
         const commandMethod = applicationService?.methods[0];
         const part = commandMethod?.behaviors[0].description.parts.find(part => part.target);
+        const finalTarget = part?.targets.at(-1)?.ref ?? part?.target?.ref;
 
         expect(method).toBeDefined();
-        expect(part?.target?.ref).toBe(method);
+        expect(finalTarget).toBe(method);
         expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
 
         const methodOffset = ordering.textDocument.getText().indexOf('Order.Order.ensureOwner') + 'Order.Order.'.length;
@@ -535,7 +548,8 @@ describe('Linking tests', () => {
                     repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    transactional method placeOrder() creates Order.OrderFactory.createOrder saves OrderRepository {
+                    method placeOrder() {
+                        invokes Order.OrderFactory.createOrder;
                         behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
                     }
                 }
@@ -561,10 +575,11 @@ describe('Linking tests', () => {
         const root = aggregate?.members.find(isEntity);
         const factory = aggregate?.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
         const service = context.members.find(member => member.$type === 'ApplicationService') as {
-            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: AstNode } }> } }> }>;
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: AstNode }; targets: Array<{ ref?: AstNode }> }> } }> }>;
         } | undefined;
         const targets = service?.methods[0].behaviors[0].description.parts
-            .map(part => part.target?.ref).filter((target): target is AstNode => target !== undefined) ?? [];
+            .map(part => part.targets.at(-1)?.ref ?? part.target?.ref)
+            .filter((target): target is AstNode => target !== undefined) ?? [];
 
         expect(factory?.methods[0].name).toBe('createOrder');
         expect(targets.map(target => target.$type)).toEqual(['Method', 'Field', 'Field']);
@@ -572,6 +587,350 @@ describe('Linking tests', () => {
         expect(targets[1]).toBe(root?.fields.find(field => field.name === 'status'));
         const identifier = aggregate?.members.find(member => member.$type === 'ValueObject') as { fields: Array<AstNode & { name: string }> } | undefined;
         expect(targets[2]).toBe(identifier?.fields.find(field => field.name === 'raw'));
+    });
+
+    test('navigates each segment of one nested specification reference independently', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/nested-specification-path.tni'),
+            `bounded context Ordering {
+                data object AddressInput { street: string; }
+                data object OrderInput { address: AddressInput; }
+                aggregate Order {
+                    root entity Order {
+                        method place(input: OrderInput) {
+                            behavior "Place the order using [[input.address.street]].";
+                        }
+                        identifier id: OrderId;
+                    }
+                    value object OrderId { raw: string; }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const model = document.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[0];
+        expect(isBoundedContext(context)).toBe(true);
+        if (!isBoundedContext(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const order = aggregate?.members.find(isEntity);
+        const method = order?.methods[0];
+        const parameter = method?.parameters[0];
+        const dataObjects = context.members.filter(isDataObject);
+        const input = dataObjects.find(dataObject => dataObject.name === 'OrderInput');
+        const address = input?.fields.find(field => field.name === 'address')?.type?.ref;
+        const street = isValueObject(address) || isDataObject(address)
+            ? address.fields.find(field => field.name === 'street')
+            : undefined;
+        const parts = method?.behaviors[0].description.parts;
+        const linkedPart = parts?.find(part => part.target);
+
+        expect(linkedPart?.target?.ref).toBe(parameter);
+        expect(linkedPart?.targets.map(reference => reference.ref)).toEqual([
+            input?.fields.find(field => field.name === 'address'),
+            street
+        ]);
+
+        const text = document.textDocument.getText();
+        const pathOffset = text.indexOf('input.address.street');
+        const definitionAt = async (offset: number) => {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        expect(await definitionAt(pathOffset)).toEqual(
+            document.textDocument.positionAt(text.indexOf('input: OrderInput'))
+        );
+        expect(await definitionAt(pathOffset + 'input.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('address: AddressInput') )
+        );
+        expect(await definitionAt(pathOffset + 'input.address.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('street: string'))
+        );
+        for (const separatorOffset of [pathOffset + 'input'.length, pathOffset + 'input.address'.length]) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(separatorOffset)
+            });
+            const precedingSegment = separatorOffset === pathOffset + 'input'.length ? 'input' : 'address';
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(separatorOffset - precedingSegment.length),
+                end: document.textDocument.positionAt(separatorOffset)
+            });
+        }
+        const rightToLeftSegments = [
+            { offset: pathOffset + 'input.address.'.length, text: 'street' },
+            { offset: pathOffset + 'input.'.length, text: 'address' },
+            { offset: pathOffset, text: 'input' }
+        ];
+        for (const segment of rightToLeftSegments) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.offset)
+            });
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.offset),
+                end: document.textDocument.positionAt(segment.offset + segment.text.length)
+            });
+        }
+    });
+
+    test('resolves same-suffix value objects, fields, and modules in the owning context', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/duplicate-context-symbols.tni'),
+            `bounded context Shipping {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                    enum OrderStatus { Draft, Placed }
+                    repository OrderRepository for Order;
+                }
+                module Contracts {
+                    value object DeliveryCode { raw: string; }
+                }
+            }
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { method fulfillItem(); identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                    enum OrderStatus { Draft, Placed }
+                    repository OrderRepository for Order;
+                }
+                aggregate Invoice {
+                    root entity Invoice { method inspect(); identifier id: InvoiceId; orderId: Order.OrderId; }
+                    value object InvoiceId { raw: string; }
+                    repository InvoiceRepository for Invoice;
+                }
+                module Contracts {
+                    exposes DeliveryCode;
+                    value object DeliveryCode { raw: string; }
+                }
+                module Api depends on Contracts {
+                    value object ApiCode { code: Contracts.DeliveryCode; }
+                }
+                application service InvoiceApplication for Invoice {
+                    method inspect(id: InvoiceId, code: Contracts.DeliveryCode) {
+                        invokes Invoice.Invoice.inspect;
+                        behavior "Use [[Order.OrderId.raw]] and [[Contracts.DeliveryCode.raw]].";
+                        behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.Order.OrderRepository]].";
+                    }
+                }
+                application service OrderApplication for Order {
+                    method fulfillOrder() {
+                        invokes Order.Order.fulfillItem;
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        const model = document.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const ordering = model.declarations.find(declaration =>
+            isBoundedContext(declaration) && declaration.name === 'Ordering'
+        );
+        expect(ordering && isBoundedContext(ordering)).toBe(true);
+        if (!ordering || !isBoundedContext(ordering)) {
+            return;
+        }
+        const aggregates = ordering.members.filter(isAggregate);
+        const order = aggregates.find(aggregate => aggregate.name === 'Order');
+        const invoice = aggregates.find(aggregate => aggregate.name === 'Invoice');
+        const orderId = order?.members.find(isValueObject);
+        const invoiceRoot = invoice?.members.find(isEntity);
+        const orderIdReference = invoiceRoot?.fields.find(field => field.name === 'orderId')?.type?.ref;
+        const modules = ordering.members.filter(isModule);
+        const localContracts = modules.find(module => module.name === 'Contracts');
+        const localDeliveryCode = localContracts?.members.find(isValueObject);
+        const api = modules.find(module => module.name === 'Api');
+        const application = ordering.members.find(isApplicationService);
+        const behaviorTargets = application?.methods[0].behaviors[0].description.parts
+            .flatMap(part => {
+                const target = part.targets.at(-1)?.ref ?? part.target?.ref;
+                return target ? [target] : [];
+            }) ?? [];
+
+        expect(orderIdReference).toBe(orderId);
+        expect(api?.dependencies[0].ref).toBe(localContracts);
+        expect(application?.methods[0].parameters[1].type?.ref).toBe(localDeliveryCode);
+        expect(behaviorTargets.map(target => [target.$type, 'name' in target ? target.name : undefined])).toEqual([
+            ['Field', 'raw'],
+            ['Field', 'raw']
+        ]);
+        const declarationLinks = application?.methods[0].behaviors[1].description.parts
+            .flatMap(part => [part.target?.ref, ...part.targets.map(reference => reference.ref)]
+                .filter((target): target is NonNullable<typeof target> => target !== undefined)) ?? [];
+        expect(declarationLinks.map(target => target.$type)).toEqual([
+            'BoundedContext', 'Aggregate',
+            'BoundedContext', 'Aggregate', 'Entity',
+            'BoundedContext', 'Aggregate', 'EnumType', 'EnumValue',
+            'BoundedContext', 'Aggregate', 'Repository'
+        ]);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+
+        const text = document.textDocument.getText();
+        const getDefinitionStart = async (referenceOffset: number) => {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(referenceOffset)
+            });
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        const orderingOffset = text.indexOf('bounded context Ordering');
+        const valueObjectTypePath = text.indexOf('Order.OrderId;');
+        expect(await getDefinitionStart(valueObjectTypePath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('aggregate Order {', orderingOffset) + 'aggregate '.length)
+        );
+        expect(await getDefinitionStart(valueObjectTypePath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))
+        );
+        const orderFieldPath = text.indexOf('Order.OrderId.raw');
+        expect(await getDefinitionStart(orderFieldPath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))
+        );
+        expect(await getDefinitionStart(orderFieldPath + 'Order.OrderId.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('raw: string;', text.indexOf('value object OrderId', orderingOffset)))
+        );
+        const codePath = text.indexOf('Contracts.DeliveryCode.raw');
+        expect(await getDefinitionStart(codePath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('module Contracts', orderingOffset) + 'module '.length)
+        );
+        expect(await getDefinitionStart(codePath + 'Contracts.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('value object DeliveryCode', orderingOffset) + 'value object '.length)
+        );
+        expect(await getDefinitionStart(codePath + 'Contracts.DeliveryCode.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('raw: string;', text.indexOf('value object DeliveryCode', orderingOffset)))
+        );
+        expect(await getDefinitionStart(text.indexOf('depends on Contracts') + 'depends on '.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('Contracts {', orderingOffset))
+        );
+        const invocationPath = text.indexOf('Order.Order.fulfillItem');
+        expect(await getDefinitionStart(invocationPath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('aggregate Order {', orderingOffset) + 'aggregate '.length)
+        );
+        expect(await getDefinitionStart(invocationPath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('root entity Order {', orderingOffset) + 'root entity '.length)
+        );
+        expect(await getDefinitionStart(invocationPath + 'Order.Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('method fulfillItem()') + 'method '.length)
+        );
+        const finalMethodOffset = text.indexOf('fulfillItem', invocationPath);
+        const finalMethodDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(finalMethodOffset)
+        });
+        expect(finalMethodDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(finalMethodOffset),
+            end: document.textDocument.positionAt(finalMethodOffset + 'fulfillItem'.length)
+        });
+        expect(await getDefinitionStart(finalMethodOffset + 'fulfillItem'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('method fulfillItem()') + 'method '.length)
+        );
+        const firstSeparatorOffset = invocationPath + 'Order'.length;
+        const firstSeparatorDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(firstSeparatorOffset)
+        });
+        expect(firstSeparatorDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(firstSeparatorOffset - 'Order'.length),
+            end: document.textDocument.positionAt(firstSeparatorOffset)
+        });
+        const secondSeparatorOffset = invocationPath + 'Order.Order'.length;
+        const secondSeparatorDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(secondSeparatorOffset)
+        });
+        expect(secondSeparatorDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(secondSeparatorOffset - 'Order'.length),
+            end: document.textDocument.positionAt(secondSeparatorOffset)
+        });
+
+        const rightToLeftSegments = [
+            { offset: invocationPath + 'Order.Order.'.length, text: 'fulfillItem' },
+            { offset: invocationPath + 'Order.'.length, text: 'Order' },
+            { offset: invocationPath, text: 'Order' }
+        ];
+        for (const segment of rightToLeftSegments) {
+            const links = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.offset)
+            });
+            expect(links?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.offset),
+                end: document.textDocument.positionAt(segment.offset + segment.text.length)
+            });
+        }
+    });
+
+    test('links every segment of a qualified invocation across imported context parts', async () => {
+        const canonical = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-context.tni'),
+            'bounded context Ordering {}'
+        );
+        const aggregatePart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-aggregate.tni'),
+            `import "./order-context.tni";
+             part of bounded context Ordering {
+                 aggregate Order {
+                     root entity Order { method place(); identifier id: OrderId; }
+                     value object OrderId { raw: string; }
+                 }
+             }`
+        );
+        const applicationPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-application.tni'),
+            `import "./order-context.tni";
+             import "./order-aggregate.tni";
+             part of bounded context Ordering {
+                 application service OrderApplication for Order {
+                     method placeOrder(id: OrderId) {
+                         invokes Order.Order.place;
+                     }
+                 }
+             }`
+        );
+        documents = [canonical, aggregatePart, applicationPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(applicationPart.parseResult.parserErrors).toHaveLength(0);
+        expect(applicationPart.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const text = applicationPart.textDocument.getText();
+        const pathOffset = text.indexOf('Order.Order.place');
+        const getDefinition = async (offset: number) => {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(applicationPart, {
+                textDocument: { uri: applicationPart.uri.toString() },
+                position: applicationPart.textDocument.positionAt(offset)
+            });
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        expect(await getDefinition(pathOffset)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('aggregate Order {') + 'aggregate '.length)
+        );
+        expect(await getDefinition(pathOffset + 'Order.'.length)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('root entity Order {') + 'root entity '.length)
+        );
+        expect(await getDefinition(pathOffset + 'Order.Order.'.length)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('method place()') + 'method '.length)
+        );
     });
 
     test('requires factory methods to return their aggregate root', async () => {
@@ -604,7 +963,7 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/map.tni'),
-            `import "./contexts.tni" { Ordering as Orders, Shipping };
+            `import { Ordering as Orders, Shipping } from "./contexts.tni";
              context map FulfillmentMap {
                  partner Orders <-> partner Shipping;
                  partner Billing <-> partner Shipping;
@@ -624,6 +983,14 @@ describe('Linking tests', () => {
         };
         expect(map.relationships[0].left.context.ref?.name).toBe('Ordering');
         expect(map.relationships[0].right.context.ref?.name).toBe('Shipping');
+        const importComponentOffset = consumer.textDocument.getText().indexOf('Ordering');
+        const importDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(importComponentOffset)
+        });
+        expect(importDefinition?.[0]?.targetSelectionRange.start).toEqual(
+            catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
+        );
     });
 
     test('reports unresolved method references in behavior specifications', async () => {
@@ -651,7 +1018,7 @@ describe('Linking tests', () => {
 
         expect(document.diagnostics?.some(diagnostic =>
             String(diagnostic.message).includes("Could not resolve reference") &&
-            String(diagnostic.message).includes("Order.Order.missingMethod"))
+            String(diagnostic.message).includes("missingMethod"))
         ).toBe(true);
     });
 });

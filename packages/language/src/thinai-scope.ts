@@ -26,12 +26,14 @@ import {
     isEntity,
     isField,
     isFlowElement,
+    isMethodInvocation,
     isIntegrationEvent,
     isModel,
     isMethod,
     isModule,
     isSharedKernel,
     isImportComponent,
+    isImportableComponent,
     isReadModel,
     isSpecificationTextPart,
     isQueryService,
@@ -50,6 +52,7 @@ const exportedTypes = new Set([
     'DataObject',
     'Entity',
     'EnumType',
+    'EnumValue',
     'Flow',
     'Factory',
     'Field',
@@ -85,6 +88,33 @@ export function getOwningContextName(node: AstNode): string | undefined {
         }
         if (isBoundedContextPart(current)) {
             return current.context.ref?.name ?? current.context.$refText;
+        }
+        if (isSharedKernel(current)) {
+            return current.name;
+        }
+        current = current.$container;
+    }
+    return undefined;
+}
+
+function getContextNameForIndexing(node: AstNode): string | undefined {
+    let current: AstNode | undefined = node;
+    while (current) {
+        if (isBoundedContext(current)) {
+            return current.name;
+        }
+        if (isBoundedContextPart(current)) {
+            const referenceText = current.context.$refText;
+            const root = AstUtils.getDocument(current).parseResult.value;
+            if (isModel(root)) {
+                const selectedComponent = root.imports
+                    .flatMap(importDeclaration => importDeclaration.components)
+                    .find(component => component.alias === referenceText);
+                if (selectedComponent) {
+                    return selectedComponent.component.$refText;
+                }
+            }
+            return referenceText;
         }
         if (isSharedKernel(current)) {
             return current.name;
@@ -153,7 +183,9 @@ export class ThinaiScopeComputation extends DefaultScopeComputation {
             if (!isNamedExport(node)) {
                 continue;
             }
-            const name = getExportedName(node);
+            const contextName = getContextNameForIndexing(node);
+            const path = getDeclarationPath(node as NamedNode);
+            const name = contextName ? [contextName, ...path].join('.') : path.join('.');
             if (name) {
                 exports.push(this.descriptions.createDescription(node, name, document));
             }
@@ -165,10 +197,22 @@ export class ThinaiScopeComputation extends DefaultScopeComputation {
 export class ThinaiScopeProvider extends DefaultScopeProvider {
     override getScope(context: ReferenceInfo): Scope {
         const referenceType = this.reflection.getReferenceType(context);
-        const document = AstUtils.getDocument(context.container);
+        if (referenceType === 'SpecificationTarget' && context.property === 'targets' &&
+            isSpecificationTextPart(context.container)) {
+            return this.createScope(this.getSpecificationPathSymbols(context, referenceType));
+        }
+        if (context.property === 'targets' &&
+            (isFlowElement(context.container) || isMethodInvocation(context.container))) {
+            return this.createScope(this.getInvocationPathSymbols(context, referenceType));
+        }
         if (context.property === 'component' && isImportComponent(context.container)) {
             return this.createScope(this.getImportableComponents(context.container, referenceType));
         }
+        return this.getUnsegmentedScope(context, referenceType);
+    }
+
+    private getUnsegmentedScope(context: ReferenceInfo, referenceType: string): Scope {
+        const document = AstUtils.getDocument(context.container);
         const localScopes: Stream<AstNodeDescription>[] = [];
 
         if (document.localSymbols) {
@@ -184,7 +228,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         let result = this.createScope(this.getImportedSymbols(document, referenceType));
-        result = this.createScope(this.getDocumentSymbols(document, referenceType), result);
+        result = this.createScope(this.getDocumentSymbols(context, document, referenceType), result);
         const moduleSymbols = context.property === 'dependencies'
             ? []
             : this.getModuleSymbols(context, referenceType);
@@ -210,7 +254,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         while (current) {
             if (isFlowElement(current)) {
                 flowElement = current;
-                operation = current.method?.ref;
+                const target = current.targets.at(-1)?.ref;
+                operation = isMethod(target) ? target : undefined;
                 break;
             }
             if (isMethod(current) || isConstructor(current)) {
@@ -239,6 +284,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         if (isMethod(operation)) {
             const resultType = operation.returnType?.ref;
+            if (resultType || operation.returnPrimitive || operation.returnCollection) {
+                this.addSpecificationSymbol(pending, operation, 'result', referenceType);
+            }
             if (resultType && (isDataObject(resultType) || isReadModel(resultType) || isValueObject(resultType))) {
                 this.addShapeFields(pending, resultType, 'result', referenceType, new Set());
             }
@@ -261,10 +309,100 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (!shape || (!isDataObject(shape) && !isReadModel(shape) && !isValueObject(shape))) {
                     continue;
                 }
-                this.addShapeFields(pending, shape, `${getExportedName(queryMethod as AstNode & { name: string })}.result`, referenceType, new Set());
+                const resultPrefix = `${getExportedName(queryMethod as AstNode & { name: string })}.result`;
+                this.addSpecificationSymbol(pending, queryMethod, resultPrefix, referenceType);
+                this.addShapeFields(pending, shape, resultPrefix, referenceType, new Set());
             }
         }
         return pending;
+    }
+
+    private getSpecificationPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
+        if (!isSpecificationTextPart(context.container)) {
+            return [];
+        }
+        const part = context.container;
+        const index = context.index ?? 0;
+        const reference = context.reference;
+        if (index >= part.targets.length || !part.target) {
+            return [];
+        }
+
+        const fullPath = [part.target, ...part.targets.slice(0, index + 1)]
+            .map(candidate => candidate.$refText).join('.');
+        const description = this.getUnsegmentedScope(context, referenceType).getElement(fullPath);
+        return description ? [{ ...description, name: reference.$refText }] : [];
+    }
+
+    private getInvocationPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
+        const references = isFlowElement(context.container) || isMethodInvocation(context.container)
+            ? context.container.targets
+            : [];
+        const index = context.index ?? 0;
+        if (index >= references.length) {
+            return [];
+        }
+        const path = references.map(reference => reference.$refText);
+        const description = this.getUnsegmentedScope(context, referenceType).getElement(path.join('.'));
+        const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
+        return target
+            ? [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))]
+            : [];
+    }
+
+    private getPathSegmentTarget(target: AstNode, path: string[], segmentIndex: number, context: ReferenceInfo): AstNode | undefined {
+        const ancestors: AstNode[] = [];
+        let current: AstNode | undefined = target;
+        while (current) {
+            if (this.nameProvider.getName(current)) {
+                ancestors.push(current);
+            }
+            current = current.$container;
+        }
+
+        let nextAncestor = 0;
+        let selected: AstNode | undefined;
+        for (let index = path.length - 1; index >= 0; index--) {
+            const found = ancestors.findIndex((candidate, ancestorIndex) =>
+                ancestorIndex >= nextAncestor && (
+                    this.nameProvider.getName(candidate) === path[index] ||
+                    this.isImportedComponentAlias(candidate, path[index], context)
+                )
+            );
+            if (found < 0) {
+                return undefined;
+            }
+            if (index === segmentIndex) {
+                selected = ancestors[found];
+            }
+            nextAncestor = found + 1;
+        }
+        return selected;
+    }
+
+    private isImportedComponentAlias(node: AstNode, alias: string, context: ReferenceInfo): boolean {
+        if (!isImportableComponent(node)) {
+            return false;
+        }
+        const root = AstUtils.getDocument(context.container).parseResult.value;
+        if (!isModel(root)) {
+            return false;
+        }
+        const document = AstUtils.getDocument(context.container);
+        for (const importDeclaration of root.imports) {
+            if (importDeclaration.components.some(component =>
+                component.alias === alias && component.component.ref === node
+            )) {
+                return true;
+            }
+            if (importDeclaration.alias !== alias) {
+                continue;
+            }
+            if (UriUtils.equals(AstUtils.getDocument(node).uri, resolveImportUri(document, importDeclaration))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private addShapeFields(
@@ -305,7 +443,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return [];
         }
 
-        const descriptions: AstNodeDescription[] = [];
+        const candidates = new Map<string, Map<string, AstNodeDescription>>();
         for (const dependency of module.dependencies) {
             const targetModule = dependency.ref;
             if (!targetModule) {
@@ -320,23 +458,24 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     if (this.reflection.isSubtype(target.$type, referenceType)) {
                         const name = this.nameProvider.getName(target);
                         if (name) {
-                            descriptions.push(this.descriptions.createDescription(target, name));
+                            this.addScopeCandidate(candidates, this.descriptions.createDescription(target, name), name);
                         }
-                        descriptions.push(this.descriptions.createDescription(target, getExportedName(target as AstNode & { name: string })));
+                        const exportedName = getExportedName(target as AstNode & { name: string });
+                        this.addScopeCandidate(candidates, this.descriptions.createDescription(target, exportedName), exportedName);
                     }
                     if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) || isIntegrationEvent(target) || isReadModel(target) || isDataObject(target)) &&
                         this.reflection.isSubtype('Field', referenceType)) {
                         for (const field of target.fields) {
                             const fieldName = getExportedName(field);
                             for (const name of this.getUnaliasedNames(fieldName)) {
-                                descriptions.push(this.descriptions.createDescription(field, name));
+                                this.addScopeCandidate(candidates, this.descriptions.createDescription(field, name), name);
                             }
                         }
                     }
                 }
             }
         }
-        return descriptions;
+        return this.getUniqueScopeCandidates(candidates);
     }
 
     private getImportedSymbols(document: LangiumDocument, referenceType: string): AstNodeDescription[] {
@@ -353,8 +492,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             importsByUri.set(uri, imports);
         }
 
-        const descriptions: AstNodeDescription[] = [];
-        const seen = new Set<string>();
+        const candidates = new Map<string, Map<string, AstNodeDescription>>();
         for (const description of this.indexManager.allElements(referenceType, new Set(importsByUri.keys()))) {
             const imports = importsByUri.get(description.documentUri.toString()) ?? [];
             for (const importDeclaration of imports) {
@@ -367,30 +505,57 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                         const names = component.alias
                             ? this.getComponentAliasNames(description.name, getExportedName(target), component.alias)
                             : this.getUnaliasedNames(description.name);
-                        this.addNames(descriptions, seen, description, names);
+                        this.addScopeCandidates(candidates, description, names);
                     }
                 } else if (importDeclaration.alias) {
                     const targetName = this.getSingleImportableComponentName(document, importDeclaration);
                     if (targetName && this.isWithinComponentName(description.name, targetName)) {
-                        this.addNames(descriptions, seen, description,
+                        this.addScopeCandidates(candidates, description,
                             this.getComponentAliasNames(description.name, targetName, importDeclaration.alias));
                     }
                 } else {
-                    this.addNames(descriptions, seen, description, this.getUnaliasedNames(description.name));
+                    this.addScopeCandidates(candidates, description, this.getUnaliasedNames(description.name));
                 }
             }
         }
-        return descriptions;
+        return this.getUniqueScopeCandidates(candidates);
     }
 
-    private getDocumentSymbols(document: LangiumDocument, referenceType: string): AstNodeDescription[] {
+    private getDocumentSymbols(context: ReferenceInfo, document: LangiumDocument, referenceType: string): AstNodeDescription[] {
         const descriptions = this.indexManager.allElements(referenceType, new Set([document.uri.toString()]));
-        const result: AstNodeDescription[] = [];
-        const seen = new Set<string>();
+        const candidates = new Map<string, Map<string, AstNodeDescription>>();
+        const owningContextName = this.getLexicalContextName(context);
         for (const description of descriptions) {
-            this.addNames(result, seen, description, this.getUnaliasedNames(description.name));
+            this.addScopeCandidate(candidates, description, description.name);
+            // Suffix aliases are useful within one context, but must not make a
+            // declaration in another context compete for the same short name.
+            const belongsToContext = owningContextName && description.name.startsWith(`${owningContextName}.`);
+            const belongsToSharedKernel = description.node !== undefined && isInSharedKernel(description.node);
+            if (belongsToContext || belongsToSharedKernel) {
+                for (const name of this.getUnaliasedNames(description.name).slice(1)) {
+                    this.addScopeCandidate(candidates, description, name);
+                }
+            }
         }
-        return result;
+        return this.getUniqueScopeCandidates(candidates);
+    }
+
+    private getLexicalContextName(context: ReferenceInfo): string | undefined {
+        let current: AstNode | undefined = context.container;
+        while (current) {
+            if (isBoundedContext(current)) {
+                return current.name;
+            }
+            if (isBoundedContextPart(current)) {
+                // Avoid resolving the very reference whose scope is being built.
+                if (context.container === current && context.property === 'context') {
+                    return undefined;
+                }
+                return current.context.ref?.name ?? current.context.$refText;
+            }
+            current = current.$container;
+        }
+        return undefined;
     }
 
     private getImportableComponents(component: import('./generated/ast.js').ImportComponent, referenceType: string): AstNodeDescription[] {
@@ -426,15 +591,35 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return [`${alias}.${name.slice(componentName.length + 1)}`];
     }
 
-    private addNames(
-        descriptions: AstNodeDescription[],
-        seen: Set<string>,
+    private addScopeCandidates(
+        candidates: Map<string, Map<string, AstNodeDescription>>,
         description: AstNodeDescription,
         names: string[]
     ): void {
         for (const name of names) {
-            this.addDescription(descriptions, seen, description, name);
+            this.addScopeCandidate(candidates, description, name);
         }
+    }
+
+    private addScopeCandidate(
+        candidates: Map<string, Map<string, AstNodeDescription>>,
+        description: AstNodeDescription,
+        name: string
+    ): void {
+        const symbolKey = `${description.documentUri.toString()}#${description.path}`;
+        const matches = candidates.get(name) ?? new Map<string, AstNodeDescription>();
+        matches.set(symbolKey, description);
+        candidates.set(name, matches);
+    }
+
+    private getUniqueScopeCandidates(candidates: Map<string, Map<string, AstNodeDescription>>): AstNodeDescription[] {
+        const unique: AstNodeDescription[] = [];
+        for (const [name, matches] of candidates) {
+            if (matches.size === 1) {
+                unique.push({ ...matches.values().next().value!, name });
+            }
+        }
+        return unique;
     }
 
     private getUnaliasedNames(name: string): string[] {
@@ -442,16 +627,4 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return parts.map((_part, index) => parts.slice(index).join('.'));
     }
 
-    private addDescription(
-        descriptions: AstNodeDescription[],
-        seen: Set<string>,
-        description: AstNodeDescription,
-        name: string
-    ): void {
-        const key = `${description.documentUri.toString()}#${description.path}#${name}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            descriptions.push({ ...description, name });
-        }
-    }
 }

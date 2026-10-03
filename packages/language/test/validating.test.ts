@@ -26,7 +26,8 @@ describe('Validating', () => {
             bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        method place() emits OrderPlaced, OrderAudited {
+                        method place() {
+                            emits OrderPlaced, OrderAudited;
                             transition status from Draft to Placed;
                         }
                         identifier id: OrderId;
@@ -39,7 +40,8 @@ describe('Validating', () => {
                     repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository {
+                    method placeOrder(id: OrderId) {
+                        invokes Order.Order.place;
                     }
                 }
                 event OrderPlaced;
@@ -113,7 +115,9 @@ describe('Validating', () => {
             bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        method shipLine(lineId: OrderLineId) invokes Order.OrderLine.ship;
+                        method shipLine(lineId: OrderLineId) {
+                            invokes Order.OrderLine.ship;
+                        }
                         identifier id: OrderId;
                     }
                     value object OrderId { raw: string; }
@@ -127,7 +131,9 @@ describe('Validating', () => {
                     repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                        transactional method shipLine(id: OrderId) loads OrderRepository by id invokes Order.Order.shipLine saves OrderRepository;
+                    method shipLine(id: OrderId) {
+                        invokes Order.Order.shipLine;
+                    }
                 }
             }
         `);
@@ -307,13 +313,15 @@ describe('Validating', () => {
                     repository OrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    transactional method shipLine(id: OrderId) loads OrderRepository by id invokes Order.OrderLine.ship saves OrderRepository;
+                    method shipLine(id: OrderId) {
+                        invokes Order.OrderLine.ship;
+                    }
                 }
             }
         `);
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'An application service may invoke only methods declared on its associated aggregate root.'
+            'An application service may invoke only its aggregate root or its associated factory methods.'
         ))).toBe(true);
     });
 
@@ -345,7 +353,7 @@ describe('Validating', () => {
                     value object OrderId { raw: string; }
                 }
                 domain service Pricing {
-                    method calculate() invokes OrderApplication.placeOrder;
+                    method calculate() { invokes OrderApplication.placeOrder; }
                 }
                 application service OrderApplication for Order {
                     method placeOrder();
@@ -363,10 +371,10 @@ describe('Validating', () => {
             bounded context Ordering {
                 aggregate Order { root entity Order { identifier id: OrderId; } value object OrderId { raw: string; } }
                 domain service Pricing {
-                    method calculate() invokes OrderApplication.placeOrder;
+                    method calculate() { invokes OrderApplication.placeOrder; }
                 }
                 domain service Reporting {
-                    method report() invokes Pricing.calculate;
+                    method report() { invokes Pricing.calculate; }
                 }
                 application service OrderApplication for Order { method placeOrder(); }
             }
@@ -385,10 +393,10 @@ describe('Validating', () => {
                     value object OrderId { raw: string; }
                 }
                 domain service OrderPolicy {
-                    method apply() invokes Order.Order.place;
+                    method apply() { invokes Order.Order.place; }
                 }
                 application service OrderApplication for Order {
-                    method placeOrder() invokes OrderPolicy.apply;
+                    method placeOrder() { invokes OrderPolicy.apply; }
                 }
             }
         `);
@@ -408,7 +416,7 @@ describe('Validating', () => {
                     value object OrderLineId { raw: string; }
                 }
                 domain service ShippingPolicy {
-                    method shipLine() invokes Order.OrderLine.ship;
+                    method shipLine() { invokes Order.OrderLine.ship; }
                 }
             }
         `);
@@ -434,7 +442,9 @@ describe('Validating', () => {
                 }
                 query repository OrderLookupRepository for OrderLookup;
                 application service OrderCommands for Order {
-                    transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository;
+                    method placeOrder(id: OrderId) {
+                        invokes Order.Order.place;
+                    }
                 }
                 flow LookupOrder {
                     actor Customer;
@@ -447,27 +457,23 @@ describe('Validating', () => {
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('requires repository workflows to load and save through the same repository', async () => {
+    test('does not require repository choreography in application-service methods', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
-                    root entity Order {
-                        method place();
-                        identifier id: OrderId;
-                    }
+                    root entity Order { identifier id: OrderId; }
                     value object OrderId { raw: string; }
                     repository OrderRepository for Order;
-                    repository OtherOrderRepository for Order;
                 }
                 application service OrderApplication for Order {
-                    transactional method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OtherOrderRepository;
+                    method placeOrder(id: OrderId) {
+                        behavior "Place an order using the supplied identifier.";
+                    }
                 }
             }
         `);
 
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'A repository workflow must load and save through the same repository'
-        ))).toBe(true);
+        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows aggregate-scoped command services and cross-aggregate query reads', async () => {
@@ -494,10 +500,14 @@ describe('Validating', () => {
                 query repository OrderSearchRepository for OrderSearch;
                 query repository CustomerHistoryRepository for CustomerHistory;
                 application service OrderCommands for Order {
-                    transactional method placeOrder(id: OrderId) loads OrderWriteRepository by id invokes Order.Order.place saves OrderWriteRepository;
+                    method placeOrder(id: OrderId) {
+                        invokes Order.Order.place;
+                    }
                 }
                 application service CustomerCommands for Customer {
-                    transactional method activateCustomer(id: CustomerId) loads CustomerWriteRepository by id invokes Customer.Customer.activate saves CustomerWriteRepository;
+                    method activateCustomer(id: CustomerId) {
+                        invokes Customer.Customer.activate;
+                    }
                 }
                 query service OrderingReports {
                     method findOrders(text: string) returns string {
@@ -542,8 +552,8 @@ describe('Validating', () => {
                 query repository OrderEligibilityRepository for OrderEligibility;
                 event OrderPlaced data { orderId: string; }
                 projector OrderEligibilityProjector for OrderEligibility {
-                    method onOrderPlaced(source: event OrderPlaced) updates OrderEligibilityRepository after commit {
-                        behavior "Copy [[OrderPlaced.orderId]] into [[OrderEligibility.orderId]], then update [[OrderEligibility.status]].";
+                    method onOrderPlaced(source: event OrderPlaced) {
+                        behavior "Copy [[OrderPlaced.orderId]] into [[OrderEligibility.orderId]] via [[OrderEligibilityRepository]], then update [[OrderEligibility.status]].";
                     }
                 }
                 query service OrderQueries {
@@ -552,8 +562,8 @@ describe('Validating', () => {
                     }
                 }
                 application service OrderCommands for Order {
-                    transactional method place(input: PlaceOrderInput) returns PlaceOrderResult
-                        loads OrderRepository by input.orderId invokes Order.Order.place saves OrderRepository {
+                    method place(input: PlaceOrderInput) returns PlaceOrderResult {
+                        invokes Order.Order.place;
                         behavior "Place the order for [[input.orderId]] and return its [[result.status]].";
                     }
                 }
@@ -610,7 +620,7 @@ describe('Validating', () => {
         ))).toBe(true);
     });
 
-    test('accepts factory-based creation followed by saving through its repository', async () => {
+    test('allows application services to invoke factory methods without repository choreography', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
@@ -622,7 +632,9 @@ describe('Validating', () => {
                     }
                 }
                 application service OrderApplication for Order {
-                    transactional method createOrder(id: OrderId) creates Order.OrderFactory.createOrder saves OrderRepository;
+                    method createOrder(id: OrderId) {
+                        invokes Order.OrderFactory.createOrder;
+                    }
                 }
             }
         `);
@@ -630,7 +642,7 @@ describe('Validating', () => {
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('accepts queries without aggregate saves and requires commands to model deletion', async () => {
+    test('allows read queries and descriptive delete commands without repository choreography', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
@@ -644,7 +656,10 @@ describe('Validating', () => {
                 read model OrderReadModel { status: string; }
                 query repository OrderReadModelRepository for OrderReadModel;
                 application service OrderApplication for Order {
-                    transactional method deleteOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.validateDeletion deletes OrderRepository;
+                    method deleteOrder(id: OrderId) {
+                        invokes Order.Order.validateDeletion;
+                        behavior "Delete the order when its root confirms deletion is allowed.";
+                    }
                 }
                 query service OrderQueries {
                     method getOrder(id: OrderId) returns string {
@@ -657,7 +672,7 @@ describe('Validating', () => {
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('requires aggregate write workflows to declare a transaction', async () => {
+    test('allows query services to read aggregate repositories without query projections', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
@@ -668,32 +683,32 @@ describe('Validating', () => {
                     value object OrderId { raw: string; }
                     repository OrderRepository for Order;
                 }
-                application service OrderApplication for Order {
-                    method placeOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.place saves OrderRepository;
+                query service OrderQueries {
+                    method getStatus(id: OrderId) returns string {
+                        behavior "Read the status for [[id]] from [[OrderRepository]].";
+                    }
                 }
             }
         `);
 
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'Aggregate write workflows must declare a transaction.'
-        ))).toBe(true);
+        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('requires integration-event publication from a domain event handler to occur after commit', async () => {
+    test('allows integration-event handlers without an after-commit clause', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order { root entity Order { identifier id: OrderId; } value object OrderId { raw: string; } }
                 event OrderPlaced;
                 integration event OrderPlacedV1;
                 application service OrderApplication for Order {
-                    method publish(source: event OrderPlaced) emits OrderPlacedV1;
+                    method publish(source: event OrderPlaced) {
+                        emits OrderPlacedV1;
+                    }
                 }
             }
         `);
 
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'Integration events mapped from domain events must be emitted after commit.'
-        ))).toBe(true);
+        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('rejects an integration-event payload that exposes an entity', async () => {
@@ -764,7 +779,7 @@ describe('Validating', () => {
         const document = await parse(`
             bounded context Ordering {
                 domain service OrderPolicy {
-                    method check() emits OrderPlaced;
+                    method check() { emits OrderPlaced; }
                 }
                 event OrderPlaced;
             }
@@ -780,7 +795,7 @@ describe('Validating', () => {
             bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        method place() emits OrderPlacedV1;
+                        method place() { emits OrderPlacedV1; }
                         identifier id: OrderId;
                     }
                     value object OrderId { raw: string; }

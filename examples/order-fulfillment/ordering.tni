@@ -1,6 +1,6 @@
 import "./context-catalog.tni";
-import "./common-types.tni" as Common;
-import "./context-map.tni" { FulfillmentMap };
+import { CommonTypes as Common } from "./common-types.tni";
+import { FulfillmentMap } from "./context-map.tni";
 
 part of bounded context Ordering {
 
@@ -15,13 +15,16 @@ part of bounded context Ordering {
                 postcondition "The order has an identifier and owner.";
             }
             method ensureOwner();
-            method place() emits OrderPlaced {
+            method place() {
+                emits OrderPlaced;
                 transition status from Draft to Placed;
             }
             method pay() {
                 transition status from Placed to Paid;
             }
-            method fulfillItem(itemId: OrderItemId) invokes Order.OrderItem.ship;
+            method fulfillItem(itemId: OrderItemId) {
+                invokes Order.OrderItem.ship;
+            }
             method validateCanDelete() {
                 precondition "Only a draft order can be deleted.";
             }
@@ -89,7 +92,9 @@ part of bounded context Ordering {
 
     aggregate Customer {
         root entity Customer {
-            method register() emits CustomerRegistered;
+            method register() {
+                emits CustomerRegistered;
+            }
             identifier id: CustomerId;
             name: string;
         }
@@ -101,10 +106,10 @@ part of bounded context Ordering {
     }
 
     application service CustomerRegistration for Customer {
-        transactional method registerCustomer(id: CustomerId, name: string)
-            creates Customer.CustomerFactory.createCustomer
-            invokes Customer.Customer.register
-            saves Customer.CustomerRepository;
+        method registerCustomer(id: CustomerId, name: string) {
+            invokes Customer.CustomerFactory.createCustomer;
+            invokes Customer.Customer.register;
+        }
     }
 
     domain service Authorization {

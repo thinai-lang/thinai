@@ -31,6 +31,7 @@ import type {
     IntegrationEvent,
     Field,
     Flow,
+    MethodInvocation,
     Method,
     Model,
     Module,
@@ -51,6 +52,7 @@ import {
     isApplicationService,
     isDomainEvent,
     isEntity,
+    isEnumValue,
     isField,
     isIntegrationEvent,
     isImportableComponent,
@@ -60,6 +62,7 @@ import {
     isFactory,
     isModel,
     isModule,
+    isMethod,
     isPartnershipRelationship,
     isProjector,
     isDataObject,
@@ -69,6 +72,7 @@ import {
     isQueryService,
     isReadModel,
     isSeparateWaysRelationship,
+    isSpecificationTextPart,
     isSharedKernel,
     isSharedKernelRelationship,
     isValueObject
@@ -573,17 +577,6 @@ export class ThinaiValidator {
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
         const projector = projectorService !== undefined;
-        if (method.transactional && !applicationService) {
-            accept('error', 'Only application-service commands can declare a transaction.', {
-                node: method,
-                property: 'transactional'
-            });
-        } else if (method.transactional && !method.loadRepository && !method.creationMethod && !method.deleteRepository) {
-            accept('error', 'A transaction marker requires an aggregate write workflow.', {
-                node: method,
-                property: 'transactional'
-            });
-        }
         if (queryService) {
             if (!method.returnPrimitive && !method.returnType && !method.returnCollection) {
                 accept('error', 'A query must declare a result type.', {
@@ -591,18 +584,12 @@ export class ThinaiValidator {
                     property: 'returnType'
                 });
             }
-            if (eventParameters.length > 0 || method.events.length > 0 || method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
-                accept('error', 'A query cannot handle events, emit events, create aggregates, save aggregates, or delete aggregates.', {
+            if (eventParameters.length > 0 || method.events.length > 0) {
+                accept('error', 'A query cannot handle events or emit events.', {
                     node: method,
                     property: 'returnType'
                 });
             }
-        }
-        if (method.updatesRepository && !projector) {
-            accept('error', 'Only projectors may update query repositories.', {
-                node: method,
-                property: 'updatesRepository'
-            });
         }
         if (eventParameters.length > 0) {
             if (!applicationService && !projector) {
@@ -640,8 +627,12 @@ export class ThinaiValidator {
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
         }
         for (const invocation of method.invocations) {
-            const target = invocation.ref;
+            const target = this.getInvokedMethod(invocation);
             if (!target) {
+                accept('error', 'An invokes path must end at a method.', {
+                    node: method,
+                    property: 'invocations'
+                });
                 continue;
             }
             if (this.isCrossContextOwned(method, target)) {
@@ -684,7 +675,12 @@ export class ThinaiValidator {
             }
             const sourceAggregate = this.getOwningAggregate(method);
             const targetAggregate = this.getOwningAggregate(target);
-            if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) && !isEntity(method.$container)) {
+            const targetFactory = isFactory(target.$container) ? target.$container : undefined;
+            const isAssociatedFactoryMethod = applicationService !== undefined && targetFactory !== undefined &&
+                targetFactory.aggregate.ref === applicationService.aggregate.ref &&
+                target.returnType?.ref === applicationService.aggregate.ref?.members.find(member => isEntity(member) && member.root);
+            if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) &&
+                !isEntity(method.$container) && !isAssociatedFactoryMethod) {
                 accept('error', 'Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.', {
                     node: method,
                     property: 'invocations'
@@ -717,9 +713,9 @@ export class ThinaiValidator {
                     node: method,
                     property: 'invocations'
                 });
-            }
-            if (queryService && this.getOwningAggregate(target)) {
-                accept('error', 'A query service must read through query repositories, not aggregate methods.', {
+        }
+        if (queryService && this.getOwningAggregate(target)) {
+                accept('error', 'A query service must not invoke aggregate methods.', {
                     node: method,
                     property: 'invocations'
                 });
@@ -731,15 +727,12 @@ export class ThinaiValidator {
                 });
             }
             if (applicationService && this.getOwningAggregate(target) === applicationService.aggregate.ref &&
-                !method.loadRepository && !method.creationMethod && !method.deleteRepository) {
-                accept('error', 'Aggregate behavior must be invoked in an application-service repository workflow.', {
+                !this.isAggregateRootMethod(target, applicationService.aggregate.ref!) && !isAssociatedFactoryMethod) {
+                accept('error', 'An application service may invoke only its aggregate root or its associated factory methods.', {
                     node: method,
                     property: 'invocations'
                 });
             }
-        }
-        if (applicationService) {
-            this.checkApplicationServiceWorkflow(method, applicationService, accept);
         }
         if (queryService) {
             this.checkQueryServiceMethod(method, queryService, accept);
@@ -775,11 +768,6 @@ export class ThinaiValidator {
                         node: method,
                         property: 'events'
                     });
-                } else if (!method.afterCommit) {
-                    accept('error', 'Integration events mapped from domain events must be emitted after commit.', {
-                        node: method,
-                        property: 'afterCommit'
-                    });
                 }
             } else if (method.events.length > 0) {
                 accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
@@ -788,15 +776,11 @@ export class ThinaiValidator {
                 });
             }
         }
-        const afterCommitBridge = applicationService && eventParameters.length === 1 &&
-            isDomainEvent(eventParameters[0]?.eventType?.ref) && method.events.some(event => isIntegrationEvent(event.ref));
-        const afterCommitProjector = projector && eventParameters.length === 1 && method.updatesRepository !== undefined;
-        if (method.afterCommit && !afterCommitBridge && !afterCommitProjector) {
-            accept('error', 'The after-commit clause is reserved for integration-event handlers and projectors.', {
-                node: method,
-                property: 'afterCommit'
-            });
-        }
+    }
+
+    private getInvokedMethod(invocation: MethodInvocation): Method | undefined {
+        const target = invocation.targets.at(-1)?.ref;
+        return isMethod(target) ? target : undefined;
     }
 
     checkApplicationService(service: ApplicationService, accept: ValidationAcceptor): void {
@@ -834,23 +818,11 @@ export class ThinaiValidator {
     }
 
     private checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
-        if (method.loadRepository || method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional) {
-            accept('error', 'A query service cannot load, create, delete, save, or transact on aggregates.', {
-                node: method,
-                property: 'behaviors'
-            });
-        }
-        const repositories = this.getQueryRepositoryReferences(method);
-        if (repositories.length === 0) {
-            accept('error', 'A query-service method must read from at least one query repository.', {
-                node: method,
-                property: 'behaviors'
-            });
-        }
+        const repositories = this.getReadRepositoryReferences(method);
         const queryContext = getOwningContextName(service);
         for (const repository of repositories) {
             if (getOwningContextName(repository) !== queryContext) {
-                accept('error', 'A query service may read only query repositories in its own bounded context.', {
+                accept('error', 'A query service may read only repositories in its own bounded context.', {
                     node: method,
                     property: 'behaviors'
                 });
@@ -866,37 +838,38 @@ export class ThinaiValidator {
                 property: 'parameters'
             });
         }
-        if (!method.updatesRepository || method.updatesRepository.ref?.readModel.ref !== projector.readModel.ref) {
-            accept('error', 'A projector must update a query repository for its declared read model.', {
-                node: method,
-                property: 'updatesRepository'
-            });
-        }
-        if (!method.afterCommit) {
-            accept('error', 'A projector must process committed events after commit.', {
-                node: method,
-                property: 'afterCommit'
-            });
-        }
         if (method.returnPrimitive || method.returnType || method.returnCollection) {
             accept('error', 'A projector handler does not return a value.', {
                 node: method,
                 property: 'returnType'
             });
         }
-        if (method.invocations.length > 0 || method.loadRepository ||
-            method.creationMethod || method.deleteRepository || method.saveRepository || method.transactional || method.events.length > 0) {
-            accept('error', 'A projector may update its read model but cannot invoke domain/application methods or write aggregates.', {
+        if (method.invocations.length > 0 || method.events.length > 0 || method.transitions.length > 0) {
+            accept('error', 'A projector describes a read-model projection and cannot invoke domain/application methods, emit events, or transition aggregate state.', {
                 node: method,
-                property: 'updatesRepository'
+                property: 'invocations'
             });
+        }
+        for (const repository of this.getReadRepositoryReferences(method)) {
+            if (isRepository(repository)) {
+                accept('error', 'A projector may describe query-repository output, not writes to an aggregate repository.', {
+                    node: method,
+                    property: 'behaviors'
+                });
+            } else if (repository.readModel.ref !== projector.readModel.ref) {
+                accept('error', 'A projector may reference only query repositories for its declared read model.', {
+                    node: method,
+                    property: 'behaviors'
+                });
+            }
         }
     }
 
-    private getQueryRepositoryReferences(node: AstNode): QueryRepository[] {
-        const repositories = new Set<QueryRepository>();
+    private getReadRepositoryReferences(node: AstNode): Array<Repository | QueryRepository> {
+        const repositories = new Set<Repository | QueryRepository>();
         AstUtils.streamAst(node).forEach(child => AstUtils.streamReferences(child).forEach(referenceInfo => {
-            if (isReference(referenceInfo.reference) && isQueryRepository(referenceInfo.reference.ref)) {
+            if (isReference(referenceInfo.reference) &&
+                (isQueryRepository(referenceInfo.reference.ref) || isRepository(referenceInfo.reference.ref))) {
                 repositories.add(referenceInfo.reference.ref);
             }
         }));
@@ -935,25 +908,33 @@ export class ThinaiValidator {
     checkFlow(flow: Flow, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(flow, accept);
         for (const element of flow.elements) {
-            const method = element.method?.ref;
-            if (!method) {
+            if (element.actor !== undefined) {
                 continue;
             }
+            const target = element.targets.at(-1)?.ref;
+            if (!isMethod(target)) {
+                accept('error', 'A flow invocation path must end at a method.', {
+                    node: element,
+                    property: 'targets'
+                });
+                continue;
+            }
+            const method = target;
             const isCommand = isApplicationService(method.$container) && !method.parameters.some(parameter => parameter.eventType);
             const isQuery = isQueryService(method.$container);
             if (!isCommand && !isQuery) {
                 accept('error', 'A flow may invoke only application-service commands or query-service methods.', {
                     node: element,
-                    property: 'method'
+                    property: 'targets'
                 });
             }
             if (isQuery && this.hasBehaviorSideEffects(method)) {
-                accept('error', 'A flow query step must be read-only.', { node: element, property: 'method' });
+                accept('error', 'A flow query step must be read-only.', { node: element, property: 'targets' });
             }
             if (this.isCrossContextOwned(flow, method)) {
                 accept('error', 'A flow may invoke only command and query methods in its own bounded context.', {
                     node: element,
-                    property: 'method'
+                    property: 'targets'
                 });
             }
         }
@@ -1183,9 +1164,26 @@ export class ThinaiValidator {
                 });
                 return;
             }
-            if (crossesContext && !isInSharedKernel(target) &&
-                (isParameter(target) || isDataObject(target) || isReadModel(target) || isQueryRepository(target))) {
+            const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
+            if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
+                (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
+                    isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target))) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+                return;
+            }
+            if (isSpecificationReference && isDomainEvent(target) && crossesContext) {
+                accept('error', 'Specification text cannot reference a private DomainEvent from another bounded context.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property
+                });
+                return;
+            }
+            if (isSpecificationReference && isIntegrationEvent(target) && crossesContext &&
+                (!this.isIntegrationEventExposed(target) || !this.hasAuthorizedEventRelationship(referenceInfo.container, target))) {
+                accept('error', 'Cross-context IntegrationEvent references require an exposed contract and an authorized context-map relationship.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -1198,7 +1196,7 @@ export class ThinaiValidator {
                 return;
             }
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.ref === targetModule);
-            const exposureTarget = isField(target) || isParameter(target) ? target.$container : target;
+            const exposureTarget = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
             const exposed = targetModule.exposures.some(exposure =>
                 exposure.declarations.some(declaration => declaration.ref === exposureTarget)
             );
@@ -1251,146 +1249,18 @@ export class ThinaiValidator {
         }
     }
 
-    private checkApplicationServiceWorkflow(method: Method, service: ApplicationService | undefined, accept: ValidationAcceptor): void {
-        const hasWorkflowClause = method.loadRepository !== undefined || method.creationMethod !== undefined ||
-            method.deleteRepository !== undefined || method.saveRepository !== undefined;
-        if (!service) {
-            if (hasWorkflowClause) {
-                accept('error', 'Repository workflow clauses are allowed only in application-service methods.', {
-                    node: method,
-                    property: 'loadRepository'
-                });
-            }
-            return;
-        }
-        if (!hasWorkflowClause && method.parameters.some(parameter => parameter.eventType)) {
-            return;
-        }
-        const aggregate = service.aggregate.ref;
-        if (!aggregate) {
-            return;
-        }
-        if (method.loadRepository) {
-            this.validateRepositoryLoadKey(method, service, accept);
-        }
-
-        const invocations = method.invocations.map(invocation => invocation.ref)
-            .filter((target): target is Method => target !== undefined);
-        const aggregateInvocations = invocations
-            .filter((target): target is Method => target !== undefined && this.getOwningAggregate(target) === aggregate);
-
-        if (!hasWorkflowClause) {
-            accept('error', 'An application-service command must declare a repository workflow for its associated aggregate.', {
-                node: method,
-                property: 'loadRepository'
-            });
-            return;
-        }
-
-        if (!method.transactional) {
-            accept('error', 'Aggregate write workflows must declare a transaction.', {
-                node: method,
-                property: 'transactional'
-            });
-        }
-
-        const loadRepository = method.loadRepository?.ref;
-        const saveRepository = method.saveRepository?.ref;
-        const deleteRepository = method.deleteRepository?.ref;
-        const isCreationWorkflow = method.creationMethod !== undefined;
-        const isDeletionWorkflow = method.deleteRepository !== undefined;
-
-        if (isCreationWorkflow || isDeletionWorkflow) {
-            const validCreation = isCreationWorkflow && !method.loadRepository && !method.deleteRepository && !!method.saveRepository;
-            const validDeletion = isDeletionWorkflow && !!method.loadRepository && aggregateInvocations.length > 0 &&
-                !method.creationMethod && !method.saveRepository;
-            if (!validCreation && !validDeletion) {
-                accept('error', 'A command must create and save, load and invoke before deleting, or load, invoke, and save an aggregate.', {
-                    node: method,
-                    property: 'loadRepository'
-                });
-                return;
-            }
-        } else if (!method.loadRepository || !method.saveRepository || aggregateInvocations.length === 0) {
-            accept('error', 'A command that invokes an existing aggregate must load and save it through a repository.', {
-                node: method,
-                property: 'loadRepository'
-            });
-            return;
-        }
-
-        if (isCreationWorkflow && (!saveRepository || saveRepository.aggregate.ref !== aggregate)) {
-            accept('error', 'A creation workflow must save through a repository for its application service aggregate.', {
-                node: method,
-                property: 'saveRepository'
-            });
-        } else if (isDeletionWorkflow && (!loadRepository || loadRepository !== deleteRepository || deleteRepository?.aggregate.ref !== aggregate)) {
-            accept('error', 'A deletion workflow must load and delete through the same repository for its application service aggregate.', {
-                node: method,
-                property: 'deleteRepository'
-            });
-        } else if (!isCreationWorkflow && !isDeletionWorkflow &&
-            (!loadRepository || loadRepository !== saveRepository || saveRepository?.aggregate.ref !== aggregate)) {
-            accept('error', 'A repository workflow must load and save through the same repository for the application service aggregate.', {
-                node: method,
-                property: 'saveRepository'
-            });
-        }
-
-        if (isCreationWorkflow) {
-            const creationMethod = method.creationMethod;
-            const factoryMethod = creationMethod?.ref;
-            const factory = factoryMethod?.$container;
-            if (!factoryMethod || !isFactory(factory) || factory.aggregate.ref !== aggregate ||
-                factoryMethod.returnType?.ref !== aggregate.members.find(member => isEntity(member) && member.root)) {
-                accept('error', 'A creation workflow must create the associated aggregate root through one of its factory methods.', {
-                    node: method,
-                    property: 'creationMethod'
-                });
-            }
-        }
-
-        this.validateAggregateInvocations(method, aggregateInvocations, aggregate, accept);
-    }
-
-    private validateAggregateInvocations(
-        source: Method,
-        targets: Method[],
-        aggregate: Aggregate,
-        accept: ValidationAcceptor
-    ): void {
-        for (const target of targets) {
-            if (!this.isAggregateRootMethod(target, aggregate)) {
-                accept('error', 'An application service may invoke only methods declared on its associated aggregate root.', {
-                    node: source,
-                    property: 'invocations'
-                });
-            }
-            if (isEntity(target.returnType?.ref) && !target.returnType.ref.root) {
-                accept('error', 'An aggregate-root method must not return a child entity across the aggregate boundary.', {
-                    node: source,
-                    property: 'invocations'
-                });
-            }
-            if (target.parameters.some(parameter => parameter.eventType)) {
-                accept('error', 'An event-triggered method cannot be invoked as aggregate behavior.', {
-                    node: source,
-                    property: 'invocations'
-                });
-            }
-        }
-    }
-
     private hasBehaviorSideEffects(method: Method, visited = new Set<Method>()): boolean {
         if (visited.has(method)) {
             return false;
         }
         visited.add(method);
-        if (method.transitions.length > 0 || method.events.length > 0 || method.transactional ||
-            method.creationMethod !== undefined || method.deleteRepository !== undefined || method.saveRepository !== undefined) {
+        if (method.transitions.length > 0 || method.events.length > 0) {
             return true;
         }
-        return method.invocations.some(invocation => invocation.ref && this.hasBehaviorSideEffects(invocation.ref, visited));
+        return method.invocations.some(invocation => {
+            const target = this.getInvokedMethod(invocation);
+            return target !== undefined && this.hasBehaviorSideEffects(target, visited);
+        });
     }
 
     private getReachableMethods(method: Method, visited = new Set<Method>()): Method[] {
@@ -1400,42 +1270,13 @@ export class ThinaiValidator {
         visited.add(method);
         const reachable: Method[] = [];
         for (const invocation of method.invocations) {
-            const target = invocation.ref;
+            const target = this.getInvokedMethod(invocation);
             if (!target) {
                 continue;
             }
             reachable.push(target, ...this.getReachableMethods(target, visited));
         }
         return reachable;
-    }
-
-    private validateRepositoryLoadKey(method: Method, service: ApplicationService, accept: ValidationAcceptor): void {
-        const aggregate = service.aggregate.ref;
-        const root = aggregate?.members.find(member => isEntity(member) && member.root);
-        const identifierType = isEntity(root)
-            ? root.fields.find(field => field.identifier)?.type?.ref
-            : undefined;
-        const path = (method.loadParameter ?? '').split('.');
-        const parameter = method.parameters.find(candidate => candidate.name === path[0]);
-        let resolvedType = parameter?.type?.ref;
-        let valid = parameter !== undefined && !parameter.optional && identifierType !== undefined;
-        for (const segment of path.slice(1)) {
-            const fields = resolvedType && 'fields' in resolvedType
-                ? (resolvedType as DataObject | ReadModel | ValueObject).fields
-                : [];
-            const field = fields.find(candidate => candidate.name === segment);
-            if (!field || field.optional || field.collection || !field.type?.ref) {
-                valid = false;
-                break;
-            }
-            resolvedType = field.type.ref;
-        }
-        if (!valid || !identifierType || resolvedType !== identifierType) {
-            accept('error', 'A repository load must use a method parameter typed as the aggregate root identifier.', {
-                node: method,
-                property: 'loadParameter'
-            });
-        }
     }
 
     private isAggregateRootMethod(method: Method, aggregate: Aggregate): boolean {

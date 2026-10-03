@@ -11,8 +11,9 @@ TopLevelDeclaration:
     | ContextMap;
 
 Import:
-    'import' path=StringLiteral
-    (('as' alias=ID) | '{' components+=ImportComponent (',' components+=ImportComponent)* '}')? ';'?;
+    'import'
+    ('{' components+=ImportComponent (',' components+=ImportComponent)* '}' 'from' path=StringLiteral
+    | path=StringLiteral ('as' alias=ID)?) ';'?;
 
 ImportComponent:
     component=[ImportableComponent:QualifiedName] ('as' alias=ID)?;
@@ -187,17 +188,14 @@ DomainService:
     'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
 
 Method:
-    transactional?='transactional'? 'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
+    'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
-    ('loads' loadRepository=[Repository:QualifiedName] 'by' loadParameter=QualifiedName)?
-    ('updates' updatesRepository=[QueryRepository:QualifiedName])?
-    ('creates' creationMethod=[Method:QualifiedName])?
-    ('invokes' invocations+=[Method:QualifiedName] (',' invocations+=[Method:QualifiedName])*)?
-    ('deletes' deleteRepository=[Repository:QualifiedName])?
-    ('saves' saveRepository=[Repository:QualifiedName])?
-    ('emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])*)?
-    (afterCommit?='after' 'commit')?
-    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition)* '}')? ';'?;
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
+        invocations+=MethodInvocation |
+        'emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])* ';'?)* '}')? ';'?;
+
+MethodInvocation:
+    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ';'?;
 
 Transition:
     'transition' field=ID 'from' from=ID 'to' to=ID ';'?;
@@ -244,7 +242,7 @@ Flow:
 
 FlowElement:
     'actor' actor=ID ';'?
-    | 'invoke' method=[Method:QualifiedName] ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
+    | 'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 
@@ -264,9 +262,9 @@ SpecificationText:
 SpecificationTextPart:
     text=DOUBLE_STRING_TEXT
     | text=SINGLE_STRING_TEXT
-    | '[[' target=[SpecificationTarget:QualifiedName] REFERENCE_END;
+    | '[[' target=[SpecificationTarget:ID] ('.' targets+=[SpecificationTarget:ID])* REFERENCE_END;
 
-type SpecificationTarget = DataObject | Field | Method | Parameter | QueryRepository | ReadModel;
+type SpecificationTarget = NamedDeclaration | EnumValue | Field | Parameter;
 
 StringLiteral returns string:
     DOUBLE_STRING_START (DOUBLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* DOUBLE_STRING_END

@@ -47,9 +47,9 @@ describe('LSP services', () => {
         });
         const decoded = SemanticTokensDecoder.decode(tokens, provider!.tokenTypes, source);
 
-        expect(decoded.filter(token => token.text.startsWith('Order.')).map(token => [token.text, token.tokenType])).toEqual([
-            ['Order.Order.place', 'method'],
-            ['Order.Order.status', 'property']
+        expect(decoded.filter(token => ['place', 'status'].includes(token.text)).map(token => [token.text, token.tokenType])).toEqual([
+            ['place', 'method'],
+            ['status', 'property']
         ]);
     });
 

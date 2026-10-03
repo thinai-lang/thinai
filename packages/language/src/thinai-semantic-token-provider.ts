@@ -14,22 +14,27 @@ export class ThinaiSemanticTokenProvider extends AbstractSemanticTokenProvider {
             return;
         }
 
-        const target = node.target?.ref;
-        const referenceNode = node.target?.$refNode;
         const textDocument = this.currentDocument?.textDocument;
-        if (!referenceNode || !textDocument) {
+        if (!textDocument) {
             return;
         }
 
-        const referenceRange = {
-            start: textDocument.positionAt(referenceNode.offset),
-            end: textDocument.positionAt(referenceNode.end)
-        };
-
-        if (isMethod(target)) {
-            acceptor({ range: referenceRange, type: SemanticTokenTypes.method });
-        } else if (isField(target)) {
-            acceptor({ range: referenceRange, type: SemanticTokenTypes.property });
+        const references = [node.target, ...node.targets].filter(reference => reference !== undefined);
+        for (const reference of references) {
+            const target = reference.ref;
+            const referenceNode = reference.$refNode;
+            if (!referenceNode) {
+                continue;
+            }
+            const referenceRange = {
+                start: textDocument.positionAt(referenceNode.offset),
+                end: textDocument.positionAt(referenceNode.end)
+            };
+            if (isMethod(target)) {
+                acceptor({ range: referenceRange, type: SemanticTokenTypes.method });
+            } else if (isField(target)) {
+                acceptor({ range: referenceRange, type: SemanticTokenTypes.property });
+            }
         }
     }
 }

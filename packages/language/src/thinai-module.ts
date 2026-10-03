@@ -10,6 +10,7 @@ import { ThinaiValueConverter } from './thinai-value-converter.js';
 import { ThinaiTokenBuilder } from './thinai-token-builder.js';
 import { createThinaiParser } from './thinai-parser.js';
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
+import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -50,6 +51,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
     lsp: {
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),
         CompletionProvider: services => new ThinaiCompletionProvider(services),
+        DefinitionProvider: services => new ThinaiDefinitionProvider(services),
         SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)
     },
     validation: {

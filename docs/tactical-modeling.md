@@ -113,23 +113,21 @@ Other declarations include capabilities, repositories, and factories.
 Write repositories and factories refer to their target aggregate. Application-service
 methods are aggregate-scoped commands; command/query separation is provided by
 aggregate-scoped application services and bounded-context-scoped query services.
-Commands make persistence
-orchestration explicit: use `loads Repository by id` / `invokes` / `saves` for an existing
-aggregate and `creates` / `invokes` / `saves` when creating one. Deletion uses
-`loads` / `invokes` / `deletes`. A load and write operation must use the same
-repository for the application's aggregate; `id` must be a parameter typed by
-the root's identifier value object. Each aggregate has one write repository.
+Application-service methods may link to aggregate-root or factory methods with
+`invokes`. Thinai describes those domain relationships without prescribing loads,
+saves, deletes, or transaction mechanics. Each aggregate has one write repository.
 Use identity-free data objects for operation input/output shapes. They can contain
 primitives, collections, enums, value objects, and nested data objects, but not
 entities or read models; they have no identifiers or behavior. Prefer value
 objects for shapes that represent domain concepts.
 
-Queries use bounded-context query repositories/read models, can read from several
-of them, and do not save, create, delete, or emit events. Mention the repositories
-in the query method's descriptive specification text rather than declaring a
-separate `reads` clause. Queries can return primitives, data objects, read models,
-or collections of these; application-service methods must not return entities.
-For example:
+Read models and query repositories are optional. A read model describes a query
+result shape; it need not be materialized or backed by a separate database.
+Projectors are optional event-driven projections. A query service may read through
+query repositories or aggregate repositories, including from the same relational
+tables as the write side. Query-service methods can return primitives, data
+objects, read models, or collections of these; application-service methods must
+not return entities. For example:
 
 ```thinai
 bounded context Ordering {
@@ -150,12 +148,18 @@ bounded context Ordering {
     query repository OrderSearchRepository for OrderSearch;
     event OrderUpdated;
     projector OrderSearchProjector for OrderSearch {
-        method onOrderUpdated(source: event OrderUpdated) updates OrderSearchRepository after commit;
+        method onOrderUpdated(source: event OrderUpdated) {
+            behavior "Project the changed order into [[OrderSearch]] via [[OrderSearchRepository]].";
+        }
     }
 
     application service OrderApplication for Order {
-        transactional method updateOrder(id: OrderId) loads OrderRepository by id invokes Order.Order.update saves OrderRepository;
-        transactional method createOrder() creates Order.OrderFactory.create saves OrderRepository;
+        method updateOrder(id: OrderId) {
+            invokes Order.Order.update;
+        }
+        method createOrder() {
+            invokes Order.OrderFactory.create;
+        }
     }
     query service OrderQueries {
         method getOrderStatus(id: OrderId) returns string {
@@ -168,10 +172,10 @@ bounded context Ordering {
 }
 ```
 
-These clauses describe the allowed application-service workflow; they do not
-specify storage technology. Mark aggregate writes `transactional` to declare the
-intended atomic boundary; validation cannot prove that the implementation
-actually commits atomically.
+Repository links in specification text are descriptive references, not storage
+instructions. A projector's `for` clause identifies its logical read-model
+target; behavior text can link an explicit query repository when that routing
+matters.
 
 ## Modules
 

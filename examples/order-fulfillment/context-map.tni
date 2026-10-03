@@ -1,5 +1,5 @@
-import "./context-catalog.tni" { Ordering as Orders, Shipping };
-import "./common-types.tni" { CommonTypes };
+import { Ordering as Orders, Shipping } from "./context-catalog.tni";
+import { CommonTypes } from "./common-types.tni";
 
 context map FulfillmentMap {
     customer Shipping {
