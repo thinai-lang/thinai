@@ -575,6 +575,51 @@ describe('LSP services', () => {
         expect(completion?.items.some(item => item.label === 'placeOrder')).toBe(false);
     });
 
+    test('completion reflects application-service invocation direction', async () => {
+        const text = `bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method place() { invokes Pricing; }
+                    identifier id: OrderId;
+                }
+                value object OrderId { raw: string; }
+            }
+            domain service Pricing { method calculate(); }
+            application service OrderApplication {
+                method placeOrder() {
+                    invokes Pricing;
+                    invokes Order;
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/application-invocation-direction-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const rootServiceOffset = text.indexOf('invokes Pricing') + 'invokes Pricing'.length;
+        const rootServiceCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(rootServiceOffset)
+        });
+        expect(rootServiceCompletion?.items.some(item => item.label === 'Pricing')).toBe(false);
+
+        const applicationServiceOffset = text.lastIndexOf('invokes Pricing') + 'invokes Pricing'.length;
+        const applicationServiceCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(applicationServiceOffset)
+        });
+        expect(applicationServiceCompletion?.items.some(item => item.label === 'Pricing')).toBe(true);
+
+        const applicationAggregateOffset = text.indexOf('invokes Order;') + 'invokes Order'.length;
+        const applicationAggregateCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(applicationAggregateOffset)
+        });
+        expect(applicationAggregateCompletion?.items.some(item => item.label === 'Order')).toBe(true);
+    });
+
     test('journey path completion offers commands but not query methods', async () => {
         const text = `bounded context Ordering {
             application service OrderApplication {

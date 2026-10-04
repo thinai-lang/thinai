@@ -16,6 +16,11 @@ dedent their content when a newline follows the opening quote.
 An ordinary application-service method is a command operation. It coordinates
 aggregate-root behavior; root and child entity methods own their respective
 state changes, and the aggregate root protects invariants across the aggregate.
+Application services may also invoke domain-service methods for domain policies
+or calculations, but should invoke the aggregate root directly for state changes.
+In Thinai, domain services cannot invoke aggregate-owned methods, and
+aggregate-owned methods cannot invoke domain services; this keeps both directions
+of the invocation boundary explicit.
 Domain events are emitted by aggregate-root behavior:
 
 ```thinai

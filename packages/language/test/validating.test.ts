@@ -409,7 +409,7 @@ describe('Validating', () => {
         ))).toBe(true);
     });
 
-    test('prevents application services from reaching aggregate behavior through a domain service', async () => {
+    test('prevents domain services from invoking aggregate-owned methods', async () => {
         const document = await parse(`
             bounded context Ordering {
                 aggregate Order {
@@ -426,8 +426,97 @@ describe('Validating', () => {
         `);
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'An application service must reach aggregate behavior directly through its root'
+            'A domain service must not invoke aggregate-owned methods'
         ))).toBe(true);
+    });
+
+    test('prevents domain-service call chains from reaching aggregate-owned methods', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { method place(); identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                }
+                domain service OrderPolicy {
+                    method apply() { invokes OrderCalculator.calculate; }
+                }
+                domain service OrderCalculator {
+                    method calculate() { invokes Order.Order.place; }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A domain service must not invoke aggregate-owned methods'
+        ))).toBe(true);
+    });
+
+    test('prevents aggregate-owned methods from invoking domain services', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() { invokes OrderPolicy.calculate; }
+                        identifier id: OrderId;
+                    }
+                    value object OrderId { raw: string; }
+                }
+                domain service OrderPolicy { method calculate(); }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Aggregate-owned methods must not invoke domain services'
+        ))).toBe(true);
+    });
+
+    test('prevents aggregate-owned call chains from reaching domain services', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() { invokes OrderPricing.calculate; }
+                        identifier id: OrderId;
+                    }
+                    value object OrderId { raw: string; }
+                    value object OrderPricing {
+                        method calculate() { invokes PricingPolicy.calculate; }
+                    }
+                }
+                domain service PricingPolicy { method calculate(); }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Aggregate-owned methods must not invoke domain services'
+        ))).toBe(true);
+    });
+
+    test('allows application services to invoke a pure domain service and aggregate root directly', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                data object PriceRequest { subtotal: number; }
+                data object PriceQuote { total: number; }
+                aggregate Order {
+                    root entity Order {
+                        method place(quote: PriceQuote) returns PriceQuote;
+                        identifier id: OrderId;
+                    }
+                    value object OrderId { raw: string; }
+                }
+                domain service PricingPolicy {
+                    method calculate(request: PriceRequest) returns PriceQuote;
+                }
+                application service OrderApplication {
+                    method placeOrder(request: PriceRequest) returns PriceQuote {
+                        invokes PricingPolicy.calculate;
+                        invokes Order.Order.place;
+                    }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
     });
 
     test('prevents a context-level domain service from invoking a child entity directly', async () => {

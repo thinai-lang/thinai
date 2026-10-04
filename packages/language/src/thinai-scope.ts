@@ -25,6 +25,7 @@ import {
     isBoundedContext,
     isBoundedContextPart,
     isDomainEvent,
+    isDomainService,
     isApplicationService,
     isDataObject,
     isEntity,
@@ -559,7 +560,17 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         const sourceApplication = isApplicationService(source.$container);
         const sourceQueryService = isQueryService(source.$container) ? source.$container : undefined;
+        const sourceAggregate = this.getOwningAggregateNode(source);
+        const reachable = this.getReachableMethods(target);
         if (sourceQueryService && (target.$container !== sourceQueryService || this.hasBehaviorSideEffects(target))) {
+            return false;
+        }
+        if (isDomainService(source.$container) && (this.getOwningAggregateNode(target) !== undefined ||
+            reachable.some(method => this.getOwningAggregateNode(method) !== undefined))) {
+            return false;
+        }
+        if (sourceAggregate && (isDomainService(target.$container) ||
+            reachable.some(method => isDomainService(method.$container)))) {
             return false;
         }
 
@@ -580,7 +591,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             this.getOwningAggregateNode(factoryRoot) !== undefined;
         // Application services may target aggregate-root methods or factory methods;
         // other method containers remain subject to the validator's structural rules.
-        if (sourceApplication && !targetIsRootMethod && !factoryReturnsRoot && !isApplicationService(target.$container)) {
+        if (sourceApplication && !targetIsRootMethod && !factoryReturnsRoot &&
+            !isApplicationService(target.$container) && !isDomainService(target.$container)) {
             return false;
         }
         if (!sourceApplication && isApplicationService(target.$container)) {
@@ -589,12 +601,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (targetAggregate && !targetIsRootMethod && !isEntity(source.$container)) {
             return false;
         }
-        const sourceAggregate = this.getOwningAggregateNode(source);
         if (sourceAggregate && targetAggregate && sourceAggregate !== targetAggregate) {
             return false;
         }
 
-        const reachable = this.getReachableMethods(target);
         if (!sourceApplication && !isApplicationService(target.$container) &&
             reachable.some(method => isApplicationService(method.$container))) {
             return false;

@@ -100,7 +100,12 @@ can link to other methods; constructors themselves are not link targets.
 
 Aggregate behavior belongs on the root entity, which protects aggregate
 invariants. Domain services are bounded-context or module peers of aggregates,
-not aggregate members. Behavior specifications are explained in
+not aggregate members. In Thinai, domain services express domain policies or
+calculations and do not invoke aggregate-owned methods; aggregate-owned methods
+do not invoke domain services. Application services coordinate both directly,
+so aggregate behavior remains explicit in the use-case invocation paths. A
+domain service may invoke another domain service only when the call chain does
+not reach aggregate-owned behavior. Behavior specifications are explained in
 [Events and behavior](events-and-behavior.md).
 
 Root and child entities can both own state and declare transitions, but each
@@ -114,8 +119,11 @@ Repositories and factories are declared beside their target aggregate at
 bounded-context or module scope. Application services orchestrate use cases and
 may coordinate multiple aggregates; query services provide read-only operations.
 Application-service methods may link to aggregate-root or factory methods with
-`invokes`. Thinai describes those domain relationships without prescribing loads,
-saves, deletes, or transaction mechanics. Each aggregate has one write repository.
+`invokes`, and may also link to domain-service methods for policies or
+calculations. When both are needed, the application service links to the domain
+service and aggregate root separately; the domain service does not call the
+aggregate. Thinai describes those domain relationships without prescribing
+loads, saves, deletes, or transaction mechanics. Each aggregate has one write repository.
 Use identity-free data objects for operation input/output shapes. They can contain
 primitives, collections, enums, value objects, and nested data objects, but not
 entities or read models; they have no identifiers or behavior. Prefer value

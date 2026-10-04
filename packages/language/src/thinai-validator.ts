@@ -51,6 +51,7 @@ import {
     isAggregate,
     isApplicationService,
     isDomainEvent,
+    isDomainService,
     isEntity,
     isEnumValue,
     isField,
@@ -683,16 +684,31 @@ export class ThinaiValidator {
             }
             const targetAggregate = this.getOwningAggregate(target);
             const targetIsAggregateRoot = targetAggregate !== undefined && this.isAggregateRootMethod(target, targetAggregate);
-            if (applicationService && !isApplicationService(target.$container) && (
-                reachable.some(candidate => isApplicationService(candidate.$container)) ||
-                (!targetIsAggregateRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined))
-            )) {
-                accept('error', 'An application service must reach aggregate behavior directly through its root, not through a domain-service call chain.', {
+            const sourceAggregate = this.getOwningAggregate(method);
+            if (isDomainService(method.$container) && (targetAggregate !== undefined || reachable.some(candidate =>
+                this.getOwningAggregate(candidate) !== undefined
+            ))) {
+                accept('error', 'A domain service must not invoke aggregate-owned methods; application services should invoke aggregate roots directly.', {
                     node: method,
                     property: 'invocations'
                 });
             }
-            const sourceAggregate = this.getOwningAggregate(method);
+            if (sourceAggregate && (isDomainService(target.$container) || reachable.some(candidate =>
+                isDomainService(candidate.$container)
+            ))) {
+                accept('error', 'Aggregate-owned methods must not invoke domain services, directly or transitively; application services coordinate both.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
+            if (applicationService && !isApplicationService(target.$container) &&
+                (reachable.some(candidate => isApplicationService(candidate.$container)) ||
+                    (!targetIsAggregateRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined)))) {
+                accept('error', 'Application services must invoke aggregate-root behavior directly, not through another method call chain.', {
+                    node: method,
+                    property: 'invocations'
+                });
+            }
             const targetFactory = isFactory(target.$container) ? target.$container : undefined;
             const factoryReturnType = target.returnType?.ref;
             const isAssociatedFactoryMethod = applicationService !== undefined && targetFactory !== undefined &&
