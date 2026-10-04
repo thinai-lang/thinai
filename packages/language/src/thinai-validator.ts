@@ -13,7 +13,6 @@ import type {
     ApplicationService,
     BoundedContext,
     BoundedContextPart,
-    Capability,
     ContextMap,
     ContextMapEndpoint,
     ContextRelationship,
@@ -94,7 +93,6 @@ export function registerValidationChecks(services: ThinaiServices): void {
         AstNode: validator.checkReferences,
         BoundedContext: validator.checkBoundedContext,
         BoundedContextPart: validator.checkBoundedContextPart,
-        Capability: validator.checkNamedDeclaration,
         CollectionType: validator.checkCollectionType,
         Constructor: validator.checkConstructor,
         ContextRelationship: validator.checkContextRelationship,
@@ -580,6 +578,12 @@ export class ThinaiValidator {
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
         const projector = projectorService !== undefined;
+        if (method.projects.length > 0 && !projector) {
+            accept('error', 'The projects clause is allowed only in projector methods.', {
+                node: method,
+                property: 'projects'
+            });
+        }
         if (queryService) {
             if (!method.returnPrimitive && !method.returnType && !method.returnCollection) {
                 accept('error', 'A query must declare a result type.', {
@@ -664,12 +668,11 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
-            const serviceAggregate = applicationService?.aggregate.ref;
-            const targetIsAssociatedRoot = serviceAggregate !== undefined &&
-                this.getOwningAggregate(target) === serviceAggregate && this.isAggregateRootMethod(target, serviceAggregate);
+            const targetAggregate = this.getOwningAggregate(target);
+            const targetIsAggregateRoot = targetAggregate !== undefined && this.isAggregateRootMethod(target, targetAggregate);
             if (applicationService && !isApplicationService(target.$container) && (
                 reachable.some(candidate => isApplicationService(candidate.$container)) ||
-                (!targetIsAssociatedRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined))
+                (!targetIsAggregateRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined))
             )) {
                 accept('error', 'An application service must reach aggregate behavior directly through its root, not through a domain-service call chain.', {
                     node: method,
@@ -677,11 +680,10 @@ export class ThinaiValidator {
                 });
             }
             const sourceAggregate = this.getOwningAggregate(method);
-            const targetAggregate = this.getOwningAggregate(target);
             const targetFactory = isFactory(target.$container) ? target.$container : undefined;
+            const factoryReturnType = target.returnType?.ref;
             const isAssociatedFactoryMethod = applicationService !== undefined && targetFactory !== undefined &&
-                targetFactory.aggregate.ref === applicationService.aggregate.ref &&
-                target.returnType?.ref === applicationService.aggregate.ref?.members.find(member => isEntity(member) && member.root);
+                isEntity(factoryReturnType) && factoryReturnType.root && this.getOwningAggregate(factoryReturnType) !== undefined;
             if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) &&
                 !isEntity(method.$container) && !isAssociatedFactoryMethod) {
                 accept('error', 'Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.', {
@@ -723,15 +725,8 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
-            if (applicationService && this.getOwningAggregate(target) && this.getOwningAggregate(target) !== applicationService.aggregate.ref) {
-                accept('error', 'An application service may invoke domain behavior only on its associated aggregate.', {
-                    node: method,
-                    property: 'invocations'
-                });
-            }
-            if (applicationService && this.getOwningAggregate(target) === applicationService.aggregate.ref &&
-                !this.isAggregateRootMethod(target, applicationService.aggregate.ref!) && !isAssociatedFactoryMethod) {
-                accept('error', 'An application service may invoke only its aggregate root or its associated factory methods.', {
+            if (applicationService && targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) && !isAssociatedFactoryMethod) {
+                accept('error', 'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.', {
                     node: method,
                     property: 'invocations'
                 });
@@ -788,12 +783,6 @@ export class ThinaiValidator {
 
     checkApplicationService(service: ApplicationService, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(service, accept);
-        if (service.aggregate.ref && this.isCrossContextOwned(service, service.aggregate.ref)) {
-            accept('error', 'An application service must be associated with an aggregate in its own bounded context.', {
-                node: service,
-                property: 'aggregate'
-            });
-        }
     }
 
     checkQueryService(service: QueryService, accept: ValidationAcceptor): void {
@@ -812,12 +801,6 @@ export class ThinaiValidator {
 
     checkProjector(projector: Projector, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(projector, accept);
-        if (projector.readModel.ref && getOwningContextName(projector.readModel.ref) !== getOwningContextName(projector)) {
-            accept('error', 'A projector and its read model must belong to the same bounded context.', {
-                node: projector,
-                property: 'readModel'
-            });
-        }
     }
 
     private checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
@@ -834,6 +817,20 @@ export class ThinaiValidator {
     }
 
     private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
+        if (method.projects.length === 0) {
+            accept('error', 'A projector method must declare at least one read model with projects.', {
+                node: method,
+                property: 'projects'
+            });
+        }
+        for (const project of method.projects) {
+            if (project.ref && getOwningContextName(project.ref) !== getOwningContextName(projector)) {
+                accept('error', 'A projector and its read models must belong to the same bounded context.', {
+                    node: method,
+                    property: 'projects'
+                });
+            }
+        }
         const eventParameters = method.parameters.filter(parameter => parameter.eventType);
         if (eventParameters.length !== 1 || method.parameters.length !== 1) {
             accept('error', 'A projector method must handle exactly one domain or integration event.', {
@@ -859,8 +856,8 @@ export class ThinaiValidator {
                     node: method,
                     property: 'behaviors'
                 });
-            } else if (repository.readModel.ref !== projector.readModel.ref) {
-                accept('error', 'A projector may reference only query repositories for its declared read model.', {
+            } else if (!method.projects.some(project => project.ref === repository.readModel.ref)) {
+                accept('error', 'A projector method may reference only query repositories for its declared projection targets.', {
                     node: method,
                     property: 'behaviors'
                 });
@@ -1112,7 +1109,7 @@ export class ThinaiValidator {
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
-            'Aggregate', 'ApplicationService', 'Capability', 'DomainEvent', 'DomainService',
+            'Aggregate', 'ApplicationService', 'DomainEvent', 'DomainService',
             'Factory', 'Flow', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
@@ -1290,16 +1287,10 @@ export class ThinaiValidator {
 
     checkFactory(factory: Factory, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(factory, accept);
-        if (factory.aggregate.ref && this.isCrossContextOwned(factory, factory.aggregate.ref)) {
-            accept('error', 'A factory must belong to an aggregate in its own bounded context.', {
-                node: factory,
-                property: 'aggregate'
-            });
-        }
-        const root = factory.aggregate.ref?.members.find(member => isEntity(member) && member.root);
         for (const method of factory.methods) {
-            if (!root || method.returnType?.ref !== root) {
-                accept('error', 'A factory method must return the root entity of its associated aggregate.', {
+            const result = method.returnType?.ref;
+            if (!isEntity(result) || !result.root || !this.getOwningAggregate(result) || this.isCrossContextOwned(factory, result)) {
+                accept('error', 'A factory method must return an aggregate-root entity in its own bounded context.', {
                     node: method,
                     property: 'returnType'
                 });
@@ -1360,7 +1351,7 @@ export class ThinaiValidator {
     }
 
     checkNamedDeclaration(
-        node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
+        node: Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity | EnumType |
         DataObject | Factory | Flow | IntegrationEvent | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
@@ -1368,7 +1359,7 @@ export class ThinaiValidator {
     }
 
     private checkDuplicateDeclaration(
-        node: Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity | EnumType |
+        node: Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity | EnumType |
         DataObject | Factory | Flow | IntegrationEvent | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {

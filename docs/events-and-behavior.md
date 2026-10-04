@@ -29,30 +29,31 @@ bounded context Ordering {
             status: OrderStatus;
         }
         enum OrderStatus { Draft, Placed }
-        repository OrderRepository for Order;
-        factory OrderFactory for Order operations {
-            method createOrder() returns Order;
-        }
+    }
+    repository OrderRepository for Order;
+    factory OrderFactory {
+        method createOrder() returns Order.Order;
     }
 
     event OrderPlaced;
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(orderId: OrderId, items: List<OrderLine>) {
             precondition "The order contains at least one item.";
             invokes Order.Order.place;
             behavior "Place the order while its status is [[Order.Order.status]].";
         }
         method createOrder() {
-            invokes Order.OrderFactory.createOrder;
+            invokes OrderFactory.createOrder;
         }
     }
 }
 ```
 
-Factory operations are methods that create the aggregate root. A factory method
-returns that root entity, and behavior specifications link to the method rather
-than to a constructor or the factory declaration itself.
+Factories and repositories are declared beside aggregates in the bounded
+context. Factory methods create and return the aggregate root; behavior
+specifications link to the method rather than to a constructor or the factory
+declaration itself.
 
 Aggregate-root methods may emit multiple domain events. Emissions are listed in
 order. Application-service methods coordinate aggregate-root behavior, and may
@@ -82,9 +83,10 @@ services or change aggregates:
 bounded context Ordering {
     event OrderPlaced data { orderId: string; }
     read model OrderSummary { orderId: string; status: string; }
-    query repository OrderSummaryRepository for OrderSummary;
-    projector OrderSummaryProjector for OrderSummary {
+    query repository OrderSummaryRepository serves OrderSummary;
+    projector OrderSummaryProjector {
         method onOrderPlaced(source: event OrderPlaced) {
+            projects OrderSummary;
             behavior "Copy [[OrderPlaced.orderId]] into [[OrderSummary.orderId]] via [[OrderSummaryRepository]].";
         }
     }
@@ -104,7 +106,7 @@ bounded context Ordering {
         }
     }
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method publishOrderPlaced(source: event OrderPlaced) {
             emits Contracts.OrderPlacedV1;
             behavior "Map the internal event to the public contract.";
@@ -119,7 +121,7 @@ method can receive an imported integration event and invoke a local command
 method:
 
 ```thinai
-application service ShipmentApplication for Shipment {
+application service ShipmentApplication {
     method createShipment(shipmentId: ShipmentId) {
         invokes Shipment.Shipment.start;
     }

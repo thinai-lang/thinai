@@ -62,7 +62,7 @@ ContextMapEndpoint:
     ('{' 'integrationPatterns' ':' '[' integrationPatterns+=StringLiteral (',' integrationPatterns+=StringLiteral)* ']' ';'? '}')?;
 
 ApplicationService:
-    'application' 'service' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID] '{'
+    'application' 'service' name=ID '{'
         methods+=Method*
     '}' ';'?;
 
@@ -70,7 +70,6 @@ ContextMember:
     ApplicationService
     | QueryService
     | Projector
-    | Capability
     | Aggregate
     | DomainService
     | Repository
@@ -107,7 +106,6 @@ ModuleMember:
     ApplicationService
     | QueryService
     | Projector
-    | Capability
     | Aggregate
     | DomainService
     | Repository
@@ -122,21 +120,15 @@ ModuleMember:
 Subdomain:
     'subdomain' name=ID ('kind' kind=SubdomainKind)? ';'?;
 
-Capability:
-    'capability' name=ID ';'?;
-
 Aggregate:
     'aggregate' name=ID '{'
-        (members+=AggregateMember | invariants+=Invariant | methods+=Method)*
+        (members+=AggregateMember | invariants+=Invariant)*
     '}' ';'?;
 
 AggregateMember:
     Entity
     | ValueObject
-    | EnumType
-    | DomainService
-    | Repository
-    | Factory;
+    | EnumType;
 
 Entity:
     (root?='root')? 'entity' name=ID ('extends' (basePath+=[NamedDeclaration:ID] '.')* base=[Entity:ID])?
@@ -184,7 +176,7 @@ DataObject:
     'data' 'object' name=ID '{' fields+=Field* '}' ';'?;
 
 Projector:
-    'projector' name=ID 'for' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] '{' methods+=Method* '}' ';'?;
+    'projector' name=ID '{' methods+=Method* '}' ';'?;
 
 DomainService:
     'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
@@ -194,6 +186,7 @@ Method:
     ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
         invocations+=MethodInvocation |
+        'projects' projects+=[ReadModel:QualifiedName] (',' projects+=[ReadModel:QualifiedName])* ';'? |
         'emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])* ';'?)* '}')? ';'?;
 
 MethodInvocation:
@@ -214,14 +207,14 @@ Repository:
     'repository' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID] ';'?;
 
 QueryRepository:
-    'query' 'repository' name=ID 'for' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ';'?;
+    'query' 'repository' name=ID 'serves' readModel=[ReadModel:QualifiedName] ';'?;
 
 QueryService:
     'query' 'service' name=ID '{' methods+=Method* '}' ';'?;
 
 Factory:
-    'factory' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID]
-    ('operations' '{' methods+=Method* '}')? ';'?;
+    'factory' name=ID
+    ('{' methods+=Method* '}')? ';'?;
 
 DomainEvent:
     'event' name=ID
@@ -235,7 +228,7 @@ IntegrationEvent:
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
-type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity |
+type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity |
     DataObject | EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector | SharedKernel |
     QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 

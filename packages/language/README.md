@@ -24,8 +24,8 @@ bounded context Ordering realizes OrderManagement {
         }
         value object OrderId { raw: string; }
         enum OrderStatus { Draft, Placed }
-        repository OrderRepository for Order;
     }
+    repository OrderRepository for Order;
     event OrderPlaced;
 }
 ```
@@ -44,7 +44,7 @@ part of bounded context Ordering {
         status: OrderStatus;
     }
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
             invokes Order.Order.place;
             behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]].";
@@ -67,13 +67,14 @@ part of bounded context Ordering {
 
 An entity method may transition its own enum state; the aggregate root
 coordinates child-entity changes and protects invariants. Only aggregate-root
-behavior emits domain events. Ordinary application-service
-methods are aggregate-scoped commands; methods with an event-typed parameter are
-event-triggered. Bounded-context-scoped query services model read-only
-operations. Commands
-that methods are aggregate-scoped and may link to aggregate-root or factory
-methods with `invokes`. Repository loading/saving and transaction mechanics are
-implementation details. Integration-event declarations define public schemas;
+behavior emits domain events. Aggregate behavior is declared on the root entity;
+domain services, repositories, and factories are bounded-context or module peers
+of aggregates. Application services orchestrate use cases and may coordinate
+multiple aggregates; methods with an event-typed parameter are event-triggered.
+Bounded-context-scoped query services model read-only operations. Application
+service methods may link to aggregate-root or factory methods with `invokes`.
+Repository loading/saving and transaction mechanics are implementation details.
+Integration-event declarations define public schemas;
 the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
 
@@ -85,13 +86,13 @@ tables as the write side. A projector describes an event-driven projection.
 Queries may return primitives, data objects, read models, or collections. Data
 objects are identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.
-Multiple application services may target the same aggregate. A `flow` can
+Multiple application services may invoke the same aggregate. A `flow` can
 sequence commands and queries within one bounded context.
 
 An incoming integration event can invoke a local command method:
 
 ```thinai
-application service ShipmentApplication for Shipment {
+application service ShipmentApplication {
     method createShipment(shipmentId: ShipmentId) {
         invokes Shipment.Shipment.start;
     }

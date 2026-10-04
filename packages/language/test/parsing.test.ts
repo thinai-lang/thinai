@@ -23,7 +23,6 @@ describe('Parsing tests', () => {
             subdomain OrderManagement kind core;
 
             bounded context Ordering realizes OrderManagement {
-                capability OrderFulfillment;
                 aggregate Order {
                     root entity Order {
                         method place() {
@@ -36,7 +35,7 @@ describe('Parsing tests', () => {
                     }
                 }
 
-                application service OrderApplication for Order {
+                application service OrderApplication {
                     method placeOrder(items: string) {
                         invokes Order.Order.place;
                     }
@@ -61,7 +60,7 @@ describe('Parsing tests', () => {
             'Subdomain',
             'BoundedContext'
         ]);
-        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(7);
+        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(6);
 
         const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
             members?: Array<{ $type: string; elements?: Array<{ actor?: string }> }>;
@@ -100,6 +99,7 @@ describe('Parsing tests', () => {
                         method ensureOwner() {
                             invariant "An order has a valid owner.";
                         }
+                        method addLines(lines: List<OrderLine>) returns Order.Order;
                         identifier id: OrderId;
                     }
                     value object OrderId {
@@ -107,14 +107,13 @@ describe('Parsing tests', () => {
                         raw: string;
                     }
                     invariant "Placed orders retain [[Order.ensureOwner]]";
-                    method addLines(lines: List<OrderLine>) returns Order;
                 }
                 domain service Pricing {
                     method calculate(lines: List<OrderLine>, currency?: Currency) returns Money {
                         behavior "Calculate a total for [[Order.Order.ensureOwner]]";
                     }
                 }
-                application service OrderApplication for Order {
+                application service OrderApplication {
                     method placeOrder(description?: string) {
                         precondition "The order can be placed";
                         behavior "Validate with [[Order.Order.ensureOwner]] then place";
@@ -156,8 +155,8 @@ describe('Parsing tests', () => {
     test('preserves multiline behavior text and links in quoted strings', async () => {
         const document = await parse([
             'bounded context Ordering {',
-            '    aggregate Order { method ensureOwner(); }',
-            '    application service OrderApplication for Order {',
+            '    aggregate Order { root entity Order { method ensureOwner(); identifier id: OrderId; } value object OrderId { raw: string; } }',
+            '    application service OrderApplication {',
             '    method placeOrder() {',
             '        behavior "Place the order',
             'after validation";',
@@ -196,7 +195,7 @@ describe('Parsing tests', () => {
 
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { application service Runner for Run { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity Run { identifier id: RunId; } value object RunId { raw: string; } } }'
+            'bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity Run { identifier id: RunId; } value object RunId { raw: string; } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();

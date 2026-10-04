@@ -29,7 +29,7 @@ describe('LSP services', () => {
                     }
                     value object OrderId { raw: string; }
                 }
-                application service OrderApplication for Order {
+                application service OrderApplication {
                     method placeOrder() {
                         behavior "Place with [[Order.Order.place]] while status is [[Order.Order.status]]";
                     }
@@ -80,7 +80,7 @@ describe('LSP services', () => {
         );
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { application service ShipmentApplication for Shipment { method onOrderPlaced(source: event OrderPlaced) {} } }'
+            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: event OrderPlaced) {} } }'
         );
         documents = [target, source];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });

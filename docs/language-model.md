@@ -24,12 +24,12 @@ bounded context Ordering realizes OrderManagement {
             raw: string;
         }
         enum OrderStatus { Draft, Placed }
-        repository OrderRepository for Order;
     }
+    repository OrderRepository for Order;
 
     event OrderPlaced;
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(id: OrderId) {
             invokes Order.Order.place;
         }
@@ -124,7 +124,7 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(id: OrderId) {
             invokes Order.Order.place;
         }

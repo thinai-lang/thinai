@@ -2,7 +2,7 @@ import "./context-catalog.tni";
 import "./ordering.tni";
 
 part of bounded context Ordering {
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
             precondition "The order contains at least one item.";
             invokes Order.Order.place;
@@ -16,14 +16,14 @@ part of bounded context Ordering {
         }
     }
 
-    application service OrderItemFulfillment for Order {
+    application service OrderItemFulfillment {
         method fulfillItem(orderId: OrderId, itemId: OrderItemId) {
             invokes Order.Order.fulfillItem;
             behavior "Ship the selected child item through the aggregate root.";
         }
     }
 
-    application service OrderMaintenance for Order {
+    application service OrderMaintenance {
         method deleteDraftOrder(orderId: OrderId) {
             invokes Order.Order.validateCanDelete;
             behavior "Remove the order only after its root validates the deletion rule.";
@@ -47,22 +47,24 @@ part of bounded context Ordering {
         customerId: CustomerId;
         status: OrderStatus;
     }
-    query repository OrderSummaryRepository for OrderSummary;
+    query repository OrderSummaryRepository serves OrderSummary;
 
     read model CustomerSummary {
         customerId: CustomerId;
         name: string;
     }
-    query repository CustomerSummaryRepository for CustomerSummary;
+    query repository CustomerSummaryRepository serves CustomerSummary;
 
-    projector OrderSummaryProjector for OrderSummary {
+    projector OrderSummaryProjector {
         method onOrderPlaced(source: event OrderPlaced) {
+            projects OrderSummary;
             behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]] in [[OrderSummaryRepository]].";
         }
     }
 
-    projector CustomerSummaryProjector for CustomerSummary {
+    projector CustomerSummaryProjector {
         method onCustomerRegistered(source: event CustomerRegistered) {
+            projects CustomerSummary;
             behavior "Project [[CustomerRegistered.customerId]] and [[CustomerRegistered.name]] into [[CustomerSummary.customerId]] and [[CustomerSummary.name]] in [[CustomerSummaryRepository]].";
         }
     }

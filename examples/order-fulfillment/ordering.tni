@@ -4,8 +4,6 @@ import { FulfillmentMap } from "./context-map.tni";
 
 part of bounded context Ordering {
 
-    capability OrderFulfillment;
-
     aggregate Order {
         root entity Order {
             constructor(id: OrderId, owner: string) {
@@ -27,6 +25,9 @@ part of bounded context Ordering {
             }
             method validateCanDelete() {
                 precondition "Only a draft order can be deleted.";
+            }
+            method addLine(line: OrderLine) {
+                behavior "Add the line quantity to the order's lines.";
             }
 
             identifier id: OrderId;
@@ -73,22 +74,17 @@ part of bounded context Ordering {
         }
         enum OrderItemStatus { Open, Shipped }
 
-        domain service OrderPricing {
-            method calculateTotal(amount: number, adjustments?: List<number>) returns number {
-                precondition "The amount is non-negative.";
-                behavior "Validate the order with [[Order.ensureOwner]], then calculate its total.";
-                postcondition "The returned total includes all adjustments.";
-            }
-        }
-
         invariant "Every order line has a positive quantity.";
-        method addLine(line: OrderLine) {
-            behavior "Add the line quantity to the order's lines.";
-        }
-
-        repository OrderRepository for Order;
-        factory OrderFactory for Order;
     }
+    domain service OrderPricing {
+        method calculateTotal(amount: number, adjustments?: List<number>) returns number {
+            precondition "The amount is non-negative.";
+            behavior "Validate the order with [[Order.ensureOwner]], then calculate its total.";
+            postcondition "The returned total includes all adjustments.";
+        }
+    }
+    repository OrderRepository for Order;
+    factory OrderFactory;
 
     aggregate Customer {
         root entity Customer {
@@ -99,15 +95,15 @@ part of bounded context Ordering {
             name: string;
         }
         value object CustomerId { raw: string; }
-        repository CustomerRepository for Customer;
-        factory CustomerFactory for Customer operations {
-            method createCustomer(id: CustomerId, name: string) returns Customer;
-        }
+    }
+    repository CustomerRepository for Customer;
+    factory CustomerFactory {
+            method createCustomer(id: CustomerId, name: string) returns Customer.Customer;
     }
 
-    application service CustomerRegistration for Customer {
+    application service CustomerRegistration {
         method registerCustomer(id: CustomerId, name: string) {
-            invokes Customer.CustomerFactory.createCustomer;
+            invokes CustomerFactory.createCustomer;
             invokes Customer.Customer.register;
         }
     }

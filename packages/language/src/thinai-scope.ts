@@ -48,7 +48,6 @@ const exportedTypes = new Set([
     'ApplicationService',
     'BoundedContext',
     'ContextMap',
-    'Capability',
     'DomainEvent',
     'DomainService',
     'DataObject',

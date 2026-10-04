@@ -44,9 +44,9 @@ describe('Linking tests', () => {
                             raw: string;
                         }
                         enum OrderStatus { Draft, Placed }
-                        repository OrderRepository for Order;
                 }
-                application service OrderApplication for Order {
+                    repository OrderRepository for Order;
+                application service OrderApplication {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place;
                     }
@@ -76,14 +76,14 @@ describe('Linking tests', () => {
                 aggregate Shipment {
                     root entity Shipment { method start(); identifier id: ShipmentId; }
                     value object ShipmentId { raw: string; }
-                    repository ShipmentRepository for Shipment;
-                    factory ShipmentFactory for Shipment operations {
-                        method createShipment() returns Shipment;
-                    }
                 }
-                application service ShipmentApplication for Shipment {
+                repository ShipmentRepository for Shipment;
+                factory ShipmentFactory {
+                    method createShipment() returns Shipment.Shipment;
+                    }
+                application service ShipmentApplication {
                     method createShipment() {
-                        invokes Shipment.ShipmentFactory.createShipment;
+                        invokes ShipmentFactory.createShipment;
                     }
                 }
             }`
@@ -98,7 +98,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping-flow.tni'),
             `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
-                  application service ShipmentEventHandler for Shipment {
+                  application service ShipmentEventHandler {
                         method onOrderPlaced(source: event Ordering.OrderPlacedV1) {
                             invokes ShipmentApplication.createShipment;
                            behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event.";
@@ -142,7 +142,7 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { application service ShipmentApplication for Shipment { method onOrderPlaced(source: event OrderPlaced) {} } }'
+            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: event OrderPlaced) {} } }'
         );
         documents = [context, consumer];
 
@@ -170,7 +170,7 @@ describe('Linking tests', () => {
                             raw: string;
                         }
                     }
-                    application service ShipmentApplication for Shipment {
+                    application service ShipmentApplication {
                         method createShipment() {}
                         method onOrderPlaced(source: event Ordering.OrderPlaced) { invokes createShipment; }
                     }
@@ -194,7 +194,7 @@ describe('Linking tests', () => {
             `import "./ordering.tni";
              bounded context Shipping {
                  aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
-                 application service ShipmentApplication for Shipment {
+                 application service ShipmentApplication {
                      method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1) {}
                  }
              }`
@@ -224,7 +224,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
-                 application service ShipmentApplication for Shipment {
+                 application service ShipmentApplication {
                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
                  }
              }`
@@ -255,7 +255,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
-                 application service ShipmentApplication for Shipment {
+                 application service ShipmentApplication {
                      method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
                  }
              }`
@@ -285,7 +285,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
-                 application service OrderApplication for Order {
+                 application service OrderApplication {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
                  }
              }`
@@ -315,7 +315,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
-                 application service OrderApplication for Order {
+                 application service OrderApplication {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
                  }
              }`
@@ -345,7 +345,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
-                 application service OrderApplication for Order {
+                 application service OrderApplication {
                      method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
                  }
              }`
@@ -507,6 +507,42 @@ describe('Linking tests', () => {
         }
     });
 
+    test('navigates multiple method-level projector targets', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-target-projector.tni'),
+            `bounded context Commerce {
+                read model OrderSummary { orderId: string; }
+                read model CustomerSummary { customerId: string; }
+                event EntityChanged;
+                projector SearchProjection {
+                    method onEntityChanged(source: event EntityChanged) {
+                        projects OrderSummary, CustomerSummary;
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        for (const name of ['OrderSummary', 'CustomerSummary']) {
+            const source = text.indexOf(name, text.indexOf('projects '));
+            const target = text.indexOf(`${name} {`);
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(source)
+            });
+            expect(definitions).toHaveLength(1);
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(source),
+                end: document.textDocument.positionAt(source + name.length)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(document.textDocument.positionAt(target));
+        }
+    });
+
     test('navigates transition fields and enum values', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/transition-navigation.tni'),
@@ -586,9 +622,9 @@ describe('Linking tests', () => {
                     value object OrderId {
                         raw: string;
                     }
-                    repository OrderRepository for Order;
                 }
-                application service OrderApplication for Order {
+                repository OrderRepository for Order;
+                application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.ensureOwner;
                          behavior "Check [[Order.Order.ensureOwner]] before placing.";
@@ -643,15 +679,15 @@ describe('Linking tests', () => {
                         status: string;
                     }
                     value object OrderId { raw: string; }
-                    factory OrderFactory for Order operations {
-                        method createOrder(id: OrderId) returns Order;
-                    }
-                    repository OrderRepository for Order;
                 }
-                application service OrderApplication for Order {
+                factory OrderFactory {
+                    method createOrder(id: OrderId) returns Order.Order;
+                    }
+                repository OrderRepository for Order;
+                application service OrderApplication {
                     method placeOrder() {
-                        invokes Order.OrderFactory.createOrder;
-                        behavior "Create through [[Order.OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
+                        invokes OrderFactory.createOrder;
+                        behavior "Create through [[OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
                     }
                 }
             }`
@@ -674,7 +710,7 @@ describe('Linking tests', () => {
         }
         const aggregate = context.members.find(isAggregate);
         const root = aggregate?.members.find(isEntity);
-        const factory = aggregate?.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
+        const factory = context.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
         const service = context.members.find(member => member.$type === 'ApplicationService') as {
             methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: AstNode }; targets: Array<{ ref?: AstNode }> }> } }> }>;
         } | undefined;
@@ -796,8 +832,8 @@ describe('Linking tests', () => {
                     root entity Order { identifier id: OrderId; }
                     value object OrderId { raw: string; }
                     enum OrderStatus { Draft, Placed }
-                    repository OrderRepository for Order;
                 }
+                repository OrderRepository for Order;
                 module Contracts {
                     value object DeliveryCode { raw: string; }
                 }
@@ -807,13 +843,13 @@ describe('Linking tests', () => {
                     root entity Order { method fulfillItem(); identifier id: OrderId; }
                     value object OrderId { raw: string; }
                     enum OrderStatus { Draft, Placed }
-                    repository OrderRepository for Order;
                 }
+                repository OrderRepository for Order;
                 aggregate Invoice {
                     root entity Invoice { method inspect(); identifier id: InvoiceId; orderId: Order.OrderId; }
                     value object InvoiceId { raw: string; }
-                    repository InvoiceRepository for Invoice;
                 }
+                repository InvoiceRepository for Invoice;
                 module Contracts {
                     exposes DeliveryCode;
                     value object DeliveryCode { raw: string; }
@@ -821,14 +857,14 @@ describe('Linking tests', () => {
                 module Api depends on Contracts {
                     value object ApiCode { code: Contracts.DeliveryCode; }
                 }
-                application service InvoiceApplication for Invoice {
+                application service InvoiceApplication {
                     method inspect(id: InvoiceId, code: Contracts.DeliveryCode) {
                         invokes Invoice.Invoice.inspect;
                         behavior "Use [[Order.OrderId.raw]] and [[Contracts.DeliveryCode.raw]].";
-                        behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.Order.OrderRepository]].";
+                         behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.OrderRepository]].";
                     }
                 }
-                application service OrderApplication for Order {
+                application service OrderApplication {
                     method fulfillOrder() {
                         invokes Order.Order.fulfillItem;
                     }
@@ -883,7 +919,7 @@ describe('Linking tests', () => {
             'BoundedContext', 'Aggregate',
             'BoundedContext', 'Aggregate', 'Entity',
             'BoundedContext', 'Aggregate', 'EnumType', 'EnumValue',
-            'BoundedContext', 'Aggregate', 'Repository'
+            'BoundedContext', 'Repository'
         ]);
         expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
 
@@ -1013,7 +1049,7 @@ describe('Linking tests', () => {
             `import "./order-context.tni";
              import "./order-aggregate.tni";
              part of bounded context Ordering {
-                 application service OrderApplication for Order {
+                 application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.place;
                      }
@@ -1053,11 +1089,11 @@ describe('Linking tests', () => {
                 aggregate Order {
                     root entity Order { identifier id: OrderId; }
                     value object OrderId { raw: string; }
-                    value object Other { value: string; }
-                    factory OrderFactory for Order operations {
-                        method createOrder() returns Other;
-                    }
+                    value object Other { raw: string; }
                 }
+                factory OrderFactory {
+                    method createOrder() returns Other;
+                    }
             }`
         );
         documents = [document];
@@ -1065,7 +1101,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes('A factory method must return the root entity of its associated aggregate.')
+            String(diagnostic.message).includes('A factory method must return an aggregate-root entity in its own bounded context.')
         )).toBe(true);
     });
 
@@ -1118,7 +1154,7 @@ describe('Linking tests', () => {
                         raw: string;
                     }
                 }
-                application service OrderApplication for Order {
+                application service OrderApplication {
                     method placeOrder() {
                         behavior "Check [[Order.Order.missingMethod]] before placing.";
                     }

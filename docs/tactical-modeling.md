@@ -87,9 +87,9 @@ bounded context Ordering {
         value object OrderId {
             raw: string;
         }
-        factory OrderFactory for Order operations {
-            method createOrder() returns Order;
-        }
+    }
+    factory OrderFactory {
+        method createOrder() returns Order.Order;
     }
 }
 ```
@@ -98,8 +98,9 @@ Factory operations are methods that return the root entity of the aggregate
 named by `for`. Behavior specifications can link to these methods, just as they
 can link to other methods; constructors themselves are not link targets.
 
-Aggregates can also declare methods and invariants in their body. Domain
-services group methods. Behavior specifications are explained in
+Aggregate behavior belongs on the root entity, which protects aggregate
+invariants. Domain services are bounded-context or module peers of aggregates,
+not aggregate members. Behavior specifications are explained in
 [Events and behavior](events-and-behavior.md).
 
 Root and child entities can both own state and declare transitions, but each
@@ -109,10 +110,9 @@ child entities so the aggregate's invariants remain protected. An enum state
 field may declare an initial value with `initial State`; when present, every enum
 state must be reachable through the entity's declared transition graph.
 
-Other declarations include capabilities, repositories, and factories.
-Write repositories and factories refer to their target aggregate. Application-service
-methods are aggregate-scoped commands; command/query separation is provided by
-aggregate-scoped application services and bounded-context-scoped query services.
+Repositories and factories are declared beside their target aggregate at
+bounded-context or module scope. Application services orchestrate use cases and
+may coordinate multiple aggregates; query services provide read-only operations.
 Application-service methods may link to aggregate-root or factory methods with
 `invokes`. Thinai describes those domain relationships without prescribing loads,
 saves, deletes, or transaction mechanics. Each aggregate has one write repository.
@@ -139,26 +139,27 @@ bounded context Ordering {
         value object OrderId {
             raw: string;
         }
-        repository OrderRepository for Order;
-        factory OrderFactory for Order operations {
-            method create() returns Order;
-        }
+    }
+    repository OrderRepository for Order;
+    factory OrderFactory {
+        method create() returns Order.Order;
     }
     read model OrderSearch { orderNumber: string; status: string; }
-    query repository OrderSearchRepository for OrderSearch;
+    query repository OrderSearchRepository serves OrderSearch;
     event OrderUpdated;
-    projector OrderSearchProjector for OrderSearch {
+    projector OrderSearchProjector {
         method onOrderUpdated(source: event OrderUpdated) {
+            projects OrderSearch;
             behavior "Project the changed order into [[OrderSearch]] via [[OrderSearchRepository]].";
         }
     }
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method updateOrder(id: OrderId) {
             invokes Order.Order.update;
         }
         method createOrder() {
-            invokes Order.OrderFactory.create;
+            invokes OrderFactory.create;
         }
     }
     query service OrderQueries {
@@ -173,9 +174,9 @@ bounded context Ordering {
 ```
 
 Repository links in specification text are descriptive references, not storage
-instructions. A projector's `for` clause identifies its logical read-model
-target; behavior text can link an explicit query repository when that routing
-matters.
+instructions. Each projector method declares one or more logical targets with
+`projects ReadModel;`; behavior text can link a specific query repository when
+that routing matters.
 
 ## Modules
 

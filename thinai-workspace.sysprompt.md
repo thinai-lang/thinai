@@ -32,14 +32,13 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
   }
   ```
 
-- Constructors have typed parameters and no explicit return type. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses are `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, and `emits`. `invokes` names a method; `emits` names an event. Both are descriptive navigable relationships, not required workflows. A `transition` belongs in an entity method and must target that entity's own enum field. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or associated factory methods; root behavior coordinates changes to child entities.
+- Constructors have typed parameters and no explicit return type. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses are `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, and `emits`. `invokes` names a method; `emits` names an event. Both are descriptive navigable relationships, not required workflows. A `transition` belongs in an entity method and must target that entity's own enum field. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or factory methods; root behavior coordinates changes to child entities.
 - Fields and parameters may be optional with `?`; collections are `List<T>`, `Set<T>`, and `Map<K, V>`, and collection element/value types may themselves be collections. An initial enum state is optional; when used, every enum value must be reachable from it through the entity's declared transitions.
-- Domain services use `domain service Name { method ... }`. Aggregates can also declare methods in their body.
-- A factory is aggregate-scoped and its methods are declared inside `factory Name for Aggregate operations { ... }`; an application-service method can link to a factory method with `invokes` and does not need a separate creation clause.
+- Domain services use `domain service Name { method ... }` at bounded-context or module scope, not inside an aggregate. Aggregate behavior is declared on its root entity; aggregate-wide invariants may be declared on the aggregate.
+- Repositories are declared at bounded-context or module scope and keep an explicit `for Aggregate` association. Factories are declared at bounded-context or module scope as `factory Name { method ... }`; each factory method returns the aggregate root it creates. An application-service method can link to a factory method with `invokes` and does not need a separate creation clause.
 - Modules use `module Name [depends on OtherModule] { ... }`; `exposes Declaration;` entries go inside the module before its declarations. Modules may be nested in a bounded context or shared kernel, and dependencies/exposures apply only to declarations in that owning context or kernel.
-- Application services use `application service Name for Aggregate { method ... }` and handle aggregate commands. Use `query service Name { method ... }` for bounded-context read operations. Methods with an event-typed parameter react to that event on an application service or projector.
+- Application services use `application service Name { method ... }` to orchestrate use cases and may coordinate multiple aggregates. Use `query service Name { method ... }` for bounded-context read operations. Methods with an event-typed parameter react to that event on an application service or projector.
 - A query method must declare a result. Query services may read through query or aggregate repositories, including when both sides use the same physical database tables, and may link to those repositories in descriptive text. Read models, query repositories, and projectors are optional. Projectors describe event-driven projections and do not call application services or change aggregates.
-- Capabilities are declared at context or module scope, for example `capability OrderFulfillment;`.
 - Actors are declared inline in flows only. Flow steps use the singular keyword `invoke Method`; do not write `invokes` in a flow. Flows may invoke same-context application-service commands and query-service methods. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with` and one semicolon at the end. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to appear earlier or at all in the flow.
 - Fields and method parameters may be optional with `?`, as in `discount?: number`.
 - Built-in collections are `List<T>`, `Set<T>`, and `Map<K, V>`. Do not invent user-defined generic types.
@@ -64,15 +63,16 @@ bounded context Ordering {
             raw: string;
         }
         enum OrderStatus { Draft, Placed }
-        repository OrderRepository for Order;
-        factory OrderFactory for Order operations {
-            method createOrder() returns Order;
-        }
+    }
+    repository OrderRepository for Order;
+    factory OrderFactory {
+        method createOrder() returns Order.Order;
     }
     read model OrderReadModel { orderId: string; status: string; }
-    query repository OrderReadModelRepository for OrderReadModel;
-    projector OrderReadModelProjector for OrderReadModel {
+    query repository OrderReadModelRepository serves OrderReadModel;
+    projector OrderReadModelProjector {
         method onOrderPlaced(source: event OrderPlaced) {
+            projects OrderReadModel;
             behavior "Update the order summary from the event via [[OrderReadModelRepository]].";
         }
     }
@@ -80,14 +80,14 @@ bounded context Ordering {
     event OrderPlaced;
     integration event OrderPlacedV1;
 
-    application service OrderApplication for Order {
+    application service OrderApplication {
         method placeOrder(id: OrderId) {
             precondition "The order can be placed.";
             invokes Order.Order.place;
             behavior "Place the order through its aggregate root.";
         }
         method createOrder() {
-            invokes Order.OrderFactory.createOrder;
+            invokes OrderFactory.createOrder;
         }
         method publishOrderPlaced(source: event OrderPlaced) {
             emits OrderPlacedV1;
@@ -139,8 +139,8 @@ Before returning a model, ensure that:
 2. Every entity has exactly one identifier field, typed by a value object declared in its aggregate.
 3. Every referenced aggregate, event, method, and type is declared and visible; actors are declared inline in their flows.
 4. Imports select the intended bounded contexts or shared kernels; do not rely on workspace-global declarations.
-5. Application services are associated with one aggregate and may describe calls to its root or factory methods using optional `invokes` body clauses. Entity methods may transition their own enum fields; only aggregate-root methods emit DomainEvents. IntegrationEvents are emitted only by application-service methods handling a local DomainEvent. Domain behavior never invokes application-service methods.
-6. Each aggregate has one write repository. Read models, query repositories, and projectors are optional; queries may read through query or aggregate repositories, even when both sides use the same physical tables. Projectors use `for ReadModel` to identify their logical target; describe a specific query-repository destination in `behavior` only when it matters. Query-service methods must declare a result and never emit events or invoke aggregate methods. Do not add `transactional`, `loads`, `saves`, `deletes`, `creates`, `updates`, or `after commit` clauses.
+5. Application services orchestrate use cases and may coordinate multiple aggregates; they may invoke aggregate-root or factory methods using optional `invokes` body clauses. Each factory method returns the aggregate root it creates, and one factory may contain methods for different roots. Entity methods may transition their own enum fields; only aggregate-root methods emit DomainEvents. IntegrationEvents are emitted only by application-service methods handling a local DomainEvent. Domain behavior never invokes application-service methods.
+6. Each aggregate has one write repository. Read models, query repositories, and projectors are optional; queries may read through query or aggregate repositories, even when both sides use the same physical tables. Each projector method declares one or more logical targets with `projects ReadModelA, ReadModelB;`; describe a specific query-repository destination in `behavior` only when it matters. Query-service methods must declare a result and never emit events or invoke aggregate methods. Do not add `transactional`, `loads`, `saves`, `deletes`, `creates`, `updates`, or `after commit` clauses.
 7. Refer to another aggregate by its identifier, not by its entity. Keep entity inheritance within the same aggregate, and use `initial` states only when all states are reachable through declared transitions.
 8. Use a user-started `flow` to sequence command and query-service methods within one bounded context. The flow does not imply a combined transaction. `with` and `when` text are descriptive with linked references, not executable mappings or conditions; commands must enforce their own invariants.
 9. Behavior, Flow `with`, and Flow `when` clauses use quoted descriptive text with visible `[[QualifiedName]]` references, and contain no unsupported programming-language syntax. Flow `with` and `when` text is not evaluated; a linked query result is documentation only and does not require that query to appear earlier (or at all) in the Flow.
