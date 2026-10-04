@@ -123,7 +123,8 @@ Application-service methods may link to aggregate-root or factory methods with
 calculations. When both are needed, the application service links to the domain
 service and aggregate root separately; the domain service does not call the
 aggregate. Thinai describes those domain relationships without prescribing
-loads, saves, deletes, or transaction mechanics. Each aggregate has one write repository.
+loads, saves, deletes, or transaction mechanics. An aggregate may declare at most
+one write repository; the declaration is optional.
 Use identity-free data objects for operation input/output shapes. They can contain
 primitives, collections, enums, value objects, and nested data objects, but not
 entities or read models; they have no identifiers or behavior. Prefer value

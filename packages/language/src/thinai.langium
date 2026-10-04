@@ -90,6 +90,7 @@ SharedKernel:
 SharedKernelMember:
     ValueObject
     | EnumType
+    | DomainService
     | Module;
 
 Module:

@@ -554,7 +554,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         )) {
             return false;
         }
-        if (this.isCrossContext(source, target)) {
+        const targetSharedKernel = this.getOwningSharedKernel(target);
+        const sharedKernelServiceCall = targetSharedKernel !== undefined && isDomainService(target.$container) &&
+            (isApplicationService(source.$container) || isDomainService(source.$container)) &&
+            this.hasVisibleSharedKernel(source, targetSharedKernel) &&
+            this.hasSharedKernelRelationship(source, targetSharedKernel);
+        if (this.isCrossContext(source, target) && !sharedKernelServiceCall) {
             return false;
         }
 
@@ -1139,6 +1144,22 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
             relationship.participants.some(participant => participant.target.ref?.name === contextName)
         ));
+    }
+
+    private hasVisibleSharedKernel(source: AstNode, sharedKernel: import('./generated/ast.js').SharedKernel): boolean {
+        const document = AstUtils.getDocument(source);
+        const root = document.parseResult.value;
+        if (!isModel(root)) {
+            return false;
+        }
+        if (root.declarations.includes(sharedKernel)) {
+            return true;
+        }
+        const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
+        return root.imports.some(declaration =>
+            UriUtils.equals(resolveImportUri(document, declaration), sharedKernelUri) &&
+            (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel))
+        );
     }
 
     private hasAuthorizedEventRelationship(source: AstNode, event: import('./generated/ast.js').IntegrationEvent): boolean {

@@ -620,6 +620,41 @@ describe('LSP services', () => {
         expect(applicationAggregateCompletion?.items.some(item => item.label === 'Order')).toBe(true);
     });
 
+    test('completes shared-kernel domain services only for participating contexts', async () => {
+        const shared = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/completion-shared-kernel.tni'),
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number; } }'
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/completion-shared-contexts.tni'),
+            'bounded context Ordering {} bounded context Shipping {}'
+        );
+        const map = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/completion-shared-map.tni'),
+            'import "./completion-shared-kernel.tni"; import "./completion-shared-contexts.tni"; context map SharedPolicies { sharedKernel Common { participants: [Ordering, Shipping]; } }'
+        );
+        const text = `import "./completion-shared-contexts.tni";
+            import { Common } from "./completion-shared-kernel.tni";
+            import { SharedPolicies } from "./completion-shared-map.tni";
+            part of bounded context Ordering {
+                application service OrderApplication {
+                    method normalize(amount: number) returns number { invokes Common.PricingPolicy.norm; }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/completion-shared-consumer.tni'), text
+        );
+        documents = [shared, contexts, map, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const offset = text.indexOf('Common.PricingPolicy.norm') + 'Common.PricingPolicy.norm'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.some(item => item.label === 'normalize')).toBe(true);
+    });
+
     test('journey path completion offers commands but not query methods', async () => {
         const text = `bounded context Ordering {
             application service OrderApplication {

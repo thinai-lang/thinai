@@ -81,7 +81,8 @@ Integration-event declarations define public schemas;
 the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
 
-An aggregate has one write repository. `ReadModel`, `QueryRepository`, and
+An aggregate may declare at most one write repository; repository declarations
+are optional. `ReadModel`, `QueryRepository`, and
 `Projector` declarations are optional. A read model is a query-result shape, not
 necessarily a materialized projection or separate database; a query service may
 read through query or aggregate repositories, including from the same physical

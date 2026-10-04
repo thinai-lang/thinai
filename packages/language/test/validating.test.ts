@@ -218,6 +218,21 @@ describe('Validating', () => {
         ))).toBe(true);
     });
 
+    test('rejects optional entity identifiers', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id?: OrderId; }
+                    value object OrderId { raw: string; }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'An entity identifier field cannot be optional.'
+        ))).toBe(true);
+    });
+
     test('requires entities to belong to an aggregate', async () => {
         const document = await parse(`
             bounded context Ordering {
@@ -506,12 +521,44 @@ describe('Validating', () => {
                 }
                 domain service PricingPolicy {
                     method calculate(request: PriceRequest) returns PriceQuote;
+                    method inspect(order: Order.Order) returns PriceQuote;
                 }
                 application service OrderApplication {
                     method placeOrder(request: PriceRequest) returns PriceQuote {
                         invokes PricingPolicy.calculate;
                         invokes Order.Order.place;
                     }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+    });
+
+    test('prevents domain services from returning aggregate entities', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                }
+                domain service OrderPolicy {
+                    method findOrder() returns Order.Order;
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Domain-service methods must return domain values, not aggregate entities.'
+        ))).toBe(true);
+    });
+
+    test('allows aggregates to omit an optional write-repository declaration', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
                 }
             }
         `);
@@ -1002,7 +1049,7 @@ describe('Validating', () => {
 
         expect(
             checkDocumentValid(shipping) || shipping.diagnostics?.map(diagnosticToString).join('\n')
-        ).toEqual(expect.stringContaining('An application-service method may invoke only methods in its own bounded context.'));
+        ).toEqual(expect.stringContaining('A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.'));
     });
 
     test('rejects duplicate canonical context declarations', async () => {
@@ -1032,6 +1079,119 @@ describe('Validating', () => {
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'A shared-kernel relationship must include at least two bounded contexts'
+        ))).toBe(true);
+    });
+
+    test('allows shared-kernel domain services but rejects data objects in shared-kernel modules', async () => {
+        const valid = await parse(`
+            shared kernel Common {
+                value object Money { amount: number; }
+                domain service PricingPolicy {
+                    method normalize(money: Money) returns number;
+                }
+                module Policies {
+                    domain service TaxPolicy { method rate(amount: number) returns number; }
+                }
+            }
+        `);
+        expect(valid.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+
+        const invalid = await parse(`
+            shared kernel Common {
+                module Payloads {
+                    data object Address { street: string; }
+                }
+            }
+        `);
+        expect(invalid.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A shared kernel may contain only reusable value objects, enums, domain services, and modules.'
+        ))).toBe(true);
+
+        const coLocated = await parse(`
+            bounded context Ordering {
+                application service OrderApplication {
+                    method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize; }
+                }
+            }
+            bounded context Shipping {}
+            shared kernel Common {
+                domain service PricingPolicy { method normalize(amount: number) returns number; }
+            }
+            context map SharedPolicies {
+                sharedKernel Common { participants: [Ordering, Shipping]; }
+            }
+        `);
+        expect(coLocated.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+    });
+
+    test('allows application services to invoke an imported shared-kernel service for participating contexts', async () => {
+        const shared = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-policy-kernel.tni'),
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number; } }'
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-policy-contexts.tni'),
+            'bounded context Ordering {} bounded context Shipping {}'
+        );
+        const map = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-policy-map.tni'),
+            'import "./shared-policy-kernel.tni"; import "./shared-policy-contexts.tni"; context map SharedPolicies { sharedKernel Common { participants: [Ordering]; } }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-policy-consumer.tni'),
+            `import "./shared-policy-contexts.tni";
+             import { Common } from "./shared-policy-kernel.tni";
+             import { SharedPolicies } from "./shared-policy-map.tni";
+             part of bounded context Ordering {
+                 application service OrderApplication {
+                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize; }
+                 }
+             }`
+        );
+        const nonParticipant = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-policy-nonparticipant.tni'),
+            `import "./shared-policy-contexts.tni";
+             import { Common } from "./shared-policy-kernel.tni";
+             import { SharedPolicies } from "./shared-policy-map.tni";
+             part of bounded context Shipping {
+                 application service ShippingApplication {
+                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize; }
+                 }
+             }`
+        );
+        documents = [shared, contexts, map, consumer, nonParticipant];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(nonParticipant.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.'
+        ))).toBe(true);
+    });
+
+    test('rejects shared-kernel service calls without an imported relationship', async () => {
+        const shared = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unlinked-shared-policy-kernel.tni'),
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number; } }'
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unlinked-shared-policy-contexts.tni'),
+            'bounded context Ordering {}'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unlinked-shared-policy-consumer.tni'),
+            `import "./unlinked-shared-policy-contexts.tni";
+             import { Common } from "./unlinked-shared-policy-kernel.tni";
+             part of bounded context Ordering {
+                 application service OrderApplication {
+                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize; }
+                 }
+             }`
+        );
+        documents = [shared, contexts, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.'
         ))).toBe(true);
     });
 

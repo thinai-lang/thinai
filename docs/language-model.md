@@ -100,8 +100,14 @@ in either direction. Pattern labels do not affect this authorization.
 not take integration patterns. A `sharedKernel` relationship names the actual
 shared-kernel component and lists the bounded contexts that share it.
 
-A shared kernel is an explicit place for types shared across contexts. It may
-contain value objects, enumerations, and modules:
+A shared kernel is an explicit place for concepts genuinely shared across
+contexts. It may contain value objects, enumerations, modules, and domain
+services for stable, jointly-owned policies. A shared-kernel domain service may
+use shared-kernel types, but must not depend on a bounded context's private model.
+To invoke one from a bounded context, the shared kernel and a context map that
+declares the context as a participant must be visible. When they are in separate
+files, import both explicitly. Data objects are not shared-kernel members; use
+shared value objects for shared domain concepts.
 
 ```thinai
 shared kernel Common {

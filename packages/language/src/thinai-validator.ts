@@ -289,6 +289,13 @@ export class ThinaiValidator {
                 property: 'fields'
             });
         }
+        const optionalIdentifier = identifierFields.find(field => field.optional);
+        if (optionalIdentifier) {
+            accept('error', 'An entity identifier field cannot be optional.', {
+                node: optionalIdentifier,
+                property: 'optional'
+            });
+        }
         const identifierType = identifierFields[0]?.type?.ref;
         if (identifierType && aggregate && identifierType.$container !== aggregate) {
             accept('error', 'An entity identifier value object must be declared in the same aggregate.', {
@@ -646,6 +653,12 @@ export class ThinaiValidator {
             this.checkCrossContextTypeUse(method, returnTypes, accept, 'returnType');
             this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', applicationService !== undefined || queryService !== undefined);
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
+            if (isDomainService(method.$container) && returnTypes.some(reference => isEntity(reference.ref))) {
+                accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
+                    node: method,
+                    property: 'returnType'
+                });
+            }
         }
         for (const invocation of method.invocations) {
             const target = this.getInvokedMethod(invocation);
@@ -656,8 +669,13 @@ export class ThinaiValidator {
                 });
                 continue;
             }
-            if (this.isCrossContextOwned(method, target)) {
-                accept('error', 'An application-service method may invoke only methods in its own bounded context.', {
+            const targetSharedKernel = this.getOwningSharedKernel(target);
+            const allowedSharedKernelService = targetSharedKernel !== undefined && isDomainService(target.$container) &&
+                (applicationService !== undefined || isDomainService(method.$container)) &&
+                this.hasVisibleSharedKernel(method, targetSharedKernel) &&
+                this.hasSharedKernelRelationship(method, targetSharedKernel);
+            if (this.isCrossContextOwned(method, target) && !allowedSharedKernelService) {
+                accept('error', 'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.', {
                     node: method,
                     property: 'invocations'
                 });
@@ -1152,12 +1170,12 @@ export class ThinaiValidator {
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
-            'Aggregate', 'ApplicationService', 'DomainEvent', 'DomainService',
-            'Factory', 'Journey', 'Actor', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
+            'Aggregate', 'ApplicationService', 'DomainEvent',
+            'DataObject', 'Factory', 'Journey', 'Actor', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
             if (disallowed.has(node.$type)) {
-                accept('error', 'A shared kernel may contain only reusable value objects, enums, and modules.', {
+                accept('error', 'A shared kernel may contain only reusable value objects, enums, domain services, and modules.', {
                     node: sharedKernel,
                     property: 'members'
                 });
@@ -1545,7 +1563,9 @@ export class ThinaiValidator {
             }
             if (isInSharedKernel(target)) {
                 const sharedKernel = this.getOwningSharedKernel(target);
-                if (sourceContext && (!sharedKernel || !this.hasSharedKernelRelationship(node, sharedKernel))) {
+                const sourceSharedKernel = this.getOwningSharedKernel(node);
+                if (sourceContext && sourceSharedKernel !== sharedKernel &&
+                    (!sharedKernel || !this.hasSharedKernelRelationship(node, sharedKernel))) {
                     accept('error', 'Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.', {
                         node,
                         property
@@ -1590,6 +1610,22 @@ export class ThinaiValidator {
             isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
             relationship.participants.some(participant => participant.target.ref?.name === contextName)
         ));
+    }
+
+    private hasVisibleSharedKernel(source: AstNode, sharedKernel: SharedKernel): boolean {
+        const document = AstUtils.getDocument(source);
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        if (model.declarations.includes(sharedKernel)) {
+            return true;
+        }
+        const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
+        return model.imports.some(declaration =>
+            UriUtils.equals(resolveImportUri(document, declaration), sharedKernelUri) &&
+            (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel))
+        );
     }
 
     private getOwningSharedKernel(node: AstNode): SharedKernel | undefined {
