@@ -55,9 +55,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const completedSegments = container.targets.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < context.offset
             ).length;
-            return this.thinaiServices.references.ScopeProvider
-                .getScope({ ...refInfo, index: completedSegments })
-                .getAllElements();
+            const scopedReference = { ...refInfo, index: completedSegments };
+            return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
+                scopedReference,
+                this.thinaiServices.references.ScopeProvider.getScope(scopedReference).getAllElements()
+            );
         }
         return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
             refInfo,

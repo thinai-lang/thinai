@@ -412,6 +412,169 @@ describe('LSP services', () => {
         expect(authorizedCompletion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(true);
     });
 
+    test('filters private cross-context declarations from inline specification references', async () => {
+        const producer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/specification-private-producer.tni'),
+            'bounded context Ordering { aggregate Order { root entity Order { identifier id: OrderId; } value object OrderId { raw: string; } } }'
+        );
+        const text = `import "./specification-private-producer.tni";
+            bounded context Shipping {
+                application service ShipmentApplication {
+                    method receive() { behavior "Use [[Ordering.Order]]"; }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/specification-private-consumer.tni'), text
+        );
+        documents = [producer, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const offset = text.indexOf('Ordering.Order]]') + 'Ordering.Order'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.some(item => item.label === 'OrderId')).toBe(false);
+    });
+
+    test('filters foreign read models and events from projector and emit completions', async () => {
+        const producer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/foreign-projections.tni'),
+            'bounded context Ordering { read model OrderSummary { total: number; } integration event OrderPlacedV1; }'
+        );
+        const text = `import "./foreign-projections.tni";
+            bounded context Shipping {
+                read model ShipmentSummary { status: string; }
+                event ShipmentSent;
+                aggregate Shipment {
+                    root entity Shipment {
+                        method ship() { emits ShipmentSent; }
+                        identifier id: ShipmentId;
+                    }
+                    value object ShipmentId { raw: string; }
+                }
+                projector ShipmentProjector {
+                    method project(source: ShipmentSent) { projects OrderSummary; }
+                }
+                application service ShipmentApplication {
+                    method dispatch() { emits OrderPlacedV1; }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/foreign-projections-consumer.tni'), text
+        );
+        documents = [producer, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const projectionsOffset = text.indexOf('projects OrderSummary') + 'projects OrderSummary'.length;
+        const projections = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(projectionsOffset)
+        });
+        expect(projections?.items.some(item => item.label === 'OrderSummary')).toBe(false);
+
+        const emitsOffset = text.indexOf('emits OrderPlacedV1') + 'emits OrderPlacedV1'.length;
+        const emits = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(emitsOffset)
+        });
+        expect(emits?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
+        expect(emits?.items.some(item => item.label === 'Ordering')).toBe(false);
+
+        const localEmitsOffset = text.indexOf('emits ShipmentSent') + 'emits ShipmentSent'.length;
+        const localEmits = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(localEmitsOffset)
+        });
+        expect(localEmits?.items.some(item => item.label === 'ShipmentSent')).toBe(true);
+    });
+
+    test('filters unqualified child entities from repository-root completion', async () => {
+        const text = `bounded context Shipping {
+            aggregate Shipment {
+                root entity Shipment { identifier id: ShipmentId; }
+                entity ShipmentLine { identifier id: ShipmentLineId; }
+                value object ShipmentId { raw: string; }
+                value object ShipmentLineId { raw: string; }
+            }
+            repository ShipmentRepository manages ShipmentL;
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repository-root-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const offset = text.indexOf('ShipmentL;') + 'ShipmentL'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.some(item => item.label === 'ShipmentLine')).toBe(false);
+    });
+
+    test('filters inaccessible module and query-service invocation targets', async () => {
+        const text = `bounded context Ordering {
+            module Producer {
+                domain service Policy { method check(); }
+            }
+            module Consumer {
+                domain service Handler { method run() { invokes Policy.ch; } }
+            }
+            query service FirstQueries { method first() { invokes SecondQueries.other; } }
+            query service SecondQueries { method other(); }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invocation-scope-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const moduleOffset = text.indexOf('Policy.ch') + 'Policy.ch'.length;
+        const moduleCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(moduleOffset)
+        });
+        expect(moduleCompletion?.items.some(item => item.label === 'check')).toBe(false);
+
+        const queryOffset = text.indexOf('SecondQueries.other') + 'SecondQueries.other'.length;
+        const queryCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(queryOffset)
+        });
+        expect(queryCompletion?.items.some(item => item.label === 'other')).toBe(false);
+    });
+
+    test('does not suggest cross-context invocation targets from an event handler', async () => {
+        const producer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cross-context-invocation-producer.tni'),
+            `bounded context Ordering {
+                integration event OrderPlacedV1;
+                application service OrderApplication { method placeOrder(); }
+            }`
+        );
+        const text = `import "./cross-context-invocation-producer.tni";
+            bounded context Shipping {
+                application service ShipmentApplication {
+                    method onOrderPlaced(source: Ordering.OrderPlacedV1) {
+                        invokes Ordering.OrderApplication.placeOrder;
+                    }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cross-context-invocation-consumer.tni'), text
+        );
+        documents = [producer, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const offset = text.indexOf('Ordering.OrderApplication.placeOrder') + 'Ordering.OrderApplication.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.some(item => item.label === 'placeOrder')).toBe(false);
+    });
+
     test('journey path completion offers commands but not query methods', async () => {
         const text = `bounded context Ordering {
             application service OrderApplication {

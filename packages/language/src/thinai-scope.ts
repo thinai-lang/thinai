@@ -34,6 +34,7 @@ import {
     isJourneyStep,
     isMethodInvocation,
     isIntegrationEvent,
+    isEventReference,
     isPartnershipRelationship,
     isCustomerSupplierRelationship,
     isSharedKernelRelationship,
@@ -46,6 +47,9 @@ import {
     isImportComponent,
     isImportableComponent,
     isReadModel,
+    isReadModelReference,
+    isRepository,
+    isProjector,
     isSpecificationTextPart,
     isQueryService,
     isParameter,
@@ -513,7 +517,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const target = this.getDescriptionNode(description);
             if (isMethod(target) && (isJourneyStep(context.container)
                 ? this.isJourneyCommand(target)
-                : this.isSupportedInvocationTarget(context.container, target))) {
+                : this.isSupportedInvocationTarget(context.container, target) &&
+                    this.isSupportedCandidate(context, target))) {
                 allowedTargets.add(target);
             }
         }
@@ -549,16 +554,24 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return false;
         }
         if (this.isCrossContext(source, target)) {
-            const sourceIsEventHandler = isApplicationService(source.$container) && source.parameters.some(parameter =>
+            return false;
+        }
+
+        const sourceApplication = isApplicationService(source.$container);
+        const sourceQueryService = isQueryService(source.$container) ? source.$container : undefined;
+        if (sourceQueryService && (target.$container !== sourceQueryService || this.hasBehaviorSideEffects(target))) {
+            return false;
+        }
+
+        if (isApplicationService(target.$container) && target.$container !== source.$container) {
+            const eventParameterCount = source.parameters.filter(parameter =>
                 isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
-            );
-            if (!sourceIsEventHandler || !isApplicationService(target.$container) ||
-                target.$container === source.$container) {
+            ).length;
+            if (!sourceApplication || eventParameterCount !== 1 || source.parameters.length !== 1) {
                 return false;
             }
         }
 
-        const sourceApplication = isApplicationService(source.$container);
         const targetAggregate = this.getOwningAggregateNode(target);
         const targetIsRootMethod = targetAggregate !== undefined &&
             target.$container === targetAggregate.members.find(member => isEntity(member) && member.root);
@@ -580,7 +593,51 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (sourceAggregate && targetAggregate && sourceAggregate !== targetAggregate) {
             return false;
         }
+
+        const reachable = this.getReachableMethods(target);
+        if (!sourceApplication && !isApplicationService(target.$container) &&
+            reachable.some(method => isApplicationService(method.$container))) {
+            return false;
+        }
+        if (sourceApplication && !isApplicationService(target.$container) && (
+            reachable.some(method => isApplicationService(method.$container)) ||
+            (!targetIsRootMethod && reachable.some(method => this.getOwningAggregateNode(method) !== undefined))
+        )) {
+            return false;
+        }
+        if (!sourceApplication && sourceAggregate && reachable.some(method => {
+            const aggregate = this.getOwningAggregateNode(method);
+            return aggregate !== undefined && aggregate !== sourceAggregate;
+        })) {
+            return false;
+        }
         return true;
+    }
+
+    private getReachableMethods(method: Method, visited = new Set<Method>()): Method[] {
+        if (visited.has(method)) {
+            return [];
+        }
+        visited.add(method);
+        const reachable: Method[] = [];
+        for (const invocation of method.invocations) {
+            const target = invocation.targets.at(-1)?.ref;
+            if (isMethod(target)) {
+                reachable.push(target, ...this.getReachableMethods(target, visited));
+            }
+        }
+        return reachable;
+    }
+
+    private hasBehaviorSideEffects(method: Method, visited = new Set<Method>()): boolean {
+        if (visited.has(method)) {
+            return false;
+        }
+        visited.add(method);
+        return method.transitions.length > 0 || method.events.length > 0 || method.invocations.some(invocation => {
+            const target = invocation.targets.at(-1)?.ref;
+            return isMethod(target) && this.hasBehaviorSideEffects(target, visited);
+        });
     }
 
     private isCrossContext(source: AstNode, target: AstNode): boolean {
@@ -852,6 +909,31 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
 
+        if (isSpecificationTextPart(context.container)) {
+            return this.isSupportedSpecificationCandidate(context, target);
+        }
+
+        if (isEventReference(context.container)) {
+            return this.isSupportedEventEmission(context, target);
+        }
+
+        if (isReadModelReference(context.container)) {
+            let current: AstNode | undefined = context.container.$container;
+            while (current && !isMethod(current)) {
+                current = current.$container;
+            }
+            if (!isMethod(current) || !isProjector(current.$container)) {
+                return false;
+            }
+            return isReadModel(target)
+                ? getOwningContextName(current) === getOwningContextName(target)
+                : this.hasReadModelDescendant(target, getOwningContextName(current));
+        }
+
+        if (isRepository(context.container) && (context.property === 'root' || context.property === 'rootPath')) {
+            return this.isValidRepositoryRootPathCandidate(context.container, target);
+        }
+
         if (!this.isTypeReference(context)) {
             return true;
         }
@@ -871,6 +953,122 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
         }
 
+        return false;
+    }
+
+    private isValidRepositoryRootPathCandidate(repository: import('./generated/ast.js').Repository, target: AstNode): boolean {
+        const contextName = getOwningContextName(repository);
+        if (!contextName) {
+            return false;
+        }
+        if (isEntity(target)) {
+            return target.root && getOwningContextName(target) === contextName;
+        }
+        for (const description of this.indexManager.allElements('Entity')) {
+            const entity = this.getDescriptionNode(description);
+            if (!isEntity(entity) || !entity.root || getOwningContextName(entity) !== contextName) {
+                continue;
+            }
+            let current: AstNode | undefined = entity;
+            while (current) {
+                if (current === target) {
+                    return true;
+                }
+                current = current.$container;
+            }
+        }
+        return false;
+    }
+
+    private isSupportedSpecificationCandidate(context: ReferenceInfo, target: AstNode): boolean {
+        if (isField(target) && !(
+            isEntity(target.$container) || isValueObject(target.$container) || isDomainEvent(target.$container) ||
+            isIntegrationEvent(target.$container) || isReadModel(target.$container) || isDataObject(target.$container)
+        )) {
+            return false;
+        }
+
+        const sourceContext = getOwningContextName(context.container);
+        const targetContext = getOwningContextName(target);
+        if (!sourceContext || !targetContext || sourceContext === targetContext || isInSharedKernel(target)) {
+            return true;
+        }
+
+        if (isField(target)) {
+            return isIntegrationEvent(target.$container) && this.isIntegrationEventExposed(target.$container) &&
+                this.hasAuthorizedEventRelationship(context.container, target.$container);
+        }
+        if (isIntegrationEvent(target)) {
+            return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
+        }
+        return false;
+    }
+
+    private isSupportedEventEmission(context: ReferenceInfo, target: AstNode): boolean {
+        if (!isDomainEvent(target) && !isIntegrationEvent(target)) {
+            return this.hasEmittableEventDescendant(context, target);
+        }
+        return this.isEmittableEvent(context, target);
+    }
+
+    private isEmittableEvent(context: ReferenceInfo, target: AstNode): boolean {
+        if (!isDomainEvent(target) && !isIntegrationEvent(target)) {
+            return false;
+        }
+        let current: AstNode | undefined = context.container;
+        while (current && !isMethod(current)) {
+            current = current.$container;
+        }
+        if (!isMethod(current) || this.isCrossContext(current, target)) {
+            return false;
+        }
+
+        const aggregate = this.getOwningAggregateNode(current);
+        const root = aggregate?.members.find(member => isEntity(member) && member.root);
+        if (isEntity(root) && current.$container === root) {
+            return isDomainEvent(target);
+        }
+        const eventParameters = current.parameters.filter(parameter =>
+            isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+        );
+        return isApplicationService(current.$container) && current.parameters.length === 1 &&
+            eventParameters.length === 1 && isDomainEvent(eventParameters[0].type?.ref) && isIntegrationEvent(target);
+    }
+
+    private hasEmittableEventDescendant(context: ReferenceInfo, candidate: AstNode): boolean {
+        for (const type of ['DomainEvent', 'IntegrationEvent']) {
+            for (const description of this.indexManager.allElements(type)) {
+                const event = this.getDescriptionNode(description);
+                if (event && this.isEmittableEvent(context, event) && this.isAstAncestor(candidate, event)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private hasReadModelDescendant(candidate: AstNode, contextName: string | undefined): boolean {
+        if (!contextName) {
+            return false;
+        }
+        for (const description of this.indexManager.allElements('ReadModel')) {
+            const readModel = this.getDescriptionNode(description);
+            if (isReadModel(readModel) && getOwningContextName(readModel) === contextName &&
+                this.isAstAncestor(candidate, readModel)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private isAstAncestor(ancestor: AstNode, node: AstNode): boolean {
+        let current: AstNode | undefined = node;
+        while (current) {
+            if (current === ancestor) {
+                return true;
+            }
+            current = current.$container;
+        }
         return false;
     }
 
