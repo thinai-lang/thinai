@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { EmptyFileSystem, type AstNode, type LangiumDocument, URI } from 'langium';
+import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI } from 'langium';
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
 import type { Model } from 'thinai-language';
@@ -449,6 +449,107 @@ describe('Linking tests', () => {
         expect(orderRoot).toBeDefined();
     });
 
+    test('resolves every mirror path segment through an imported bounded-context part', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-context.tni'),
+            'bounded context Ordering {}'
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-part.tni'),
+            `import "./ordering-context.tni";
+             part of bounded context Ordering {
+                 aggregate Order {
+                     root entity Order { identifier id: OrderId; }
+                     value object OrderId { raw: string; }
+                 }
+             }`
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping-mirror.tni'),
+            `import "./ordering-part.tni";
+             bounded context Shipping {
+                 value object OrderId mirrors Ordering.Order.OrderId { raw: string; }
+             }`
+        );
+        documents = [context, orderingPart, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const mirror = AstUtils.streamAst(shipping.parseResult.value).toArray()
+            .find(node => node.$type === 'ValueObject' && 'name' in node && node.name === 'OrderId');
+        expect(mirror && isValueObject(mirror)).toBe(true);
+        if (!mirror || !isValueObject(mirror)) {
+            return;
+        }
+        expect(mirror.mirrorsPath.map(reference =>
+            reference.ref && 'name' in reference.ref ? String(reference.ref.name) : undefined
+        )).toEqual(['Ordering', 'Order']);
+        expect(mirror.mirrors?.ref && 'name' in mirror.mirrors.ref ? String(mirror.mirrors.ref.name) : undefined).toBe('OrderId');
+
+        const pathOffset = shipping.textDocument.getText().indexOf('Ordering.Order.OrderId');
+        const expectedDefinitions = [
+            { start: pathOffset, document: context, target: context.textDocument.getText().indexOf('Ordering') },
+            { start: pathOffset + 'Ordering.'.length, document: orderingPart, target: orderingPart.textDocument.getText().indexOf('aggregate Order') + 'aggregate '.length },
+            { start: pathOffset + 'Ordering.Order.'.length, document: orderingPart, target: orderingPart.textDocument.getText().indexOf('OrderId { raw') }
+        ];
+        for (const expected of expectedDefinitions) {
+            const links = await services.Thinai.lsp.DefinitionProvider?.getDefinition(shipping, {
+                textDocument: { uri: shipping.uri.toString() },
+                position: shipping.textDocument.positionAt(expected.start)
+            });
+            expect(links).toHaveLength(1);
+            expect(links?.[0]?.originSelectionRange).toEqual({
+                start: shipping.textDocument.positionAt(expected.start),
+                end: shipping.textDocument.positionAt(expected.start + shipping.textDocument.getText().slice(expected.start).match(/^\w+/)![0].length)
+            });
+            expect(links?.[0]?.targetSelectionRange.start).toEqual(expected.document.textDocument.positionAt(expected.target));
+        }
+    });
+
+    test('navigates transition fields and enum values', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/transition-navigation.tni'),
+            `bounded context Shipping {
+                aggregate Shipment {
+                    root entity Shipment {
+                        method ship() { transition status from Open to Shipped; }
+                        identifier id: ShipmentId;
+                        status: ShipmentStatus;
+                    }
+                    value object ShipmentId { raw: string; }
+                    enum ShipmentStatus { Open, Shipped }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const text = document.textDocument.getText();
+        const transition = text.indexOf('transition status');
+        const targets = [
+            { source: transition + 'transition '.length, name: 'status', declaration: text.indexOf('status: ShipmentStatus') },
+            { source: text.indexOf('Open to Shipped'), name: 'Open', declaration: text.indexOf('Open, Shipped') },
+            { source: text.indexOf('Shipped;'), name: 'Shipped', declaration: text.indexOf('Shipped }') }
+        ];
+        for (const target of targets) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(target.source)
+            });
+            expect(definitions).toHaveLength(1);
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(target.source),
+                end: document.textDocument.positionAt(target.source + target.name.length)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(
+                document.textDocument.positionAt(target.declaration)
+            );
+        }
+    });
+
     test('rejects direct use of a private value object across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
@@ -787,11 +888,12 @@ describe('Linking tests', () => {
         expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
 
         const text = document.textDocument.getText();
+        const getDefinitionLinks = async (referenceOffset: number) => services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(referenceOffset)
+        });
         const getDefinitionStart = async (referenceOffset: number) => {
-            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
-                textDocument: { uri: document.uri.toString() },
-                position: document.textDocument.positionAt(referenceOffset)
-            });
+            const definitions = await getDefinitionLinks(referenceOffset);
             return definitions?.[0]?.targetSelectionRange.start;
         };
         const orderingOffset = text.indexOf('bounded context Ordering');
@@ -802,6 +904,17 @@ describe('Linking tests', () => {
         expect(await getDefinitionStart(valueObjectTypePath + 'Order.'.length)).toEqual(
             document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))
         );
+        const typePrefixLink = (await getDefinitionLinks(valueObjectTypePath))?.[0];
+        expect(typePrefixLink?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(valueObjectTypePath),
+            end: document.textDocument.positionAt(valueObjectTypePath + 'Order'.length)
+        });
+        const typeTerminalOffset = valueObjectTypePath + 'Order.'.length;
+        const typeTerminalLink = (await getDefinitionLinks(typeTerminalOffset))?.[0];
+        expect(typeTerminalLink?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(typeTerminalOffset),
+            end: document.textDocument.positionAt(typeTerminalOffset + 'OrderId'.length)
+        });
         const orderFieldPath = text.indexOf('Order.OrderId.raw');
         expect(await getDefinitionStart(orderFieldPath + 'Order.'.length)).toEqual(
             document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))

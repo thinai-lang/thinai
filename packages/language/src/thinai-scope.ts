@@ -30,6 +30,8 @@ import {
     isIntegrationEvent,
     isModel,
     isMethod,
+    isEnumType,
+    isTransition,
     isModule,
     isSharedKernel,
     isImportComponent,
@@ -196,7 +198,19 @@ export class ThinaiScopeComputation extends DefaultScopeComputation {
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
     override getScope(context: ReferenceInfo): Scope {
+        if (isTransition(context.container)) {
+            if (context.property === 'field') {
+                return this.getTransitionFieldScope(context.container);
+            }
+            if (context.property === 'from' || context.property === 'to') {
+                return this.getTransitionStateScope(context.container);
+            }
+        }
         const referenceType = this.reflection.getReferenceType(context);
+        const qualifiedPathScope = this.getQualifiedPathScope(context);
+        if (qualifiedPathScope) {
+            return qualifiedPathScope;
+        }
         if (referenceType === 'SpecificationTarget' && context.property === 'targets' &&
             isSpecificationTextPart(context.container)) {
             return this.createScope(this.getSpecificationPathSymbols(context, referenceType));
@@ -209,6 +223,84 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.createScope(this.getImportableComponents(context.container, referenceType));
         }
         return this.getUnsegmentedScope(context, referenceType);
+    }
+
+    private getTransitionFieldScope(transition: import('./generated/ast.js').Transition): Scope {
+        let current: AstNode | undefined = transition.$container;
+        while (current && !isEntity(current)) {
+            current = current.$container;
+        }
+        const fields = current && isEntity(current) ? current.fields : [];
+        return this.createScope(fields.map(field =>
+            this.descriptions.createDescription(field, field.name, AstUtils.getDocument(field))
+        ));
+    }
+
+    private getTransitionStateScope(transition: import('./generated/ast.js').Transition): Scope {
+        const enumType = transition.field.ref?.type?.ref;
+        if (!isEnumType(enumType)) {
+            return this.createScope([]);
+        }
+        const document = AstUtils.getDocument(enumType);
+        return this.createScope(enumType.values.map(value =>
+            this.descriptions.createDescription(value, value.name, document)
+        ));
+    }
+
+    private getQualifiedPathScope(context: ReferenceInfo): Scope | undefined {
+        const wrapperPath = context.property === 'path' || context.property === 'target';
+        const prefixProperty = wrapperPath
+            ? 'path'
+            : context.property.endsWith('Path')
+                ? context.property
+                : `${context.property}Path`;
+        const container = context.container as unknown as Record<string, unknown>;
+        const prefixReferences = container[prefixProperty];
+        if (!Array.isArray(prefixReferences) || prefixReferences.length === 0) {
+            return undefined;
+        }
+
+        const terminalProperty = wrapperPath ? 'target' : prefixProperty.slice(0, -'Path'.length);
+        const terminalReference = container[terminalProperty];
+        if (!terminalReference || typeof terminalReference !== 'object' || Array.isArray(terminalReference) || !('$refText' in terminalReference)) {
+            return undefined;
+        }
+
+        const pathReferences = [...prefixReferences, terminalReference] as ReferenceInfo['reference'][];
+        if (!pathReferences.every(reference => reference && typeof reference === 'object' && '$refText' in reference)) {
+            return undefined;
+        }
+        const path = pathReferences.map(reference => reference.$refText);
+        const finalContext: ReferenceInfo = {
+            ...context,
+            property: terminalProperty,
+            reference: terminalReference as ReferenceInfo['reference'],
+            index: undefined
+        };
+        const segmentIndex = context.property === prefixProperty
+            ? context.index ?? 0
+            : path.length - 1;
+        const completePath = path.join('.');
+        const finalDescription = this.getUnsegmentedScope(
+            finalContext,
+            this.reflection.getReferenceType(finalContext)
+        ).getElement(completePath);
+        if (!finalDescription?.node) {
+            return this.createScope([]);
+        }
+
+        const targetDescription = segmentIndex === path.length - 1
+            ? finalDescription
+            : this.getUnsegmentedScope(finalContext, 'NamedDeclaration')
+                .getElement(path.slice(0, segmentIndex + 1).join('.'));
+        const target = targetDescription?.node ?? this.getPathSegmentTarget(finalDescription.node, path, segmentIndex, context);
+        if (!target) {
+            return this.createScope([]);
+        }
+
+        return this.createScope([
+            this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))
+        ]);
     }
 
     private getUnsegmentedScope(context: ReferenceInfo, referenceType: string): Scope {
@@ -354,7 +446,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const ancestors: AstNode[] = [];
         let current: AstNode | undefined = target;
         while (current) {
-            if (this.nameProvider.getName(current)) {
+            if (isBoundedContextPart(current) && current.context.ref) {
+                ancestors.push(current.context.ref);
+            } else if (this.nameProvider.getName(current)) {
                 ancestors.push(current);
             }
             current = current.$container;

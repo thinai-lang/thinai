@@ -24,7 +24,6 @@ import type {
     DomainService,
     Entity,
     EnumType,
-    EnumValue,
     Factory,
     Import,
     ImportComponent,
@@ -499,12 +498,14 @@ export class ThinaiValidator {
                 continue;
             }
             const edges = entity.methods.flatMap(method => method.transitions)
-                .filter(transition => transition.field === field.name);
+                .filter(transition => transition.field.ref === field && transition.from.ref !== undefined && transition.to.ref !== undefined);
             const seenEdges = new Set<string>();
             for (const edge of edges) {
-                const key = `${edge.from}->${edge.to}`;
+                const from = edge.from.ref!.name;
+                const to = edge.to.ref!.name;
+                const key = `${from}->${to}`;
                 if (seenEdges.has(key)) {
-                    accept('error', `Duplicate state transition '${edge.from} -> ${edge.to}' for '${field.name}'.`, {
+                    accept('error', `Duplicate state transition '${from} -> ${to}' for '${field.name}'.`, {
                         node: edge,
                         property: 'from'
                     });
@@ -520,8 +521,10 @@ export class ThinaiValidator {
             while (changed) {
                 changed = false;
                 for (const edge of edges) {
-                    if (reachable.has(edge.from) && !reachable.has(edge.to)) {
-                        reachable.add(edge.to);
+                    const from = edge.from.ref!.name;
+                    const to = edge.to.ref!.name;
+                    if (reachable.has(from) && !reachable.has(to)) {
+                        reachable.add(to);
                         changed = true;
                     }
                 }
@@ -887,7 +890,7 @@ export class ThinaiValidator {
             });
             return;
         }
-        const field = entity.fields.find(candidate => candidate.name === transition.field);
+        const field = transition.field.ref;
         const stateType = field?.type?.ref;
         if (!field || !stateType || !isEnumType(stateType)) {
             accept('error', 'A transition must target an enum field declared on the owning entity.', {
@@ -896,11 +899,12 @@ export class ThinaiValidator {
             });
             return;
         }
-        const states = new Set(stateType.values.map((value: EnumValue) => value.name));
-        if (!states.has(transition.from) || !states.has(transition.to)) {
+        const states = new Set(stateType.values);
+        if (!transition.from.ref || !transition.to.ref ||
+            !states.has(transition.from.ref) || !states.has(transition.to.ref)) {
             accept('error', `Transition states must be values of ${stateType.name}.`, {
                 node: transition,
-                property: !states.has(transition.from) ? 'from' : 'to'
+                property: !transition.from.ref || !states.has(transition.from.ref) ? 'from' : 'to'
             });
         }
     }

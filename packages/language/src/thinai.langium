@@ -27,7 +27,7 @@ BoundedContext:
     '}' ';'?;
 
 BoundedContextPart:
-    'part' 'of' 'bounded' 'context' context=[BoundedContext:QualifiedName] '{'
+    'part' 'of' 'bounded' 'context' (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID] '{'
         members+=ContextMember*
     '}' ';'?;
 
@@ -49,19 +49,20 @@ PartnershipRelationship:
     'partner' left=ContextMapEndpoint '<->' 'partner' right=ContextMapEndpoint ';'?;
 
 SeparateWaysRelationship:
-    'separateWays' left=[BoundedContext:QualifiedName] '-x-' right=[BoundedContext:QualifiedName] ';'?;
+    'separateWays' (leftPath+=[NamedDeclaration:ID] '.')* left=[BoundedContext:ID]
+    '-x-' (rightPath+=[NamedDeclaration:ID] '.')* right=[BoundedContext:ID] ';'?;
 
 SharedKernelRelationship:
-    'sharedKernel' sharedKernel=[SharedKernel:QualifiedName] '{'
+    'sharedKernel' (sharedKernelPath+=[NamedDeclaration:ID] '.')* sharedKernel=[SharedKernel:ID] '{'
         'participants' ':' '[' participants+=[BoundedContext:QualifiedName] (',' participants+=[BoundedContext:QualifiedName])* ']' ';'?
     '}' ';'?;
 
 ContextMapEndpoint:
-    context=[BoundedContext:QualifiedName]
+    (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID]
     ('{' 'integrationPatterns' ':' '[' integrationPatterns+=StringLiteral (',' integrationPatterns+=StringLiteral)* ']' ';'? '}')?;
 
 ApplicationService:
-    'application' 'service' name=ID 'for' aggregate=[Aggregate:QualifiedName] '{'
+    'application' 'service' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID] '{'
         methods+=Method*
     '}' ';'?;
 
@@ -138,12 +139,12 @@ AggregateMember:
     | Factory;
 
 Entity:
-    (root?='root')? 'entity' name=ID ('extends' base=[Entity:QualifiedName])?
+    (root?='root')? 'entity' name=ID ('extends' (basePath+=[NamedDeclaration:ID] '.')* base=[Entity:ID])?
     '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
 
 ValueObject:
     'value' 'object' name=ID
-    ('mirrors' mirrors=[ValueObject:QualifiedName])?
+    ('mirrors' (mirrorsPath+=[NamedDeclaration:ID] '.')* mirrors=[ValueObject:ID])?
     '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
 
 EnumType:
@@ -153,7 +154,8 @@ EnumValue:
     name=ID;
 
 Field:
-    (identifier?='identifier')? name=ID (optional?='?')? ':' (primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType)
+    (identifier?='identifier')? name=ID (optional?='?')? ':'
+    (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[TypeDeclaration:ID] | collection=CollectionType)
     ('initial' initialState=ID)? ';'?;
 
 Invariant:
@@ -182,14 +184,14 @@ DataObject:
     'data' 'object' name=ID '{' fields+=Field* '}' ';'?;
 
 Projector:
-    'projector' name=ID 'for' readModel=[ReadModel:QualifiedName] '{' methods+=Method* '}' ';'?;
+    'projector' name=ID 'for' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] '{' methods+=Method* '}' ';'?;
 
 DomainService:
     'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
 
 Method:
     'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
-    ('returns' (returnPrimitive=PrimitiveType | returnType=[TypeDeclaration:QualifiedName] | returnCollection=CollectionType))?
+    ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
         invocations+=MethodInvocation |
         'emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])* ';'?)* '}')? ';'?;
@@ -198,27 +200,27 @@ MethodInvocation:
     'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ';'?;
 
 Transition:
-    'transition' field=ID 'from' from=ID 'to' to=ID ';'?;
+    'transition' field=[Field:ID] 'from' from=[EnumValue:ID] 'to' to=[EnumValue:ID] ';'?;
 
 Constructor:
     'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
 
 Parameter:
-    name=ID (optional?='?')? ':' ('event' eventType=[EventDeclaration:QualifiedName] |
-        primitive=PrimitiveType | type=[TypeDeclaration:QualifiedName] | collection=CollectionType);
+    name=ID (optional?='?')? ':' ('event' (eventTypePath+=[NamedDeclaration:ID] '.')* eventType=[EventDeclaration:ID] |
+        primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[TypeDeclaration:ID] | collection=CollectionType);
 
 Repository:
-    'repository' name=ID 'for' aggregate=[Aggregate:QualifiedName] ';'?;
+    'repository' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID] ';'?;
 
 QueryRepository:
-    'query' 'repository' name=ID 'for' readModel=[ReadModel:QualifiedName] ';'?;
+    'query' 'repository' name=ID 'for' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ';'?;
 
 QueryService:
     'query' 'service' name=ID '{' methods+=Method* '}' ';'?;
 
 Factory:
-    'factory' name=ID 'for' aggregate=[Aggregate:QualifiedName]
+    'factory' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID]
     ('operations' '{' methods+=Method* '}')? ';'?;
 
 DomainEvent:
@@ -233,8 +235,8 @@ IntegrationEvent:
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
 
-type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | DomainEvent | DomainService | Entity |
-    DataObject | EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector |
+type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Capability | ContextMap | DomainEvent | DomainService | Entity |
+    DataObject | EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector | SharedKernel |
     QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 
 Flow:
@@ -248,8 +250,8 @@ type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 
 CollectionType:
     kind=CollectionKind '<'
-    (elementPrimitive=PrimitiveType | elementType=[TypeDeclaration:QualifiedName] | elementCollection=CollectionType)
-    (',' (valuePrimitive=PrimitiveType | valueType=[TypeDeclaration:QualifiedName] | valueCollection=CollectionType))?
+    (elementPrimitive=PrimitiveType | (elementTypePath+=[NamedDeclaration:ID] '.')* elementType=[TypeDeclaration:ID] | elementCollection=CollectionType)
+    (',' (valuePrimitive=PrimitiveType | (valueTypePath+=[NamedDeclaration:ID] '.')* valueType=[TypeDeclaration:ID] | valueCollection=CollectionType))?
     '>';
 
 CollectionKind returns string:
