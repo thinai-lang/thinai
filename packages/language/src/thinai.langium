@@ -8,7 +8,9 @@ TopLevelDeclaration:
     | Subdomain
     | BoundedContext
     | BoundedContextPart
-    | ContextMap;
+    | ContextMap
+    | Actor
+    | Journey;
 
 Import:
     'import'
@@ -16,12 +18,12 @@ Import:
     | path=StringLiteral ('as' alias=ID)?) ';'?;
 
 ImportComponent:
-    component=[ImportableComponent:QualifiedName] ('as' alias=ID)?;
+    component=[ImportableComponent:ID] ('as' alias=[ImportableComponent:ID])?;
 
 
 BoundedContext:
     'bounded' 'context' name=ID
-    ('realizes' subdomains+=[Subdomain:QualifiedName] (',' subdomains+=[Subdomain:QualifiedName])*)?
+    ('realizes' subdomains+=SubdomainReference (',' subdomains+=SubdomainReference)*)?
     '{'
         members+=ContextMember*
     '}' ';'?;
@@ -54,7 +56,7 @@ SeparateWaysRelationship:
 
 SharedKernelRelationship:
     'sharedKernel' (sharedKernelPath+=[NamedDeclaration:ID] '.')* sharedKernel=[SharedKernel:ID] '{'
-        'participants' ':' '[' participants+=[BoundedContext:QualifiedName] (',' participants+=[BoundedContext:QualifiedName])* ']' ';'?
+        'participants' ':' '[' participants+=BoundedContextReference (',' participants+=BoundedContextReference)* ']' ';'?
     '}' ';'?;
 
 ContextMapEndpoint:
@@ -77,7 +79,6 @@ ContextMember:
     | Factory
     | DomainEvent
     | IntegrationEvent
-    | Flow
     | Module
     | TypeDeclaration;
 
@@ -93,14 +94,14 @@ SharedKernelMember:
 
 Module:
     'module' name=ID
-    ('depends' 'on' dependencies+=[Module:QualifiedName] (',' dependencies+=[Module:QualifiedName])*)?
+    ('depends' 'on' dependencies+=ModuleReference (',' dependencies+=ModuleReference)*)?
     '{'
         exposures+=Exposure*
         members+=ModuleMember*
     '}' ';'?;
 
 Exposure:
-    'exposes' declarations+=[NamedDeclaration:QualifiedName] (',' declarations+=[NamedDeclaration:QualifiedName])* ';'?;
+    'exposes' declarations+=NamedDeclarationReference (',' declarations+=NamedDeclarationReference)* ';'?;
 
 ModuleMember:
     ApplicationService
@@ -113,7 +114,6 @@ ModuleMember:
     | Factory
     | DomainEvent
     | IntegrationEvent
-    | Flow
     | Module
     | TypeDeclaration;
 
@@ -186,8 +186,8 @@ Method:
     ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
         invocations+=MethodInvocation |
-        'projects' projects+=[ReadModel:QualifiedName] (',' projects+=[ReadModel:QualifiedName])* ';'? |
-        'emits' events+=[EventDeclaration:QualifiedName] (',' events+=[EventDeclaration:QualifiedName])* ';'?)* '}')? ';'?;
+        'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)* ';'? |
+        'emits' events+=EventReference (',' events+=EventReference)* ';'?)* '}')? ';'?;
 
 MethodInvocation:
     'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ';'?;
@@ -200,14 +200,14 @@ Constructor:
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
 
 Parameter:
-    name=ID (optional?='?')? ':' ('event' (eventTypePath+=[NamedDeclaration:ID] '.')* eventType=[EventDeclaration:ID] |
-        primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[TypeDeclaration:ID] | collection=CollectionType);
+    name=ID (optional?='?')? ':'
+    (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[ParameterType:ID] | collection=CollectionType);
 
 Repository:
-    'repository' name=ID 'for' (aggregatePath+=[NamedDeclaration:ID] '.')* aggregate=[Aggregate:ID] ';'?;
+    'repository' name=ID 'manages' (rootPath+=[NamedDeclaration:ID] '.')* root=[Entity:ID] ';'?;
 
 QueryRepository:
-    'query' 'repository' name=ID 'serves' readModel=[ReadModel:QualifiedName] ';'?;
+    'query' 'repository' name=ID 'serves' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ';'?;
 
 QueryService:
     'query' 'service' name=ID '{' methods+=Method* '}' ';'?;
@@ -218,26 +218,50 @@ Factory:
 
 DomainEvent:
     'event' name=ID
-    ('data' '{' fields+=Field* '}')?
+    ('{' fields+=Field* '}')?
     ';'?;
 
 IntegrationEvent:
     'integration' 'event' name=ID
-    ('data' '{' fields+=Field* '}')?
+    ('{' fields+=Field* '}')?
     ';'?;
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
+type ParameterType = TypeDeclaration | EventDeclaration;
+
+SubdomainReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[Subdomain:ID];
+
+BoundedContextReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[BoundedContext:ID];
+
+ModuleReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[Module:ID];
+
+NamedDeclarationReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[NamedDeclaration:ID];
+
+EventReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[EventDeclaration:ID];
+
+ReadModelReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[ReadModel:ID];
 
 type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity |
-    DataObject | EnumType | Factory | Flow | IntegrationEvent | Method | Module | Projector | SharedKernel |
+    DataObject | EnumType | Factory | IntegrationEvent | Method | Module | Projector | SharedKernel |
     QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 
-Flow:
-    'flow' name=ID '{' elements+=FlowElement* '}' ';'?;
+Actor:
+    'actor' name=ID ';'?;
 
-FlowElement:
-    'actor' actor=ID ';'?
-    | 'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
+Journey:
+    'journey' name=ID '{' actors+=JourneyActor* '}' ';'?;
+
+JourneyActor:
+    'by' actor=[Actor:ID] '{' steps+=JourneyStep* '}';
+
+JourneyStep:
+    'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 
@@ -262,17 +286,14 @@ SpecificationTextPart:
 type SpecificationTarget = NamedDeclaration | EnumValue | Field | Parameter;
 
 StringLiteral returns string:
-    DOUBLE_STRING_START (DOUBLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* DOUBLE_STRING_END
-    | SINGLE_STRING_START (SINGLE_STRING_TEXT | '[[' QualifiedName REFERENCE_END)* SINGLE_STRING_END;
+    DOUBLE_STRING_START DOUBLE_STRING_TEXT DOUBLE_STRING_END
+    | SINGLE_STRING_START SINGLE_STRING_TEXT SINGLE_STRING_END;
 
 PrimitiveType returns string:
     'string' | 'number' | 'boolean' | 'date';
 
 SubdomainKind returns string:
     'core' | 'supporting' | 'generic';
-
-QualifiedName returns string:
-    ID ('.' ID)*;
 
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w_]*/;

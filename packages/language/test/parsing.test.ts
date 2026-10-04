@@ -6,6 +6,7 @@ import type { Model } from 'thinai-language';
 import {
     createThinaiServices,
     isBoundedContext,
+    isJourney,
     isModel
 } from 'thinai-language';
 
@@ -21,6 +22,7 @@ describe('Parsing tests', () => {
     test('parses strategic, tactical, and behavior elements', async () => {
         const document = await parse(s`
             subdomain OrderManagement kind core;
+            actor Customer;
 
             bounded context Ordering realizes OrderManagement {
                 aggregate Order {
@@ -39,18 +41,19 @@ describe('Parsing tests', () => {
                     method placeOrder(items: string) {
                         invokes Order.Order.place;
                     }
-                    method publishOrderPlaced(source: event OrderPlaced) {
+                    method publishOrderPlaced(source: OrderPlaced) {
                         emits OrderPlacedV1, OrderPlacedAuditV1;
                     }
                 }
-                event OrderPlaced data {
+                event OrderPlaced {
                     orderId: OrderId;
                 }
                 integration event OrderPlacedV1;
                 integration event OrderPlacedAuditV1;
-                flow PlaceOrder {
-                    actor Customer;
-                    invoke OrderApplication.placeOrder with "items from the selected order";
+            }
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderApplication.placeOrder with "items from the selected order";
                 }
             }
         `);
@@ -58,18 +61,21 @@ describe('Parsing tests', () => {
         expect(checkDocumentValid(document)).toBeUndefined();
         expect(document.parseResult.value?.declarations.map(declaration => declaration.$type)).toEqual([
             'Subdomain',
-            'BoundedContext'
+            'Actor',
+            'BoundedContext',
+            'Journey'
         ]);
-        expect((document.parseResult.value?.declarations[1] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(6);
+        expect((document.parseResult.value?.declarations[2] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(5);
 
-        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
-            members?: Array<{ $type: string; elements?: Array<{ actor?: string }> }>;
-        };
-        const flow = context.members?.find(member => member.$type === 'Flow');
-        expect(flow?.elements?.[0]).toMatchObject({ actor: 'Customer' });
+        const journey = document.parseResult.value?.declarations[3];
+        expect(journey && isJourney(journey)).toBe(true);
+        if (journey && isJourney(journey)) {
+            expect(journey.actors[0].actor.ref?.name).toBe('Customer');
+            expect(journey.actors[0].steps[0].targets.at(-1)?.ref?.name).toBe('placeOrder');
+        }
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
-        expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[1])).toBe(true);
+        expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[2])).toBe(true);
     });
 
     test('parses canonical context parts and imports', async () => {

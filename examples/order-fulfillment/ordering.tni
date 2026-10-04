@@ -83,7 +83,7 @@ part of bounded context Ordering {
             postcondition "The returned total includes all adjustments.";
         }
     }
-    repository OrderRepository for Order;
+    repository OrderRepository manages Order.Order;
     factory OrderFactory;
 
     aggregate Customer {
@@ -96,7 +96,7 @@ part of bounded context Ordering {
         }
         value object CustomerId { raw: string; }
     }
-    repository CustomerRepository for Customer;
+    repository CustomerRepository manages Customer.Customer;
     factory CustomerFactory {
             method createCustomer(id: CustomerId, name: string) returns Customer.Customer;
     }
@@ -116,13 +116,13 @@ part of bounded context Ordering {
         }
     }
 
-    event OrderPlaced data {
+    event OrderPlaced {
         orderId: OrderId;
         customerId: CustomerId;
         status: OrderStatus;
     }
 
-    event CustomerRegistered data {
+    event CustomerRegistered {
         customerId: CustomerId;
         name: string;
     }

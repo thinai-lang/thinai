@@ -9,7 +9,7 @@ guides to explore the language by topic:
 - [Tactical modeling](tactical-modeling.md) — aggregates, entities, value
   objects, operations, modules, and domain constraints.
 - [Events and behavior](events-and-behavior.md) — application-service methods,
-  aggregate events, integration contracts, flows, and behavior specifications.
+  aggregate events, integration contracts, journeys, and behavior specifications.
 
 For a complete multi-file model, see the
 [Order Fulfillment example](../examples/order-fulfillment/README.md). The

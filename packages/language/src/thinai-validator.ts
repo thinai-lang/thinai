@@ -10,6 +10,7 @@ import {
 } from 'langium';
 import type {
     Aggregate,
+    Actor,
     ApplicationService,
     BoundedContext,
     BoundedContextPart,
@@ -28,7 +29,8 @@ import type {
     ImportComponent,
     IntegrationEvent,
     Field,
-    Flow,
+    Journey,
+    JourneyStep,
     MethodInvocation,
     Method,
     Model,
@@ -106,7 +108,8 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Field: validator.checkField,
         Import: validator.checkImport,
         IntegrationEvent: validator.checkIntegrationEvent,
-        Flow: validator.checkFlow,
+        Actor: validator.checkActor,
+        Journey: validator.checkJourney,
         ApplicationService: validator.checkApplicationService,
         Method: validator.checkMethod,
         Transition: validator.checkTransition,
@@ -231,7 +234,7 @@ export class ThinaiValidator {
             }
             for (const component of importDeclaration.components) {
                 declarations.push({
-                    name: component.alias ?? component.component.$refText,
+                    name: component.alias?.$refText ?? component.component.$refText,
                     node: component,
                     property: component.alias ? 'alias' : 'component'
                 });
@@ -391,7 +394,7 @@ export class ThinaiValidator {
                         return false;
                     }
                     return !contractModule || getOwningModule(target) !== contractModule ||
-                        !contractModule.exposures.some(exposure => exposure.declarations.some(declaration => declaration.ref === target));
+                        !contractModule.exposures.some(exposure => exposure.declarations.some(declaration => declaration.target.ref === target));
                 });
                 if (privateContractType) {
                     accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
@@ -462,8 +465,9 @@ export class ThinaiValidator {
     }
 
     private getParameterTypeSignature(parameter: Parameter): string {
-        if (parameter.eventType) {
-            return `event:${parameter.eventType.ref ? getExportedName(parameter.eventType.ref as AstNode & { name: string }) : parameter.eventType.$refText}`;
+        const eventType = this.getEventParameterType(parameter);
+        if (eventType) {
+            return `event:${getExportedName(eventType as AstNode & { name: string })}`;
         }
         if (parameter.primitive) {
             return parameter.primitive;
@@ -472,6 +476,15 @@ export class ThinaiValidator {
             return getExportedName(parameter.type.ref as AstNode & { name: string });
         }
         return this.getCollectionTypeSignature(parameter.collection);
+    }
+
+    private getEventParameterType(parameter: Parameter): DomainEvent | IntegrationEvent | undefined {
+        const target = parameter.type?.ref;
+        return isDomainEvent(target) || isIntegrationEvent(target) ? target : undefined;
+    }
+
+    private isEventParameter(parameter: Parameter): boolean {
+        return this.getEventParameterType(parameter) !== undefined;
     }
 
     private getCollectionTypeSignature(collection?: CollectionType): string {
@@ -496,7 +509,7 @@ export class ThinaiValidator {
                 continue;
             }
             const edges = entity.methods.flatMap(method => method.transitions)
-                .filter(transition => transition.field.ref === field && transition.from.ref !== undefined && transition.to.ref !== undefined);
+                .filter(transition => transition.field?.ref === field && transition.from?.ref !== undefined && transition.to?.ref !== undefined);
             const seenEdges = new Set<string>();
             for (const edge of edges) {
                 const from = edge.from.ref!.name;
@@ -573,7 +586,7 @@ export class ThinaiValidator {
     checkMethod(method: Method, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(method, accept);
         this.checkUniqueParameterNames(method.parameters, accept);
-        const eventParameters = method.parameters.filter(parameter => parameter.eventType);
+        const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
         const applicationService = isApplicationService(method.$container) ? method.$container : undefined;
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
@@ -611,11 +624,11 @@ export class ThinaiValidator {
                     property: 'parameters'
                 });
             }
-            const event = eventParameters[0].eventType?.ref;
+            const event = this.getEventParameterType(eventParameters[0]);
             if (event && isDomainEvent(event) && getOwningContextName(event) !== getOwningContextName(method)) {
                 accept('error', 'A domain event can be handled only in its own bounded context.', {
                     node: eventParameters[0],
-                    property: 'eventType'
+                    property: 'type'
                 });
             }
             if (event && isIntegrationEvent(event) && this.isCrossContextOwned(method, event) && !this.hasAuthorizedEventRelationship(method, event)) {
@@ -623,7 +636,7 @@ export class ThinaiValidator {
                     ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
                     : 'An integration event in a module must be explicitly exposed before another bounded context can consume it.', {
                     node: eventParameters[0],
-                    property: 'eventType'
+                    property: 'type'
                 });
             }
         }
@@ -648,7 +661,7 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
-            if (target.parameters.some(parameter => parameter.eventType)) {
+            if (target.parameters.some(parameter => this.isEventParameter(parameter))) {
                 accept('error', 'An event-triggered method cannot be invoked directly; invoke an ordinary command method instead.', {
                     node: method,
                     property: 'invocations'
@@ -707,7 +720,7 @@ export class ThinaiValidator {
                 });
             }
             if (applicationService && isApplicationService(target.$container) && target.$container !== applicationService &&
-                (eventParameters.length !== 1 || target.parameters.some(parameter => parameter.eventType))) {
+                (eventParameters.length !== 1 || target.parameters.some(parameter => this.isEventParameter(parameter)))) {
                 accept('error', 'Only an event handler may dispatch to a command in another application service.', {
                     node: method,
                     property: 'invocations'
@@ -740,10 +753,11 @@ export class ThinaiValidator {
         }
         const owningAggregate = this.getOwningAggregate(method);
         for (const emitted of method.events) {
-            if (!emitted.ref) {
+            const emittedEvent = emitted.target.ref;
+            if (!emittedEvent) {
                 continue;
             }
-            if (this.isCrossContextOwned(method, emitted.ref)) {
+            if (this.isCrossContextOwned(method, emittedEvent)) {
                 accept('error', 'A method may emit only events owned by its bounded context.', {
                     node: method,
                     property: 'events'
@@ -754,14 +768,14 @@ export class ThinaiValidator {
                 continue;
             }
             if (owningAggregate && this.isAggregateRootMethod(method, owningAggregate)) {
-                if (!isDomainEvent(emitted.ref)) {
+                if (!isDomainEvent(emittedEvent)) {
                     accept('error', 'Aggregate-root behavior may emit only domain events.', {
                         node: method,
                         property: 'events'
                     });
                 }
-            } else if (applicationService && eventParameters.length === 1 && isDomainEvent(eventParameters[0].eventType?.ref)) {
-                if (!isIntegrationEvent(emitted.ref)) {
+            } else if (applicationService && eventParameters.length === 1 && isDomainEvent(this.getEventParameterType(eventParameters[0]))) {
+                if (!isIntegrationEvent(emittedEvent)) {
                     accept('error', 'A domain-event handler may emit only integration events.', {
                         node: method,
                         property: 'events'
@@ -824,14 +838,14 @@ export class ThinaiValidator {
             });
         }
         for (const project of method.projects) {
-            if (project.ref && getOwningContextName(project.ref) !== getOwningContextName(projector)) {
+            if (project.target.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
                 accept('error', 'A projector and its read models must belong to the same bounded context.', {
                     node: method,
                     property: 'projects'
                 });
             }
         }
-        const eventParameters = method.parameters.filter(parameter => parameter.eventType);
+        const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
         if (eventParameters.length !== 1 || method.parameters.length !== 1) {
             accept('error', 'A projector method must handle exactly one domain or integration event.', {
                 node: method,
@@ -856,7 +870,7 @@ export class ThinaiValidator {
                     node: method,
                     property: 'behaviors'
                 });
-            } else if (!method.projects.some(project => project.ref === repository.readModel.ref)) {
+            } else if (!method.projects.some(project => project.target.ref === repository.readModel.ref)) {
                 accept('error', 'A projector method may reference only query repositories for its declared projection targets.', {
                     node: method,
                     property: 'behaviors'
@@ -887,7 +901,7 @@ export class ThinaiValidator {
             });
             return;
         }
-        const field = transition.field.ref;
+        const field = transition.field?.ref;
         const stateType = field?.type?.ref;
         if (!field || !stateType || !isEnumType(stateType)) {
             accept('error', 'A transition must target an enum field declared on the owning entity.', {
@@ -896,49 +910,59 @@ export class ThinaiValidator {
             });
             return;
         }
+        const from = transition.from?.ref;
+        const to = transition.to?.ref;
         const states = new Set(stateType.values);
-        if (!transition.from.ref || !transition.to.ref ||
-            !states.has(transition.from.ref) || !states.has(transition.to.ref)) {
+        if (!from || !to || !states.has(from) || !states.has(to)) {
             accept('error', `Transition states must be values of ${stateType.name}.`, {
                 node: transition,
-                property: !transition.from.ref || !states.has(transition.from.ref) ? 'from' : 'to'
+                property: !from || !states.has(from) ? 'from' : 'to'
             });
         }
     }
 
-    checkFlow(flow: Flow, accept: ValidationAcceptor): void {
-        this.checkDuplicateDeclaration(flow, accept);
-        for (const element of flow.elements) {
-            if (element.actor !== undefined) {
-                continue;
-            }
-            const target = element.targets.at(-1)?.ref;
-            if (!isMethod(target)) {
-                accept('error', 'A flow invocation path must end at a method.', {
-                    node: element,
-                    property: 'targets'
-                });
-                continue;
-            }
-            const method = target;
-            const isCommand = isApplicationService(method.$container) && !method.parameters.some(parameter => parameter.eventType);
-            const isQuery = isQueryService(method.$container);
-            if (!isCommand && !isQuery) {
-                accept('error', 'A flow may invoke only application-service commands or query-service methods.', {
-                    node: element,
-                    property: 'targets'
+    checkActor(actor: Actor, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(actor, accept);
+    }
+
+    checkJourney(journey: Journey, accept: ValidationAcceptor): void {
+        this.checkDuplicateDeclaration(journey, accept);
+        if (journey.actors.length === 0) {
+            accept('error', 'A journey must contain at least one actor block.', {
+                node: journey,
+                property: 'actors'
+            });
+        }
+        for (const actorBlock of journey.actors) {
+            if (actorBlock.steps.length === 0) {
+                accept('error', 'An actor block in a journey must contain at least one command step.', {
+                    node: actorBlock,
+                    property: 'steps'
                 });
             }
-            if (isQuery && this.hasBehaviorSideEffects(method)) {
-                accept('error', 'A flow query step must be read-only.', { node: element, property: 'targets' });
-            }
-            if (this.isCrossContextOwned(flow, method)) {
-                accept('error', 'A flow may invoke only command and query methods in its own bounded context.', {
-                    node: element,
-                    property: 'targets'
-                });
+            for (const step of actorBlock.steps) {
+                this.checkJourneyStep(step, accept);
             }
         }
+    }
+
+    private checkJourneyStep(step: JourneyStep, accept: ValidationAcceptor): void {
+            const target = step.targets.at(-1)?.ref;
+            if (!isMethod(target)) {
+                accept('error', 'A journey command path must end at a method.', {
+                    node: step,
+                    property: 'targets'
+                });
+                return;
+            }
+            const method = target;
+            const isCommand = isApplicationService(method.$container) && !method.parameters.some(parameter => this.isEventParameter(parameter));
+            if (!isCommand) {
+                accept('error', 'A journey may invoke only user-facing application-service commands, not event handlers or query methods.', {
+                    node: step,
+                    property: 'targets'
+                });
+            }
     }
 
     checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {
@@ -959,7 +983,10 @@ export class ThinaiValidator {
     }
 
     checkParameter(parameter: Parameter, accept: ValidationAcceptor): void {
-        const typeReferences = this.collectTypeReferences(parameter.type, parameter.collection);
+        if (this.isEventParameter(parameter)) {
+            return;
+        }
+        const typeReferences = this.collectTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
         this.checkCrossContextTypeUse(parameter, typeReferences, accept, 'type');
         this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
             isApplicationService(parameter.$container.$container) || isQueryService(parameter.$container.$container));
@@ -1063,19 +1090,19 @@ export class ThinaiValidator {
     checkModule(module: Module, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(module, accept);
         for (const dependency of module.dependencies) {
-            if (dependency.ref === module) {
+            if (dependency.target.ref === module) {
                 accept('error', 'A module cannot depend on itself.', {
                     node: module,
                     property: 'dependencies'
                 });
             }
-            if (dependency.ref && getOwningContextName(dependency.ref) !== getOwningContextName(module)) {
+            if (dependency.target.ref && getOwningContextName(dependency.target.ref) !== getOwningContextName(module)) {
                 accept('error', 'A module can depend only on another module in the same bounded context.', {
                     node: module,
                     property: 'dependencies'
                 });
             }
-            if (dependency.ref && dependency.ref !== module && this.dependsTransitivelyOn(dependency.ref, module, new Set())) {
+            if (dependency.target.ref && dependency.target.ref !== module && this.dependsTransitivelyOn(dependency.target.ref, module, new Set())) {
                 accept('error', 'Module dependencies cannot contain a cycle.', {
                     node: module,
                     property: 'dependencies'
@@ -1085,7 +1112,7 @@ export class ThinaiValidator {
         }
         for (const exposure of module.exposures) {
             for (const declaration of exposure.declarations) {
-                if (declaration.ref && getOwningModule(declaration.ref) !== module) {
+                if (declaration.target.ref && getOwningModule(declaration.target.ref) !== module) {
                     accept('error', 'A module may expose only declarations that it owns.', {
                         node: exposure,
                         property: 'declarations'
@@ -1103,14 +1130,14 @@ export class ThinaiValidator {
             return false;
         }
         visited.add(current);
-        return current.dependencies.some(dependency => dependency.ref && this.dependsTransitivelyOn(dependency.ref, target, visited));
+        return current.dependencies.some(dependency => dependency.target.ref && this.dependsTransitivelyOn(dependency.target.ref, target, visited));
     }
 
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
             'Aggregate', 'ApplicationService', 'DomainEvent', 'DomainService',
-            'Factory', 'Flow', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
+            'Factory', 'Journey', 'Actor', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {
             if (disallowed.has(node.$type)) {
@@ -1196,10 +1223,10 @@ export class ThinaiValidator {
             if (getOwningContextName(sourceModule) !== getOwningContextName(targetModule) || isInSharedKernel(target)) {
                 return;
             }
-            const dependsOn = sourceModule.dependencies.some(dependency => dependency.ref === targetModule);
+            const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
             const exposureTarget = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
             const exposed = targetModule.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.ref === exposureTarget)
+                exposure.declarations.some(declaration => declaration.target.ref === exposureTarget)
             );
             if (!dependsOn || !exposed) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
@@ -1212,25 +1239,31 @@ export class ThinaiValidator {
 
     checkRepository(repository: Repository, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(repository, accept);
-        if (repository.aggregate.ref && this.isCrossContextOwned(repository, repository.aggregate.ref)) {
-            accept('error', 'A repository must belong to an aggregate in its own bounded context.', {
+        const root = repository.root.ref;
+        const aggregate = root ? this.getOwningAggregate(root) : undefined;
+        if (!isEntity(root) || !root.root || !aggregate) {
+            accept('error', 'A repository must manage an aggregate-root entity.', {
                 node: repository,
-                property: 'aggregate'
+                property: 'root'
             });
-        }
-        if (!repository.aggregate.ref) {
             return;
+        }
+        if (this.isCrossContextOwned(repository, root)) {
+            accept('error', 'A repository and its aggregate root must belong to the same bounded context.', {
+                node: repository,
+                property: 'root'
+            });
         }
         const writeRepositories = this.services.shared.workspace.LangiumDocuments.all.toArray()
             .flatMap(document => document.parseResult.value
                 ? AstUtils.streamAst(document.parseResult.value).filter(isRepository)
-                    .filter(candidate => candidate.aggregate.ref === repository.aggregate.ref).toArray()
+                    .filter(candidate => candidate.root.ref && this.getOwningAggregate(candidate.root.ref) === aggregate).toArray()
                 : []);
         const ordered = writeRepositories.sort((left, right) => this.getDeclarationKey(left).localeCompare(this.getDeclarationKey(right)));
         if (ordered.length > 1 && ordered[0] !== repository) {
             accept('error', 'An aggregate may have only one write repository; use query repositories for read models.', {
                 node: repository,
-                property: 'aggregate'
+                property: 'root'
             });
         }
     }
@@ -1306,7 +1339,8 @@ export class ThinaiValidator {
             : isSeparateWaysRelationship(relationship)
                 ? [relationship.left, relationship.right]
                 : endpoints.map(endpoint => endpoint.context);
-        const resolvedContexts = contexts.map(context => context.ref).filter((context): context is BoundedContext => context !== undefined);
+        const resolvedContexts = contexts.map(context => 'target' in context ? context.target.ref : context.ref)
+            .filter((context): context is BoundedContext => context !== undefined);
 
         if (sharedKernelRelationship && resolvedContexts.length < 2) {
             accept('error', 'A shared-kernel relationship must include at least two bounded contexts.', {
@@ -1352,7 +1386,7 @@ export class ThinaiValidator {
 
     checkNamedDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        DataObject | Factory | Flow | IntegrationEvent | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        Actor | DataObject | Factory | IntegrationEvent | Journey | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         this.checkDuplicateDeclaration(node, accept);
@@ -1360,7 +1394,7 @@ export class ThinaiValidator {
 
     private checkDuplicateDeclaration(
         node: Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity | EnumType |
-        DataObject | Factory | Flow | IntegrationEvent | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
+        Actor | DataObject | Factory | IntegrationEvent | Journey | Method | Module | Projector | QueryRepository | QueryService | ReadModel | Repository | SharedKernel | Subdomain | ValueObject,
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
@@ -1429,7 +1463,7 @@ export class ThinaiValidator {
     private isIntegrationEventExposed(event: IntegrationEvent): boolean {
         const module = getOwningModule(event);
         return module === undefined || module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.ref === event)
+            exposure.declarations.some(declaration => declaration.target.ref === event)
         );
     }
 
@@ -1538,7 +1572,7 @@ export class ThinaiValidator {
         }
         return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
             isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
-            relationship.participants.some(participant => participant.ref?.name === contextName)
+            relationship.participants.some(participant => participant.target.ref?.name === contextName)
         ));
     }
 

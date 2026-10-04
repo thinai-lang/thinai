@@ -1,7 +1,7 @@
 # Events and Behavior
 
 Thinai models application-service operations, aggregate behavior, domain and
-integration events, and user-started flows. Behavior specifications remain
+integration events, and user-started journeys. Behavior specifications remain
 descriptive; structured clauses such as `invokes`, `emits`, and `transition`
 provide navigable semantic relationships.
 
@@ -30,7 +30,7 @@ bounded context Ordering {
         }
         enum OrderStatus { Draft, Placed }
     }
-    repository OrderRepository for Order;
+    repository OrderRepository manages Order.Order;
     factory OrderFactory {
         method createOrder() returns Order.Order;
     }
@@ -81,11 +81,11 @@ services or change aggregates:
 
 ```thinai
 bounded context Ordering {
-    event OrderPlaced data { orderId: string; }
+    event OrderPlaced { orderId: string; }
     read model OrderSummary { orderId: string; status: string; }
     query repository OrderSummaryRepository serves OrderSummary;
     projector OrderSummaryProjector {
-        method onOrderPlaced(source: event OrderPlaced) {
+        method onOrderPlaced(source: OrderPlaced) {
             projects OrderSummary;
             behavior "Copy [[OrderPlaced.orderId]] into [[OrderSummary.orderId]] via [[OrderSummaryRepository]].";
         }
@@ -95,19 +95,19 @@ bounded context Ordering {
 
 ```thinai
 bounded context Ordering {
-    event OrderPlaced data {
+    event OrderPlaced {
         orderId: OrderId;
     }
 
     module Contracts {
         exposes OrderPlacedV1;
-        integration event OrderPlacedV1 data {
+        integration event OrderPlacedV1 {
             orderId: string;
         }
     }
 
     application service OrderApplication {
-        method publishOrderPlaced(source: event OrderPlaced) {
+        method publishOrderPlaced(source: OrderPlaced) {
             emits Contracts.OrderPlacedV1;
             behavior "Map the internal event to the public contract.";
         }
@@ -115,10 +115,9 @@ bounded context Ordering {
 }
 ```
 
-A method with an event-typed parameter is event-triggered. The `event` marker
-in the parameter's type makes that event reference unambiguous. A consumer's
-method can receive an imported integration event and invoke a local command
-method:
+A method whose parameter type is a DomainEvent or IntegrationEvent is
+event-triggered. A consumer's method can receive an imported integration event
+and invoke a local command method:
 
 ```thinai
 application service ShipmentApplication {
@@ -126,7 +125,7 @@ application service ShipmentApplication {
         invokes Shipment.Shipment.start;
     }
 
-    method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1) {
+    method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {
         invokes createShipment;
         behavior "Map the incoming event to the local command input.";
     }
@@ -149,33 +148,34 @@ affect authorization or assert implementation conformance. Separate-ways and
 shared-kernel relationships do not authorize event handling. Context maps do
 not make domain events public.
 
-## Flows
+## Journeys
 
-A flow describes an ordered user-started sequence of application-service
-command methods in one bounded context. A flow is descriptive and does not
-declare or combine transaction boundaries. A flow may also
-include read-only query-service methods and descriptive `with` input mappings
-and `when` guards. They are linked prose, not executable data flow or
-conditions; the command must still enforce its own invariant. Event-triggered
-methods are not flow steps:
+A journey is a top-level, descriptive EventStorming timeline of user-invoked
+application-service commands. It can span bounded contexts. Each command remains
+owned by its bounded context; the journey does not imply a synchronous remote
+call or shared transaction. Background event handoffs are modeled by the
+contexts' events and handlers, not as journey steps. Queries and event-triggered
+handlers are not journey commands. Optional `with` input descriptions and `when`
+guards are linked prose, not executable data flow or conditions; each command
+must still enforce its own invariant:
 
 ```thinai
-flow PlaceOrder {
-    actor Customer;
-    invoke Ordering.OrderQueries.canPlaceOrder
-        with "orderId from [[OrderSummary.orderId]]"
-        when "The customer requests an eligibility check for the selected order.";
-    invoke Ordering.OrderApplication.placeOrder
-        with "orderId from [[OrderSummary.orderId]] and items from the selected order lines"
-        when "The eligibility check [[Ordering.OrderQueries.canPlaceOrder]] allows this order.";
+actor Customer;
+
+journey PlaceOrder {
+    by Customer {
+        invoke Ordering.OrderApplication.placeOrder
+            with "orderId from [[Ordering.OrderSummary.orderId]] and items from the selected order lines"
+            when "The eligibility result [[Ordering.OrderQueries.canPlaceOrder.result.eligible]] allows this order.";
+    }
 }
 ```
 
-Declare the initiating actor inline in the flow with `actor Customer;`. Flow
-order is significant. A query result is not bound to a command argument or
-evaluated by the DSL; the `when` text documents intended user-flow behavior.
-Emitted events are derived from the invoked methods and need not be repeated in
-the flow.
+Actors are declared once at the top level and referenced in `by Actor { ... }`
+blocks, which group commands initiated by that actor. Journey order is
+significant. A query result linked from `when` is not bound to a command
+argument, invoked by the journey, or evaluated by the DSL. Emitted events are
+derived from the invoked methods and need not be repeated in the journey.
 
 See the [Order Fulfillment example](../examples/order-fulfillment/README.md)
 for a multi-file model with an integration-event consumer.

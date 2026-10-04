@@ -140,7 +140,7 @@ bounded context Ordering {
             raw: string;
         }
     }
-    repository OrderRepository for Order;
+    repository OrderRepository manages Order.Order;
     factory OrderFactory {
         method create() returns Order.Order;
     }
@@ -148,7 +148,7 @@ bounded context Ordering {
     query repository OrderSearchRepository serves OrderSearch;
     event OrderUpdated;
     projector OrderSearchProjector {
-        method onOrderUpdated(source: event OrderUpdated) {
+        method onOrderUpdated(source: OrderUpdated) {
             projects OrderSearch;
             behavior "Project the changed order into [[OrderSearch]] via [[OrderSearchRepository]].";
         }

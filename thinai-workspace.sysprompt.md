@@ -39,11 +39,11 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
 - Modules use `module Name [depends on OtherModule] { ... }`; `exposes Declaration;` entries go inside the module before its declarations. Modules may be nested in a bounded context or shared kernel, and dependencies/exposures apply only to declarations in that owning context or kernel.
 - Application services use `application service Name { method ... }` to orchestrate use cases and may coordinate multiple aggregates. Use `query service Name { method ... }` for bounded-context read operations. Methods with an event-typed parameter react to that event on an application service or projector.
 - A query method must declare a result. Query services may read through query or aggregate repositories, including when both sides use the same physical database tables, and may link to those repositories in descriptive text. Read models, query repositories, and projectors are optional. Projectors describe event-driven projections and do not call application services or change aggregates.
-- Actors are declared inline in flows only. Flow steps use the singular keyword `invoke Method`; do not write `invokes` in a flow. Flows may invoke same-context application-service commands and query-service methods. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with` and one semicolon at the end. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to appear earlier or at all in the flow.
+- Actors are declared once at model scope. Top-level journeys use `by Actor { ... }` blocks to group user-invoked application-service commands, which may belong to different bounded contexts. Journey steps use the singular keyword `invoke Method`; do not write `invokes` in a journey. Background event handoffs and event-triggered handlers are not journey steps. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with` and one semicolon at the end. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to be invoked in the journey.
 - Fields and method parameters may be optional with `?`, as in `discount?: number`.
 - Built-in collections are `List<T>`, `Set<T>`, and `Map<K, V>`. Do not invent user-defined generic types.
 - DomainEvents are private to their bounded context and event payloads must not expose entity instances. IntegrationEvents are public cross-context contracts: expose module-nested contracts, import the producer context and an authorized context map at consumers, and do not put aggregate-owned types in their payloads. An application-service handler may emit an IntegrationEvent for a local DomainEvent; delivery timing, including an outbox, is an implementation detail.
-- Declare event payloads as `event Name data { field: type; }` or `integration event Name data { field: type; }`. `exposes Name;` is a separate statement inside the containing module. `invokes` and `emits` references use qualified declaration names without `()`; parentheses belong only to method declarations and calls described in prose.
+- Declare event payloads as `event Name { field: type; }` or `integration event Name { field: type; }`. `exposes Name;` is a separate statement inside the containing module. `invokes` and `emits` references use qualified declaration names without `()`; parentheses belong only to method declarations and calls described in prose.
 
 Use this valid pattern as a reference for declaration nesting and clause order:
 
@@ -64,14 +64,14 @@ bounded context Ordering {
         }
         enum OrderStatus { Draft, Placed }
     }
-    repository OrderRepository for Order;
+    repository OrderRepository manages Order.Order;
     factory OrderFactory {
         method createOrder() returns Order.Order;
     }
     read model OrderReadModel { orderId: string; status: string; }
     query repository OrderReadModelRepository serves OrderReadModel;
     projector OrderReadModelProjector {
-        method onOrderPlaced(source: event OrderPlaced) {
+        method onOrderPlaced(source: OrderPlaced) {
             projects OrderReadModel;
             behavior "Update the order summary from the event via [[OrderReadModelRepository]].";
         }
@@ -89,7 +89,7 @@ bounded context Ordering {
         method createOrder() {
             invokes OrderFactory.createOrder;
         }
-        method publishOrderPlaced(source: event OrderPlaced) {
+        method publishOrderPlaced(source: OrderPlaced) {
             emits OrderPlacedV1;
             behavior "Map the domain event to the public integration contract.";
         }
@@ -115,7 +115,7 @@ Use `invariant`, `precondition`, `postcondition`, and `behavior` to express doma
 behavior "Check [[Order.Order.ensureOwner]], then calculate the total with [[Pricing.calculateTotal]].";
 ```
 
-Each `[[...]]` reference must name a visible declaration, method, parameter, repository, type, enum value, or field. A dotted path such as `[[input.address.street]]` is one linked reference with independently navigable segments: `input` targets the parameter, `address` its field, and `street` the nested field. Method and Flow text refer to parameters by local name, not by qualifying them with their method. Method text can link its parameters and `result` fields; Flow `with`/`when` text can link the invoked method's parameters and relevant fields. Query-result paths use `[[Context.QueryService.method.result.field]]`. These links are navigable references, not expressions or executable calls. Use fully qualified paths when names collide, e.g. `[[Ordering.Order]]` for an aggregate and `[[Ordering.Order.Order]]` for a same-named root entity. Escape `[[` as `\[[` for a literal marker. Multiline specification text dedents common indentation. Do not model assignments, returns, loops, or general-purpose control flow in prose.
+Each `[[...]]` reference must name a visible declaration, method, parameter, repository, type, enum value, or field. A dotted path such as `[[input.address.street]]` is one linked reference with independently navigable segments: `input` targets the parameter, `address` its field, and `street` the nested field. Method and Journey text refer to parameters by local name, not by qualifying them with their method. Method text can link its parameters and `result` fields; Journey `with`/`when` text can link the invoked method's parameters and relevant fields. Query-result paths use `[[Context.QueryService.method.result.field]]`. These links are navigable references, not expressions or executable calls. Use fully qualified paths when names collide, e.g. `[[Ordering.Order]]` for an aggregate and `[[Ordering.Order.Order]]` for a same-named root entity. Escape `[[` as `\[[` for a literal marker. Multiline specification text dedents common indentation. Do not model assignments, returns, loops, or general-purpose control flow in prose.
 
 An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these optional clauses to the relevant type, constructor, or method. Inside a method body, optional `invokes Method;` and `emits Event;` statements provide navigable relationships, while `transition` models an entity's state change. None of these statements is a required workflow or executable instruction; behavior text remains descriptive.
 
@@ -137,10 +137,10 @@ Before returning a model, ensure that:
 
 1. Each aggregate has exactly one root entity.
 2. Every entity has exactly one identifier field, typed by a value object declared in its aggregate.
-3. Every referenced aggregate, event, method, and type is declared and visible; actors are declared inline in their flows.
+3. Every referenced aggregate, event, method, and type is declared and visible; Actors are declared once at model scope and referenced from Journey actor blocks.
 4. Imports select the intended bounded contexts or shared kernels; do not rely on workspace-global declarations.
 5. Application services orchestrate use cases and may coordinate multiple aggregates; they may invoke aggregate-root or factory methods using optional `invokes` body clauses. Each factory method returns the aggregate root it creates, and one factory may contain methods for different roots. Entity methods may transition their own enum fields; only aggregate-root methods emit DomainEvents. IntegrationEvents are emitted only by application-service methods handling a local DomainEvent. Domain behavior never invokes application-service methods.
 6. Each aggregate has one write repository. Read models, query repositories, and projectors are optional; queries may read through query or aggregate repositories, even when both sides use the same physical tables. Each projector method declares one or more logical targets with `projects ReadModelA, ReadModelB;`; describe a specific query-repository destination in `behavior` only when it matters. Query-service methods must declare a result and never emit events or invoke aggregate methods. Do not add `transactional`, `loads`, `saves`, `deletes`, `creates`, `updates`, or `after commit` clauses.
 7. Refer to another aggregate by its identifier, not by its entity. Keep entity inheritance within the same aggregate, and use `initial` states only when all states are reachable through declared transitions.
-8. Use a user-started `flow` to sequence command and query-service methods within one bounded context. The flow does not imply a combined transaction. `with` and `when` text are descriptive with linked references, not executable mappings or conditions; commands must enforce their own invariants.
-9. Behavior, Flow `with`, and Flow `when` clauses use quoted descriptive text with visible `[[QualifiedName]]` references, and contain no unsupported programming-language syntax. Flow `with` and `when` text is not evaluated; a linked query result is documentation only and does not require that query to appear earlier (or at all) in the Flow.
+8. Use a top-level `journey` with `by Actor { ... }` blocks to sequence user-invoked application-service commands across bounded contexts. Journey order is descriptive and implies neither direct cross-context calls nor a combined transaction. Background event handoffs and event-triggered handlers are not Journey steps.
+9. Behavior and Journey `with`/`when` clauses use quoted descriptive text with visible `[[QualifiedName]]` references, and contain no unsupported programming-language syntax. Journey `with` and `when` text is not evaluated; a linked query result is documentation only and does not require that query to appear earlier or at all in the Journey.

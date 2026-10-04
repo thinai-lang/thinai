@@ -1,5 +1,6 @@
 import "./context-catalog.tni";
 import "./ordering.tni";
+actor Customer;
 
 part of bounded context Ordering {
     application service OrderApplication {
@@ -10,7 +11,7 @@ part of bounded context Ordering {
             postcondition "The order is placed.";
         }
 
-        method publishOrderPlaced(source: event OrderPlaced) {
+        method publishOrderPlaced(source: OrderPlaced) {
             emits Contracts.OrderPlacedV1;
             behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract.";
         }
@@ -56,14 +57,14 @@ part of bounded context Ordering {
     query repository CustomerSummaryRepository serves CustomerSummary;
 
     projector OrderSummaryProjector {
-        method onOrderPlaced(source: event OrderPlaced) {
+        method onOrderPlaced(source: OrderPlaced) {
             projects OrderSummary;
             behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]] in [[OrderSummaryRepository]].";
         }
     }
 
     projector CustomerSummaryProjector {
-        method onCustomerRegistered(source: event CustomerRegistered) {
+        method onCustomerRegistered(source: CustomerRegistered) {
             projects CustomerSummary;
             behavior "Project [[CustomerRegistered.customerId]] and [[CustomerRegistered.name]] into [[CustomerSummary.customerId]] and [[CustomerSummary.name]] in [[CustomerSummaryRepository]].";
         }
@@ -81,28 +82,28 @@ part of bounded context Ordering {
 
     module Contracts {
         exposes OrderPlacedV1;
-        integration event OrderPlacedV1 data {
+        integration event OrderPlacedV1 {
             orderId: string;
             customerId: string;
             status: string;
         }
     }
 
-    flow PlaceOrder {
-        actor Customer;
-        invoke OrderQueries.canPlaceOrder
-            with "orderId from [[OrderSummary.orderId]]"
-            when "The customer requests an eligibility check for the selected order.";
-        invoke OrderApplication.placeOrder
-            with "input.orderId from [[OrderSummary.orderId]] and input.items from the selected order lines"
+}
+
+journey PlaceOrder {
+    by Customer {
+        invoke Ordering.OrderApplication.placeOrder
+            with "input.orderId from [[Ordering.OrderSummary.orderId]] and input.items from the selected order lines"
             when "The eligibility result [[Ordering.OrderQueries.canPlaceOrder.result.eligible]] is true.";
     }
+}
 
-    flow RegisterCustomerAndPlaceOrder {
-        actor Customer;
-        invoke CustomerRegistration.registerCustomer
+journey RegisterCustomerAndPlaceOrder {
+    by Customer {
+        invoke Ordering.CustomerRegistration.registerCustomer
             with "id from the customer identifier and name from the registration form";
-        invoke OrderApplication.placeOrder
+        invoke Ordering.OrderApplication.placeOrder
             with "orderId from the selected order and items from the requested order lines";
     }
 }

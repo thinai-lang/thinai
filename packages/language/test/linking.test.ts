@@ -45,17 +45,17 @@ describe('Linking tests', () => {
                         }
                         enum OrderStatus { Draft, Placed }
                 }
-                    repository OrderRepository for Order;
+                    repository OrderRepository manages Order.Order;
                 application service OrderApplication {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place;
                     }
-                    method publishOrderPlaced(source: event OrderPlaced) {
+                    method publishOrderPlaced(source: OrderPlaced) {
                         emits OrderPlacedV1;
                     }
                     }
                     event OrderPlaced;
-                    integration event OrderPlacedV1 data { orderId: string; }
+                    integration event OrderPlacedV1 { orderId: string; }
                 }
             `
         );
@@ -77,7 +77,7 @@ describe('Linking tests', () => {
                     root entity Shipment { method start(); identifier id: ShipmentId; }
                     value object ShipmentId { raw: string; }
                 }
-                repository ShipmentRepository for Shipment;
+                repository ShipmentRepository manages Shipment.Shipment;
                 factory ShipmentFactory {
                     method createShipment() returns Shipment.Shipment;
                     }
@@ -99,7 +99,7 @@ describe('Linking tests', () => {
             `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                   application service ShipmentEventHandler {
-                        method onOrderPlaced(source: event Ordering.OrderPlacedV1) {
+                        method onOrderPlaced(source: Ordering.OrderPlacedV1) {
                             invokes ShipmentApplication.createShipment;
                            behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event.";
                        }
@@ -120,12 +120,14 @@ describe('Linking tests', () => {
         const shipping = consumerModel.declarations[0];
 
         expect(isModel(contextModel)).toBe(true);
-        expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ ref?: unknown }> }).subdomains[0].ref).toBe(contextModel.declarations[0]);
+        expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ target: { ref?: unknown } }> }).subdomains[0].target.ref).toBe(contextModel.declarations[0]);
         expect(partNode.$type).toBe('BoundedContextPart');
         expect((partNode as Model['declarations'][number] & { context: { ref?: unknown } }).context.ref).toBe(contextNode);
-        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ eventType?: { ref?: unknown } }>; invocations?: Array<{ targets: Array<{ ref?: unknown }> }> }> }> }).members;
-        const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter => parameter.eventType)));
-        expect(shippingService?.methods?.[0].parameters[0].eventType?.ref).toBeDefined();
+        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ type?: { ref?: { $type?: string } } }>; invocations?: Array<{ targets: Array<{ ref?: unknown }> }> }> }> }).members;
+        const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter =>
+            parameter.type?.ref?.$type === 'DomainEvent' || parameter.type?.ref?.$type === 'IntegrationEvent'
+        )));
+        expect(shippingService?.methods?.[0].parameters[0].type?.ref?.$type).toBe('IntegrationEvent');
         expect(shippingService?.methods?.[0].invocations?.[0].targets.at(-1)?.ref).toBeDefined();
 
         const contextPath = services.Thinai.workspace.AstNodeLocator.getAstNodePath(contextNode);
@@ -142,13 +144,13 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: event OrderPlaced) {} } }'
+            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
         );
         documents = [context, consumer];
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to EventDeclaration named 'OrderPlaced'"))).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to ParameterType named 'OrderPlaced'"))).toBe(true);
     });
 
     test('rejects direct consumption of a private domain event across contexts', async () => {
@@ -172,7 +174,7 @@ describe('Linking tests', () => {
                     }
                     application service ShipmentApplication {
                         method createShipment() {}
-                        method onOrderPlaced(source: event Ordering.OrderPlaced) { invokes createShipment; }
+                        method onOrderPlaced(source: Ordering.OrderPlaced) { invokes createShipment; }
                     }
                 }
             `
@@ -195,7 +197,7 @@ describe('Linking tests', () => {
              bounded context Shipping {
                  aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
                  application service ShipmentApplication {
-                     method onOrderPlaced(source: event Ordering.Contracts.OrderPlacedV1) {}
+                     method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {}
                  }
              }`
         );
@@ -225,7 +227,7 @@ describe('Linking tests', () => {
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                  application service ShipmentApplication {
-                     method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
                  }
              }`
         );
@@ -256,7 +258,7 @@ describe('Linking tests', () => {
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Shipping {
                  application service ShipmentApplication {
-                     method onOrderPlaced(source: event Ordering.OrderPlacedV1) {}
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
                  }
              }`
         );
@@ -286,7 +288,7 @@ describe('Linking tests', () => {
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication {
-                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
              }`
         );
@@ -316,7 +318,7 @@ describe('Linking tests', () => {
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication {
-                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
              }`
         );
@@ -346,7 +348,7 @@ describe('Linking tests', () => {
             `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
              part of bounded context Ordering {
                  application service OrderApplication {
-                     method onShipmentSent(source: event Shipping.ShipmentSentV1) {}
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
              }`
         );
@@ -449,6 +451,94 @@ describe('Linking tests', () => {
         expect(orderRoot).toBeDefined();
     });
 
+    test('navigates repository ownership to the aggregate and its root entity', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repository-root.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId; }
+                    value object OrderId { raw: string; }
+                }
+                repository OrderRepository manages Order.Order;
+            }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        const pathOffset = text.indexOf('Order.Order', text.indexOf('repository'));
+        const expected = [
+            { source: pathOffset, declaration: text.indexOf('aggregate Order') + 'aggregate '.length },
+            { source: pathOffset + 'Order.'.length, declaration: text.indexOf('root entity Order') + 'root entity '.length }
+        ];
+        for (const segment of expected) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.source)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(document.textDocument.positionAt(segment.declaration));
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.source),
+                end: document.textDocument.positionAt(segment.source + 'Order'.length)
+            });
+        }
+    });
+
+    test('navigates qualified module dependencies and emitted-event paths', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/qualified-list-paths.tni'),
+            `bounded context Ordering {
+                module Contracts { event OrderPlaced; }
+                module Api depends on Ordering.Contracts { value object ApiCode { raw: string; } }
+                aggregate Order {
+                    root entity Order {
+                        method place() { emits Contracts.OrderPlaced; }
+                        identifier id: OrderId;
+                    }
+                    value object OrderId { raw: string; }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        const paths = [
+            {
+                offset: text.indexOf('Ordering.Contracts'),
+                parts: ['Ordering', 'Contracts'],
+                declarations: [text.indexOf('bounded context Ordering') + 'bounded context '.length, text.indexOf('module Contracts') + 'module '.length]
+            },
+            {
+                offset: text.indexOf('Contracts.OrderPlaced'),
+                parts: ['Contracts', 'OrderPlaced'],
+                declarations: [text.indexOf('module Contracts') + 'module '.length, text.indexOf('event OrderPlaced') + 'event '.length]
+            }
+        ];
+        for (const path of paths) {
+            let partOffset = 0;
+            for (let index = 0; index < path.parts.length; index++) {
+                const segmentOffset = path.offset + partOffset;
+                const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                    textDocument: { uri: document.uri.toString() },
+                    position: document.textDocument.positionAt(segmentOffset)
+                });
+                expect(definitions?.[0]?.targetSelectionRange.start).toEqual(
+                    document.textDocument.positionAt(path.declarations[index])
+                );
+                expect(definitions?.[0]?.originSelectionRange).toEqual({
+                    start: document.textDocument.positionAt(segmentOffset),
+                    end: document.textDocument.positionAt(segmentOffset + path.parts[index].length)
+                });
+                partOffset += path.parts[index].length + 1;
+            }
+        }
+    });
+
     test('resolves every mirror path segment through an imported bounded-context part', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-context.tni'),
@@ -515,7 +605,7 @@ describe('Linking tests', () => {
                 read model CustomerSummary { customerId: string; }
                 event EntityChanged;
                 projector SearchProjection {
-                    method onEntityChanged(source: event EntityChanged) {
+                    method onEntityChanged(source: EntityChanged) {
                         projects OrderSummary, CustomerSummary;
                     }
                 }
@@ -623,7 +713,7 @@ describe('Linking tests', () => {
                         raw: string;
                     }
                 }
-                repository OrderRepository for Order;
+                repository OrderRepository manages Order.Order;
                 application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.ensureOwner;
@@ -683,7 +773,7 @@ describe('Linking tests', () => {
                 factory OrderFactory {
                     method createOrder(id: OrderId) returns Order.Order;
                     }
-                repository OrderRepository for Order;
+                repository OrderRepository manages Order.Order;
                 application service OrderApplication {
                     method placeOrder() {
                         invokes OrderFactory.createOrder;
@@ -833,7 +923,7 @@ describe('Linking tests', () => {
                     value object OrderId { raw: string; }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository for Order;
+                repository OrderRepository manages Order.Order;
                 module Contracts {
                     value object DeliveryCode { raw: string; }
                 }
@@ -844,12 +934,12 @@ describe('Linking tests', () => {
                     value object OrderId { raw: string; }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository for Order;
+                repository OrderRepository manages Order.Order;
                 aggregate Invoice {
                     root entity Invoice { method inspect(); identifier id: InvoiceId; orderId: Order.OrderId; }
                     value object InvoiceId { raw: string; }
                 }
-                repository InvoiceRepository for Invoice;
+                repository InvoiceRepository manages Invoice.Invoice;
                 module Contracts {
                     exposes DeliveryCode;
                     value object DeliveryCode { raw: string; }
@@ -906,7 +996,7 @@ describe('Linking tests', () => {
             }) ?? [];
 
         expect(orderIdReference).toBe(orderId);
-        expect(api?.dependencies[0].ref).toBe(localContracts);
+        expect(api?.dependencies[0].target.ref).toBe(localContracts);
         expect(application?.methods[0].parameters[1].type?.ref).toBe(localDeliveryCode);
         expect(behaviorTargets.map(target => [target.$type, 'name' in target ? target.name : undefined])).toEqual([
             ['Field', 'raw'],
@@ -1138,6 +1228,14 @@ describe('Linking tests', () => {
             position: consumer.textDocument.positionAt(importComponentOffset)
         });
         expect(importDefinition?.[0]?.targetSelectionRange.start).toEqual(
+            catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
+        );
+        const importAliasOffset = consumer.textDocument.getText().indexOf('Orders');
+        const aliasDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(importAliasOffset)
+        });
+        expect(aliasDefinition?.[0]?.targetSelectionRange.start).toEqual(
             catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
         );
     });

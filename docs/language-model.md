@@ -25,7 +25,7 @@ bounded context Ordering realizes OrderManagement {
         }
         enum OrderStatus { Draft, Placed }
     }
-    repository OrderRepository for Order;
+    repository OrderRepository manages Order.Order;
 
     event OrderPlaced;
 

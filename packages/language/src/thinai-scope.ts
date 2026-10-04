@@ -15,7 +15,7 @@ import {
     type Import,
     type Constructor,
     type DataObject,
-    type FlowElement,
+    type JourneyStep,
     type Method,
     type ReadModel,
     isConstructor,
@@ -25,7 +25,7 @@ import {
     isDataObject,
     isEntity,
     isField,
-    isFlowElement,
+    isJourneyStep,
     isMethodInvocation,
     isIntegrationEvent,
     isModel,
@@ -54,7 +54,8 @@ const exportedTypes = new Set([
     'Entity',
     'EnumType',
     'EnumValue',
-    'Flow',
+    'Actor',
+    'Journey',
     'Factory',
     'Field',
     'IntegrationEvent',
@@ -110,7 +111,7 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
             if (isModel(root)) {
                 const selectedComponent = root.imports
                     .flatMap(importDeclaration => importDeclaration.components)
-                    .find(component => component.alias === referenceText);
+                    .find(component => component.alias?.$refText === referenceText);
                 if (selectedComponent) {
                     return selectedComponent.component.$refText;
                 }
@@ -215,13 +216,30 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.createScope(this.getSpecificationPathSymbols(context, referenceType));
         }
         if (context.property === 'targets' &&
-            (isFlowElement(context.container) || isMethodInvocation(context.container))) {
+            (isJourneyStep(context.container) || isMethodInvocation(context.container))) {
             return this.createScope(this.getInvocationPathSymbols(context, referenceType));
         }
         if (context.property === 'component' && isImportComponent(context.container)) {
             return this.createScope(this.getImportableComponents(context.container, referenceType));
         }
+        if (context.property === 'alias' && isImportComponent(context.container)) {
+            const target = context.container.component.ref;
+            return this.createScope(target
+                ? [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))]
+                : []);
+        }
+        const wrapperPath = (context.container as unknown as { path?: unknown }).path;
+        if (context.property === 'target' && Array.isArray(wrapperPath) && wrapperPath.length === 0) {
+            return this.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
+        }
         return this.getUnsegmentedScope(context, referenceType);
+    }
+
+    private getPathScopeContext(context: ReferenceInfo): ReferenceInfo {
+        if ((context.property === 'path' || context.property === 'target') && context.container.$containerProperty) {
+            return { ...context, property: context.container.$containerProperty };
+        }
+        return context;
     }
 
     private getTransitionFieldScope(transition: import('./generated/ast.js').Transition): Scope {
@@ -276,12 +294,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             reference: terminalReference as ReferenceInfo['reference'],
             index: undefined
         };
+        const scopeContext = wrapperPath ? this.getPathScopeContext(finalContext) : finalContext;
         const segmentIndex = context.property === prefixProperty
             ? context.index ?? 0
             : path.length - 1;
         const completePath = path.join('.');
         const finalDescription = this.getUnsegmentedScope(
-            finalContext,
+            scopeContext,
             this.reflection.getReferenceType(finalContext)
         ).getElement(completePath);
         if (!finalDescription?.node) {
@@ -290,7 +309,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         const targetDescription = segmentIndex === path.length - 1
             ? finalDescription
-            : this.getUnsegmentedScope(finalContext, 'NamedDeclaration')
+            : this.getUnsegmentedScope(scopeContext, 'NamedDeclaration')
                 .getElement(path.slice(0, segmentIndex + 1).join('.'));
         const target = targetDescription?.node ?? this.getPathSegmentTarget(finalDescription.node, path, segmentIndex, context);
         if (!target) {
@@ -341,10 +360,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         let current: AstNode | undefined = context.container;
         let operation: Method | Constructor | undefined;
-        let flowElement: FlowElement | undefined;
+        let journeyStep: JourneyStep | undefined;
         while (current) {
-            if (isFlowElement(current)) {
-                flowElement = current;
+            if (isJourneyStep(current)) {
+                journeyStep = current;
                 const target = current.targets.at(-1)?.ref;
                 operation = isMethod(target) ? target : undefined;
                 break;
@@ -388,21 +407,21 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 }
             }
         }
-        if (flowElement) {
-            const flowContext = getOwningContextName(flowElement);
-            for (const description of this.indexManager.allElements('Method').toArray()) {
+        if (journeyStep) {
+            for (const description of this.getUnsegmentedScope(context, 'Method').getAllElements()) {
                 const queryMethod = description.node;
-                if (!isMethod(queryMethod) || !isQueryService(queryMethod.$container) ||
-                    getOwningContextName(queryMethod) !== flowContext) {
+                if (!isMethod(queryMethod) || !isQueryService(queryMethod.$container)) {
+                    continue;
+                }
+                if (!queryMethod.returnType && !queryMethod.returnPrimitive && !queryMethod.returnCollection) {
                     continue;
                 }
                 const shape = queryMethod.returnType?.ref ?? queryMethod.returnCollection?.elementType?.ref;
-                if (!shape || (!isDataObject(shape) && !isReadModel(shape) && !isValueObject(shape))) {
-                    continue;
-                }
                 const resultPrefix = `${getExportedName(queryMethod as AstNode & { name: string })}.result`;
                 this.addSpecificationSymbol(pending, queryMethod, resultPrefix, referenceType);
-                this.addShapeFields(pending, shape, resultPrefix, referenceType, new Set());
+                if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {
+                    this.addShapeFields(pending, shape, resultPrefix, referenceType, new Set());
+                }
             }
         }
         return pending;
@@ -413,32 +432,79 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return [];
         }
         const part = context.container;
-        const index = context.index ?? 0;
+        const index = context.index ?? (context.reference.$refText.length === 0 ? part.targets.length : 0);
         const reference = context.reference;
-        if (index >= part.targets.length || !part.target) {
+        if (!part.target) {
             return [];
+        }
+
+        if (reference.$refText.length === 0) {
+            const prefix = [part.target, ...part.targets.slice(0, index)].map(candidate => candidate.$refText);
+            return this.getPathSegmentCompletions(context, referenceType, prefix);
+        }
+
+        if (index >= part.targets.length) {
+            const prefix = [part.target, ...part.targets].map(candidate => candidate.$refText);
+            return this.getPathSegmentCompletions(context, referenceType, prefix);
         }
 
         const fullPath = [part.target, ...part.targets.slice(0, index + 1)]
             .map(candidate => candidate.$refText).join('.');
         const description = this.getUnsegmentedScope(context, referenceType).getElement(fullPath);
-        return description ? [{ ...description, name: reference.$refText }] : [];
+        if (description) {
+            return [{ ...description, name: reference.$refText }];
+        }
+        const prefix = [part.target, ...part.targets.slice(0, index)]
+            .map(candidate => candidate.$refText);
+        return this.getPathSegmentCompletions(context, referenceType, prefix);
     }
 
     private getInvocationPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
-        const references = isFlowElement(context.container) || isMethodInvocation(context.container)
+        const references = isJourneyStep(context.container) || isMethodInvocation(context.container)
             ? context.container.targets
             : [];
-        const index = context.index ?? 0;
-        if (index >= references.length) {
-            return [];
-        }
+        const index = context.index ?? (context.reference.$refText.length === 0 ? references.length : 0);
         const path = references.map(reference => reference.$refText);
-        const description = this.getUnsegmentedScope(context, referenceType).getElement(path.join('.'));
-        const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
-        return target
-            ? [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))]
-            : [];
+        if (context.reference.$refText.length > 0 && index < references.length && path.length > 0) {
+            const description = this.getUnsegmentedScope(context, referenceType).getElement(path.join('.'));
+            const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
+            if (target) {
+                return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
+            }
+        }
+        return this.getPathSegmentCompletions(context, referenceType, references.slice(0, index).map(reference => reference.$refText));
+    }
+
+    private getPathSegmentCompletions(context: ReferenceInfo, referenceType: string, prefix: string[]): AstNodeDescription[] {
+        const prefixText = prefix.join('.');
+        const pathPrefix = prefixText.length > 0 ? `${prefixText}.` : '';
+        const results = new Map<string, AstNodeDescription>();
+        const scope = this.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
+        for (const description of scope.getAllElements()) {
+            if (!description.node || !description.name.startsWith(pathPrefix)) {
+                continue;
+            }
+            const parts = description.name.split('.');
+            if (parts.length <= prefix.length) {
+                continue;
+            }
+            const segment = parts[prefix.length];
+            const segmentName = [...prefix, segment].join('.');
+            const targets = new Set<AstNode>();
+            const directTarget = scope.getElement(segmentName)?.node;
+            const ancestorTarget = this.getPathSegmentTarget(description.node, parts, prefix.length, context);
+            if (directTarget) {
+                targets.add(directTarget);
+            }
+            if (ancestorTarget) {
+                targets.add(ancestorTarget);
+            }
+            for (const target of targets) {
+                const segmentDescription = this.descriptions.createDescription(target, segment, AstUtils.getDocument(target));
+                results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
+            }
+        }
+        return [...results.values()];
     }
 
     private getPathSegmentTarget(target: AstNode, path: string[], segmentIndex: number, context: ReferenceInfo): AstNode | undefined {
@@ -484,7 +550,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const document = AstUtils.getDocument(context.container);
         for (const importDeclaration of root.imports) {
             if (importDeclaration.components.some(component =>
-                component.alias === alias && component.component.ref === node
+                component.alias?.$refText === alias && component.component.ref === node
             )) {
                 return true;
             }
@@ -538,13 +604,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
         for (const dependency of module.dependencies) {
-            const targetModule = dependency.ref;
+            const targetModule = dependency.target.ref;
             if (!targetModule) {
                 continue;
             }
             for (const exposure of targetModule.exposures) {
                 for (const declaration of exposure.declarations) {
-                    const target = declaration.ref;
+                    const target = declaration.target.ref;
                     if (!target) {
                         continue;
                     }
@@ -595,8 +661,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                         if (!target || !this.isWithinComponent(description.name, target)) {
                             continue;
                         }
-                        const names = component.alias
-                            ? this.getComponentAliasNames(description.name, getExportedName(target), component.alias)
+                        const names = component.alias?.$refText
+                            ? this.getComponentAliasNames(description.name, getExportedName(target), component.alias.$refText)
                             : this.getUnaliasedNames(description.name);
                         this.addScopeCandidates(candidates, description, names);
                     }

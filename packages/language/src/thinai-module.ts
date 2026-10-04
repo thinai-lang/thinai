@@ -11,6 +11,7 @@ import { ThinaiTokenBuilder } from './thinai-token-builder.js';
 import { createThinaiParser } from './thinai-parser.js';
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
+import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -28,6 +29,9 @@ export type ThinaiAddedServices = {
 export type ThinaiServices = LangiumServices & ThinaiAddedServices
 
 export const ThinaiSharedModule: Module<LangiumSharedServices, PartialLangiumSharedServices> = {
+    lsp: {
+        NodeKindProvider: () => new ThinaiNodeKindProvider()
+    },
     workspace: {
         DocumentBuilder: services => new ThinaiDocumentBuilder(services)
     }
