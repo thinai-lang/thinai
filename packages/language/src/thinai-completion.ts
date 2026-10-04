@@ -4,7 +4,8 @@ import {
     type LangiumDocument,
     type ReferenceInfo,
     URI,
-    UriUtils
+    UriUtils,
+    stream
 } from 'langium';
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
 import {
@@ -27,7 +28,7 @@ import {
     isParameter,
     isSpecificationTextPart
 } from './generated/ast.js';
-import { getExportedName } from './thinai-scope.js';
+import { getExportedName, ThinaiScopeProvider } from './thinai-scope.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
@@ -47,9 +48,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const completedSegments = container.targets.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < context.offset
             ).length;
-            return this.thinaiServices.references.ScopeProvider
-                .getScope({ ...refInfo, index: completedSegments })
-                .getAllElements();
+            return stream((this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
+                .getInvocationCompletionCandidates({ ...refInfo, index: completedSegments }));
         }
         if (isSpecificationTextPart(container) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
@@ -59,7 +59,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 .getScope({ ...refInfo, index: completedSegments })
                 .getAllElements();
         }
-        return super.getReferenceCandidates(refInfo, context);
+        return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
+            refInfo,
+            super.getReferenceCandidates(refInfo, context)
+        );
     }
 
     protected override createReferenceCompletionItem(

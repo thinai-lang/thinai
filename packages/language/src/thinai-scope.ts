@@ -8,7 +8,9 @@ import {
     type ReferenceInfo,
     type Scope,
     type Stream,
-    UriUtils
+    type LangiumCoreServices,
+    UriUtils,
+    stream
 } from 'langium';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import {
@@ -18,16 +20,23 @@ import {
     type JourneyStep,
     type Method,
     type ReadModel,
+    isContextMap,
     isConstructor,
     isBoundedContext,
     isBoundedContextPart,
     isDomainEvent,
+    isApplicationService,
     isDataObject,
     isEntity,
+    isFactory,
     isField,
+    isEnumValue,
     isJourneyStep,
     isMethodInvocation,
     isIntegrationEvent,
+    isPartnershipRelationship,
+    isCustomerSupplierRelationship,
+    isSharedKernelRelationship,
     isModel,
     isMethod,
     isEnumType,
@@ -39,6 +48,7 @@ import {
     isReadModel,
     isSpecificationTextPart,
     isQueryService,
+    isParameter,
     isValueObject,
     type Module
 } from './generated/ast.js';
@@ -197,6 +207,15 @@ export class ThinaiScopeComputation extends DefaultScopeComputation {
 }
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
+    private readonly documents: LangiumCoreServices['shared']['workspace']['LangiumDocuments'];
+    private readonly nodeLocator: LangiumCoreServices['workspace']['AstNodeLocator'];
+
+    constructor(services: LangiumCoreServices) {
+        super(services);
+        this.documents = services.shared.workspace.LangiumDocuments;
+        this.nodeLocator = services.workspace.AstNodeLocator;
+    }
+
     override getScope(context: ReferenceInfo): Scope {
         if (isTransition(context.container)) {
             if (context.property === 'field') {
@@ -233,6 +252,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
         }
         return this.getUnsegmentedScope(context, referenceType);
+    }
+
+    filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
+        return stream(candidates).filter(description =>
+            this.isSupportedCandidate(context, this.getDescriptionNode(description))
+        );
     }
 
     private getPathScopeContext(context: ReferenceInfo): ReferenceInfo {
@@ -475,13 +500,120 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return this.getPathSegmentCompletions(context, referenceType, references.slice(0, index).map(reference => reference.$refText));
     }
 
-    private getPathSegmentCompletions(context: ReferenceInfo, referenceType: string, prefix: string[]): AstNodeDescription[] {
+    getInvocationCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
+        const referenceType = this.reflection.getReferenceType(context);
+        const references = isJourneyStep(context.container) || isMethodInvocation(context.container)
+            ? context.container.targets
+            : [];
+        const index = context.index ?? (context.reference.$refText.length === 0 ? references.length : 0);
+        const path = references.map(reference => reference.$refText);
+        const scope = this.getUnsegmentedScope(context, referenceType);
+        const allowedTargets = new Set<AstNode>();
+        for (const description of scope.getAllElements()) {
+            const target = this.getDescriptionNode(description);
+            if (isMethod(target) && (isJourneyStep(context.container)
+                ? this.isJourneyCommand(target)
+                : this.isSupportedInvocationTarget(context.container, target))) {
+                allowedTargets.add(target);
+            }
+        }
+        if (context.reference.$refText.length > 0 && index < references.length && path.length > 0) {
+            const description = scope.getElement(path.join('.'));
+            const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
+            if (target && allowedTargets.has(target)) {
+                return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
+            }
+        }
+        return this.getPathSegmentCompletions(
+            context,
+            referenceType,
+            references.slice(0, index).map(reference => reference.$refText),
+            allowedTargets
+        );
+    }
+
+    private isJourneyCommand(method: Method): boolean {
+        return isApplicationService(method.$container) && !method.parameters.some(parameter =>
+            isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+        );
+    }
+
+    private isSupportedInvocationTarget(container: AstNode, target: Method): boolean {
+        let source: AstNode | undefined = container;
+        while (source && !isMethod(source)) {
+            source = source.$container;
+        }
+        if (!isMethod(source) || target.parameters.some(parameter =>
+            isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+        )) {
+            return false;
+        }
+        if (this.isCrossContext(source, target)) {
+            const sourceIsEventHandler = isApplicationService(source.$container) && source.parameters.some(parameter =>
+                isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+            );
+            if (!sourceIsEventHandler || !isApplicationService(target.$container) ||
+                target.$container === source.$container) {
+                return false;
+            }
+        }
+
+        const sourceApplication = isApplicationService(source.$container);
+        const targetAggregate = this.getOwningAggregateNode(target);
+        const targetIsRootMethod = targetAggregate !== undefined &&
+            target.$container === targetAggregate.members.find(member => isEntity(member) && member.root);
+        const factoryRoot = target.returnType?.ref;
+        const factoryReturnsRoot = isFactory(target.$container) && isEntity(factoryRoot) && factoryRoot.root &&
+            this.getOwningAggregateNode(factoryRoot) !== undefined;
+        // Application services may target aggregate-root methods or factory methods;
+        // other method containers remain subject to the validator's structural rules.
+        if (sourceApplication && !targetIsRootMethod && !factoryReturnsRoot && !isApplicationService(target.$container)) {
+            return false;
+        }
+        if (!sourceApplication && isApplicationService(target.$container)) {
+            return false;
+        }
+        if (targetAggregate && !targetIsRootMethod && !isEntity(source.$container)) {
+            return false;
+        }
+        const sourceAggregate = this.getOwningAggregateNode(source);
+        if (sourceAggregate && targetAggregate && sourceAggregate !== targetAggregate) {
+            return false;
+        }
+        return true;
+    }
+
+    private isCrossContext(source: AstNode, target: AstNode): boolean {
+        const sourceContext = getOwningContextName(source);
+        const targetContext = getOwningContextName(target);
+        return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
+    }
+
+    private getOwningAggregateNode(node: AstNode): import('./generated/ast.js').Aggregate | undefined {
+        let current: AstNode | undefined = node;
+        while (current) {
+            if (current.$type === 'Aggregate') {
+                return current as import('./generated/ast.js').Aggregate;
+            }
+            current = current.$container;
+        }
+        return undefined;
+    }
+
+    private getPathSegmentCompletions(
+        context: ReferenceInfo,
+        referenceType: string,
+        prefix: string[],
+        allowedTargets?: Set<AstNode>
+    ): AstNodeDescription[] {
         const prefixText = prefix.join('.');
         const pathPrefix = prefixText.length > 0 ? `${prefixText}.` : '';
         const results = new Map<string, AstNodeDescription>();
         const scope = this.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
         for (const description of scope.getAllElements()) {
-            if (!description.node || !description.name.startsWith(pathPrefix)) {
+            const candidate = this.getDescriptionNode(description);
+            if (!candidate || (allowedTargets && !allowedTargets.has(candidate)) ||
+                !description.name.startsWith(pathPrefix)) {
                 continue;
             }
             const parts = description.name.split('.');
@@ -492,7 +624,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const segmentName = [...prefix, segment].join('.');
             const targets = new Set<AstNode>();
             const directTarget = scope.getElement(segmentName)?.node;
-            const ancestorTarget = this.getPathSegmentTarget(description.node, parts, prefix.length, context);
+            const ancestorTarget = this.getPathSegmentTarget(candidate, parts, prefix.length, context);
             if (directTarget) {
                 targets.add(directTarget);
             }
@@ -697,6 +829,153 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
         return this.getUniqueScopeCandidates(candidates);
+    }
+
+    private isSupportedCandidate(context: ReferenceInfo, target: AstNode | undefined): boolean {
+        if (!target) {
+            return true;
+        }
+
+        const sourceModule = getOwningModule(context.container);
+        const targetModule = getOwningModule(target);
+        if (sourceModule && targetModule && sourceModule !== targetModule &&
+            getOwningContextName(sourceModule) === getOwningContextName(targetModule)) {
+            const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
+            const exposedTarget = isField(target) || isParameter(target) || isEnumValue(target)
+                ? target.$container
+                : target;
+            const exposed = targetModule.exposures.some(exposure =>
+                exposure.declarations.some(declaration => declaration.target.ref === exposedTarget)
+            );
+            if (!dependsOn || !exposed) {
+                return false;
+            }
+        }
+
+        if (!this.isTypeReference(context)) {
+            return true;
+        }
+
+        const sourceContext = getOwningContextName(context.container);
+        const targetContext = getOwningContextName(target);
+        if (!sourceContext || !targetContext || sourceContext === targetContext) {
+            return true;
+        }
+
+        if (isInSharedKernel(target)) {
+            const sharedKernel = this.getOwningSharedKernel(target);
+            return sharedKernel !== undefined && this.hasSharedKernelRelationship(context.container, sharedKernel);
+        }
+
+        if (isIntegrationEvent(target) && isParameter(context.container)) {
+            return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
+        }
+
+        return false;
+    }
+
+    private getDescriptionNode(description: AstNodeDescription): AstNode | undefined {
+        if (description.node) {
+            return description.node;
+        }
+        const document = this.documents.getDocument(description.documentUri);
+        return document?.parseResult.value
+            ? this.nodeLocator.getAstNode(document.parseResult.value, description.path)
+            : undefined;
+    }
+
+    private isTypeReference(context: ReferenceInfo): boolean {
+        if (!['type', 'returnType', 'elementType', 'valueType', 'typePath', 'returnTypePath', 'elementTypePath', 'valueTypePath']
+            .includes(context.property)) {
+            return false;
+        }
+        let current: AstNode | undefined = context.container;
+        while (current) {
+            if (isField(current) || isParameter(current) || isMethod(current)) {
+                return true;
+            }
+            current = current.$container;
+        }
+        return false;
+    }
+
+    private getOwningSharedKernel(node: AstNode): import('./generated/ast.js').SharedKernel | undefined {
+        let current: AstNode | undefined = node;
+        while (current) {
+            if (isSharedKernel(current)) {
+                return current;
+            }
+            current = current.$container;
+        }
+        return undefined;
+    }
+
+    private hasSharedKernelRelationship(source: AstNode, sharedKernel: import('./generated/ast.js').SharedKernel): boolean {
+        const contextName = getOwningContextName(source);
+        const document = AstUtils.getDocument(source);
+        const root = document.parseResult.value;
+        if (!contextName || !isModel(root)) {
+            return false;
+        }
+        const contextMaps = [...root.declarations.filter(isContextMap)];
+        for (const declaration of root.imports) {
+            const uri = resolveImportUri(document, declaration).toString();
+            contextMaps.push(...this.indexManager.allElements('ContextMap', new Set([uri]))
+                .map(description => description.node)
+                .filter((node): node is import('./generated/ast.js').ContextMap =>
+                    isContextMap(node) && (declaration.components.length === 0 ||
+                        declaration.components.some(component => component.component.ref === node))
+                ).toArray());
+        }
+        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
+            isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
+            relationship.participants.some(participant => participant.target.ref?.name === contextName)
+        ));
+    }
+
+    private hasAuthorizedEventRelationship(source: AstNode, event: import('./generated/ast.js').IntegrationEvent): boolean {
+        const consumer = getOwningContextName(source);
+        const producer = getOwningContextName(event);
+        const document = AstUtils.getDocument(source);
+        const root = document.parseResult.value;
+        if (!consumer || !producer || !isModel(root) || !root.imports.some(declaration =>
+            UriUtils.equals(resolveImportUri(document, declaration), AstUtils.getDocument(event).uri)
+        )) {
+            return false;
+        }
+        for (const declaration of root.imports) {
+            const uri = resolveImportUri(document, declaration).toString();
+            const contextMaps = this.indexManager.allElements('ContextMap', new Set([uri]))
+                .map(description => description.node)
+                .filter((node): node is import('./generated/ast.js').ContextMap => isContextMap(node))
+                .toArray();
+            for (const contextMap of contextMaps) {
+                if (declaration.components.length > 0 && !declaration.components.some(component => component.component.ref === contextMap)) {
+                    continue;
+                }
+                for (const relationship of contextMap.relationships) {
+                    if (isCustomerSupplierRelationship(relationship) &&
+                        relationship.customer.context.ref?.name === consumer && relationship.supplier.context.ref?.name === producer) {
+                        return true;
+                    }
+                    if (isPartnershipRelationship(relationship)) {
+                        const left = relationship.left.context.ref?.name;
+                        const right = relationship.right.context.ref?.name;
+                        if ((left === consumer && right === producer) || (right === consumer && left === producer)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private isIntegrationEventExposed(event: import('./generated/ast.js').IntegrationEvent): boolean {
+        const module = getOwningModule(event);
+        return module === undefined || module.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.target.ref === event)
+        );
     }
 
     private getLexicalContextName(context: ReferenceInfo): string | undefined {
