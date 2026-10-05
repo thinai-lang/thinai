@@ -3,15 +3,12 @@ import { CommonTypes } from "./common-types.tni"
 
 context map FulfillmentMap {
   customer Shipping {
-        integrationPatterns: ["AntiCorruptionLayer"]
-    } -> supplier Orders {
-        integrationPatterns: ["OpenHostService", "PublishedLanguage"]
-    }
+    integrationPatterns: ["AntiCorruptionLayer"]
+  } -> supplier Orders {
+    integrationPatterns: ["OpenHostService", "PublishedLanguage"]
+  }
 
   sharedKernel CommonTypes {
-    participants: [
-    Orders
-    , Shipping
-    ]
+    participants: [Orders, Shipping]
   }
 }

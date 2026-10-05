@@ -69,6 +69,79 @@ describe('LSP services', () => {
         })).toEqual([]);
     });
 
+    test('formats context map endpoints and shared-kernel participant lists', async () => {
+        const source = 'context map FulfillmentMap{customer Shipping{integrationPatterns:["AntiCorruptionLayer"]}->supplier Orders{integrationPatterns:["OpenHostService","PublishedLanguage"]}sharedKernel CommonTypes{participants:[Orders\n,Shipping]}}';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toBe([
+            'context map FulfillmentMap {',
+            '  customer Shipping {',
+            '    integrationPatterns: ["AntiCorruptionLayer"]',
+            '  } -> supplier Orders {',
+            '    integrationPatterns: ["OpenHostService", "PublishedLanguage"]',
+            '  }',
+            '',
+            '  sharedKernel CommonTypes {',
+            '    participants: [Orders, Shipping]',
+            '  }',
+            '}'
+        ].join('\n'));
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/formatted-context-map.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
+    });
+
+    test('normalizes import, reference, constructor, and enum separators', async () => {
+        const source = 'import{One as First,Two}from"things.tni" bounded   context Example realizes Core,Supporting{aggregate Order{root entity Item{constructor(first:string,second:number){}method combine(first:string,second:number){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/list-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('import { One as First, Two } from "things.tni"');
+        expect(formatted).toContain('bounded context Example realizes Core, Supporting {');
+        expect(formatted).toContain('constructor(first: string, second: number) {}');
+        expect(formatted).toContain('method combine(first: string, second: number) {}');
+        expect(formatted).toContain('Draft,\n      Placed');
+        expect(formatted).toContain('module Data depends on First, Second {}');
+    });
+
     test('separates member groups without splitting adjacent fields and preserves comments and text', async () => {
         const source = 'bounded context Sample{aggregate Thing{root entity Item{\n// Keep this; note\nmethod first(){behavior "Preserve; this text"}method second(){}identifier id:string name:string}}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
@@ -128,8 +201,31 @@ describe('LSP services', () => {
                 return text.slice(0, start) + edit.newText + text.slice(end);
             }, source);
 
-        expect(formatted).toContain('transition status from Draft to Placed, paymentStatus from Pending to Confirmed when "Payment approved"');
-        expect(formatted).toContain('emits OrderPlaced, PaymentConfirmed when "The status is [[status]]"');
+        const lines = formatted.split('\n');
+        const transitionLine = lines.findIndex(line => line.includes('transition status from Draft to Placed,'));
+        expect(lines[transitionLine + 1].trimStart()).toBe('paymentStatus from Pending to Confirmed');
+        expect(lines[transitionLine + 1].match(/^\s*/)?.[0].length)
+            .toBe(lines[transitionLine].indexOf('transition') + 'transition '.length);
+        expect(lines[transitionLine + 2].trimStart()).toBe('when "Payment approved"');
+        expect(lines[transitionLine + 2].match(/^\s*/)?.[0].length)
+            .toBe(lines[transitionLine].match(/^\s*/)![0].length + 2);
+
+        const emissionLine = lines.findIndex(line => line.includes('emits OrderPlaced,'));
+        expect(lines[emissionLine + 1].trimStart()).toBe('PaymentConfirmed');
+        expect(lines[emissionLine + 1].match(/^\s*/)?.[0].length)
+            .toBe(lines[emissionLine].indexOf('emits') + 'emits '.length);
+        expect(lines[emissionLine + 2].trimStart()).toBe('when "The status is [[status]]"');
+        expect(lines[emissionLine + 2].match(/^\s*/)?.[0].length)
+            .toBe(lines[emissionLine].match(/^\s*/)![0].length + 2);
+
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/formatted-guarded-effects.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
     });
 
     test('formats the complete order-fulfillment example', async () => {

@@ -1,10 +1,11 @@
-import { isLeafCstNode, type AstNode } from 'langium';
+import { isCompositeCstNode, isLeafCstNode, type AstNode, type CstNode } from 'langium';
 import { AbstractFormatter, Formatting } from 'langium/lsp';
 
 const blockTypes = new Set([
     'BoundedContext',
     'BoundedContextPart',
     'ContextMap',
+    'ContextMapEndpoint',
     'SharedKernelRelationship',
     'ApplicationService',
     'SharedKernel',
@@ -29,11 +30,14 @@ const blockTypes = new Set([
 
 const commaSeparatedTypes = new Set([
     'Import',
+    'BoundedContext',
+    'Module',
     'ContextMap',
     'SharedKernelRelationship',
     'ContextMapEndpoint',
     'Exposure',
     'Method',
+    'Constructor',
     'Transition',
     'EventEmission',
     'CollectionType'
@@ -45,9 +49,23 @@ const relationshipTypes = new Set([
     'SeparateWaysRelationship'
 ]);
 
+const keywordPairs = [
+    'bounded', 'application', 'domain', 'query', 'shared', 'value', 'read', 'data', 'integration', 'part', 'of', 'context'
+];
+
+const keywordValueSeparators = [
+    'aggregate', 'actor', 'by', 'depends', 'emits', 'enum', 'event', 'exposes', 'factory', 'from',
+    'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
+    'kernel', 'map', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
+    'repository', 'service',
+    'returns', 'root', 'separateWays', 'serves', 'subdomain', 'supplier', 'customer', 'partner',
+    'sharedKernel', 'to', 'transition', 'when', 'with'
+];
+
 /** Formatting rules for Thinai source documents. */
 export class ThinaiFormatter extends AbstractFormatter {
     private isFormattingRange = false;
+    private readonly continuationColumns = new Map<string, { indentation: number; prefixLength: number }>();
 
     override formatDocumentRange(...args: Parameters<AbstractFormatter['formatDocumentRange']>) {
         return this.withRangeFormatting(() => super.formatDocumentRange(...args));
@@ -57,6 +75,27 @@ export class ThinaiFormatter extends AbstractFormatter {
         return this.withRangeFormatting(() => super.formatDocumentOnType(...args));
     }
 
+    protected override doDocumentFormat(...args: Parameters<AbstractFormatter['doDocumentFormat']>) {
+        this.continuationColumns.clear();
+        return super.doDocumentFormat(...args);
+    }
+
+    protected override createLineTextEdit(...args: Parameters<AbstractFormatter['createLineTextEdit']>) {
+        const [range, lines, context, options] = args;
+        const alignment = this.continuationColumns.get(`${range.end.line}:${range.end.character}`);
+        if (!alignment) {
+            return super.createLineTextEdit(...args);
+        }
+
+        const lineCount = this.fitIntoOptions(lines, range.end.line - range.start.line, options);
+        const tabSize = context.options.tabSize;
+        const column = alignment.indentation * tabSize + alignment.prefixLength;
+        const indentation = context.options.insertSpaces
+            ? ' '.repeat(column)
+            : '\t'.repeat(Math.floor(column / tabSize)) + ' '.repeat(column % tabSize);
+        return { range, newText: `${'\n'.repeat(lineCount)}${indentation}` };
+    }
+
     protected override format(node: AstNode): void {
         const formatter = this.getNodeFormatter(node);
 
@@ -64,20 +103,83 @@ export class ThinaiFormatter extends AbstractFormatter {
         formatter.keywords('.').surround(Formatting.noSpace());
         formatter.keywords('(').prepend(Formatting.noSpace());
         formatter.keywords(')').prepend(Formatting.noSpace());
+        for (const keyword of keywordPairs) {
+            formatter.keyword(keyword).append(Formatting.oneSpace());
+        }
+        formatter.keywords(...keywordValueSeparators).append(Formatting.oneSpace());
+        formatter.keywords(
+            'depends', 'extends', 'from', 'initial', 'kind', 'manages', 'mirrors', 'on', 'realizes', 'returns', 'serves', 'to'
+        ).prepend(Formatting.oneSpace());
+        formatter.keyword('initial').surround(Formatting.oneSpace());
         if (commaSeparatedTypes.has(node.$type)) {
-            formatter.keywords(',').append(Formatting.oneSpace());
+            formatter.keywords(',').prepend(Formatting.noSpace());
+            if (node.$type === 'Transition') {
+                formatter.keyword(',').append(Formatting.indent());
+            } else if (node.$type !== 'EventEmission' && node.$type !== 'Method') {
+                formatter.keywords(',').append(Formatting.oneSpace());
+            }
+        }
+        if (node.$type === 'EnumType') {
+            formatter.keywords(',').prepend(Formatting.noSpace());
+        }
+        if (node.$type === 'Import') {
+            formatter.keyword('import').append(Formatting.oneSpace());
+            formatter.keyword('{').append(Formatting.oneSpace());
+            formatter.keyword('}').prepend(Formatting.oneSpace());
+            formatter.keyword('as').surround(Formatting.oneSpace());
+            formatter.keyword('from').surround(Formatting.oneSpace());
+        }
+        if (node.$type === 'SharedKernelRelationship' || node.$type === 'ContextMapEndpoint') {
+            formatter.keyword('[').append(Formatting.noSpace());
+            formatter.keyword(']').prepend(Formatting.noSpace());
         }
         if (relationshipTypes.has(node.$type)) {
             formatter.keywords('->', '<->', '-x-').surround(Formatting.oneSpace());
         }
         if (node.$type === 'Method') {
-            formatter.keyword('returns').prepend(Formatting.oneSpace());
+            const method = node as AstNode & { parameters?: AstNode[]; projects?: AstNode[] };
+            formatter.keyword('returns').surround(Formatting.oneSpace());
+            formatter.nodes(...(method.parameters ?? []).slice(1)).prepend(Formatting.oneSpace());
+            formatter.nodes(...(method.projects ?? []).slice(1)).prepend(Formatting.oneSpace());
         }
         if (node.$type === 'JourneyStep') {
             formatter.keywords('with', 'when').prepend(Formatting.indent());
+            formatter.keywords('with', 'when').append(Formatting.oneSpace());
         }
-        if (node.$type === 'Transition' || node.$type === 'EventEmission') {
-            formatter.keyword('when').prepend(Formatting.oneSpace());
+        if (node.$type === 'Transition') {
+            const transition = node as AstNode & { changes?: AstNode[] };
+            const changes = transition.changes ?? [];
+            const alignment = {
+                indentation: this.getBlockIndentation(node),
+                prefixLength: 'transition '.length
+            };
+            for (const change of changes.slice(1)) {
+                const start = change.$cstNode?.range.start;
+                if (start) {
+                    this.continuationColumns.set(`${start.line}:${start.character}`, alignment);
+                }
+            }
+            formatter.keyword('when').prepend(Formatting.indent());
+            formatter.keyword('when').append(Formatting.oneSpace());
+            this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
+        }
+        if (node.$type === 'EventEmission') {
+            const emission = node as AstNode & { events?: AstNode[] };
+            const events = emission.events ?? [];
+            formatter.nodes(...events.slice(1)).prepend(Formatting.indent({ priority: 1 }));
+            const alignment = {
+                indentation: this.getBlockIndentation(node),
+                prefixLength: 'emits '.length
+            };
+            for (const event of events.slice(1)) {
+                const start = event.$cstNode?.range.start;
+                if (start) {
+                    this.continuationColumns.set(`${start.line}:${start.character}`, alignment);
+                }
+            }
+            formatter.keyword('when').prepend(Formatting.indent());
+            formatter.keyword('when').append(Formatting.oneSpace());
+            this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
         }
         if (node.$type === 'EventEmission') {
             formatter.keyword('emits').append(Formatting.oneSpace());
@@ -91,21 +193,28 @@ export class ThinaiFormatter extends AbstractFormatter {
             const close = formatter.keyword('}');
             const children = this.getBlockChildren(node);
             open.prepend(Formatting.oneSpace());
-            if (children.length > 0 || node.$type === 'SharedKernelRelationship') {
+            const interior = formatter.interior(open, close);
+            const comments = interior.nodes.filter(cstNode => isLeafCstNode(cstNode) &&
+                (cstNode.tokenType.name === 'SL_COMMENT' || cstNode.tokenType.name === 'ML_COMMENT')
+            );
+            if (children.length > 0 || comments.length > 0 ||
+                node.$type === 'SharedKernelRelationship' || node.$type === 'ContextMapEndpoint') {
                 formatter.nodes(...children).prepend(Formatting.indent());
-                const interior = formatter.interior(open, close);
-                const comments = interior.nodes.filter(cstNode => isLeafCstNode(cstNode) &&
-                    (cstNode.tokenType.name === 'SL_COMMENT' || cstNode.tokenType.name === 'ML_COMMENT')
-                );
                 formatter.cst(comments).prepend(Formatting.indent());
                 if (node.$type === 'SharedKernelRelationship') {
                     formatter.keyword('participants').prepend(Formatting.indent());
+                }
+                if (node.$type === 'ContextMapEndpoint') {
+                    formatter.keyword('integrationPatterns').prepend(Formatting.indent());
                 }
                 if (node.$type === 'Method') {
                     formatter.keyword('projects').prepend(Formatting.indent());
                     formatter.keyword('projects').append(Formatting.oneSpace());
                 }
                 close.prepend(Formatting.newLine());
+            } else {
+                open.append(Formatting.noSpace());
+                close.prepend(Formatting.noSpace());
             }
         }
 
@@ -175,6 +284,40 @@ export class ThinaiFormatter extends AbstractFormatter {
 
     private blankLineIndent() {
         return { options: {}, moves: [{ lines: 2, tabs: 1 }] };
+    }
+
+    private getBlockIndentation(node: AstNode): number {
+        let indentation = 0;
+        let container = node.$container;
+        while (container) {
+            if (blockTypes.has(container.$type)) {
+                indentation++;
+            }
+            container = container.$container;
+        }
+        return indentation;
+    }
+
+    private alignKeyword(node: AstNode, keyword: string, indentation: number): void {
+        const cstNode = node.$cstNode;
+        if (!cstNode || !isCompositeCstNode(cstNode)) {
+            return;
+        }
+        const keywordNode = this.getLeafNodes(cstNode).find(leaf => leaf.text === keyword);
+        const start = keywordNode?.range.start;
+        if (start) {
+            this.continuationColumns.set(`${start.line}:${start.character}`, { indentation, prefixLength: 0 });
+        }
+    }
+
+    private getLeafNodes(node: CstNode): CstNode[] {
+        if (isLeafCstNode(node)) {
+            return [node];
+        }
+        if (!isCompositeCstNode(node)) {
+            return [];
+        }
+        return node.content.flatMap(child => this.getLeafNodes(child));
     }
 
     private getBlockChildren(node: AstNode): AstNode[] {

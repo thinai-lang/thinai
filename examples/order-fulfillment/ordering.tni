@@ -15,7 +15,8 @@ part of bounded context Ordering {
       method ensureOwner()
 
       method place() {
-        emits OrderPlaced when "The order is ready to be placed."
+        emits OrderPlaced
+          when "The order is ready to be placed."
         transition status from Draft to Placed
       }
 
@@ -23,7 +24,8 @@ part of bounded context Ordering {
         transition status from Placed to Paid,
                    paymentStatus from Pending to Confirmed
           when "The payment provider has confirmed the payment."
-        emits OrderPaid when "The payment provider has confirmed the payment."
+        emits OrderPaid
+          when "The payment provider has confirmed the payment."
       }
 
       method fulfillItem(itemId: OrderItemId) {
@@ -119,8 +121,7 @@ part of bounded context Ordering {
   aggregate Customer {
     root entity Customer {
       method register() {
-        emits
-        CustomerRegistered
+        emits CustomerRegistered
       }
 
       identifier id: CustomerId
