@@ -19,18 +19,6 @@
             ]
         },
         {
-            "name": "Attach to Thinai Extension Host (temporary)",
-            "type": "pwa-node",
-            "request": "attach",
-            "address": "127.0.0.1",
-            "port": 9230,
-            "sourceMaps": true,
-            "outFiles": [
-                "${workspaceFolder}/packages/extension/out/**/*.cjs",
-                "${workspaceFolder}/packages/language/out/**/*.js"
-            ]
-        },
-        {
             "name": "Attach to Language Server",
             "type": "node",
             "port": 6009,
