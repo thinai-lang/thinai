@@ -1,4 +1,4 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
   <title id="title">Thinai language file</title>
-  <path d="M13 84c17-2 31-11 43-26 12-15 21-25 30-19 13 8 17 30 30 38-12 10-29 16-49 18-22 2-42-3-54-11z" transform="translate(0 -2)" fill="#E2B24C" stroke="#F6F1E5" stroke-linejoin="round" stroke-width="2.5"/>
+  <path d="M21 42c18 0 30-4 42-11 9-5 16-3 24 3 9 7 15 8 20 8q3 0 3 3v9q0 4-4 4H76v46q0 6-6 6H58q-6 0-6-6V58H22q-4 0-4-4v-8q0-4 3-4z" transform="translate(0 -6)" fill="#E2B24C" stroke="#F6F1E5" stroke-linejoin="round" stroke-width="2.5"/>
 </svg>
