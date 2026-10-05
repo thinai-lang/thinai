@@ -185,16 +185,21 @@ DomainService:
 Method:
     'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
-    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
-        invocations+=MethodInvocation |
-        'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)* |
-        'emits' events+=EventReference (',' events+=EventReference)*)* '}')?;
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior |
+        transitions+=Transition | emissions+=EventEmission | invocations+=MethodInvocation |
+        'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)*)* '}')?;
 
 MethodInvocation:
     'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ;
 
 Transition:
-    'transition' field=[Field:ID] 'from' from=[EnumValue:ID] 'to' to=[EnumValue:ID] ;
+    'transition' changes+=TransitionChange (',' changes+=TransitionChange)* ('when' guard=SpecificationText)?;
+
+TransitionChange:
+    field=[Field:ID] 'from' from=[EnumValue:ID] 'to' to=[EnumValue:ID];
+
+EventEmission:
+    'emits' events+=EventReference (',' events+=EventReference)* ('when' guard=SpecificationText)?;
 
 Constructor:
     'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'

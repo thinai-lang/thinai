@@ -73,6 +73,66 @@ describe('Thinai language concept evaluations', () => {
         };
     });
 
+    evaluation('models guarded emissions and grouped conditional transitions', async (context: EvalContext) => {
+        const generated = await generateAndValidate(
+            'Generate a valid single-file Thinai Ordering bounded context. Declare aggregate Order with root entity Order. Give it method place() with transition status from Draft to Placed. Give it method pay() with one grouped transition statement changing status from Placed to Paid and paymentStatus from Pending to Confirmed, followed by one shared descriptive when guard saying payment has been accepted. In the same method, emit OrderPaid and PaymentRecorded in one emits clause with a descriptive when guard. Add fields identifier id: OrderId, status: OrderStatus initial Draft, and paymentStatus: PaymentStatus initial Pending. Declare OrderId as a sibling value object with raw: string, OrderStatus { Draft, Placed, Paid }, PaymentStatus { Pending, Confirmed }, and both events. Do not use semicolon terminators. Keep all references valid, and do not describe the guards as executable conditions.',
+            context
+        );
+        const normalized = generated.code.toLowerCase().replace(/\s+/g, ' ');
+        const features = featureScore(generated.code, [
+            'paymentStatus: PaymentStatus initial Pending',
+            'emits OrderPaid, PaymentRecorded',
+            'when',
+            'OrderStatus',
+            'PaymentStatus'
+        ]);
+        const hasGroupedTransition = /transition\s+status\s+from\s+placed\s+to\s+paid\s*,\s*paymentstatus\s+from\s+pending\s+to\s+confirmed\s+when/.test(normalized);
+        const hasGuardedEmission = /emits\s+orderpaid\s*,\s*paymentrecorded\s+when/.test(normalized);
+        const score = generated.valid
+            ? (features.score + Number(hasGroupedTransition) + Number(hasGuardedEmission)) / 3
+            : 0;
+        return {
+            ...generated.result.data,
+            score,
+            valid: generated.valid,
+            featureScore: features.score,
+            missingFeatures: features.missing,
+            hasGroupedTransition,
+            hasGuardedEmission,
+            diagnostics: generated.errors.map(error => error.message),
+            generatedCode: generated.valid ? undefined : generated.code
+        };
+    });
+
+    evaluation('keeps constructor inputs in the domain model and DataObjects at the service boundary', async (context: EvalContext) => {
+        const generated = await generateAndValidate(
+            'Generate a valid single-file Thinai Ordering bounded context. Declare aggregate Order with root entity Order and constructor(id: OrderId, details: OrderDetails). Give Order the identifier field id: OrderId. Declare sibling value object OrderId with raw: string and value object OrderDetails with address: string. Declare data object PlaceOrderInput with orderId: OrderId and deliveryAddress: string, then define application service OrderApplication with method placeOrder(input: PlaceOrderInput). Constructors must take domain values, never a DataObject or an event; keep the request DataObject as the application-service input. Do not use semicolon terminators and ensure all references resolve.',
+            context
+        );
+        const normalized = generated.code.toLowerCase().replace(/\s+/g, ' ');
+        const features = featureScore(generated.code, [
+            'constructor(id: OrderId, details: OrderDetails)',
+            'data object PlaceOrderInput',
+            'method placeOrder(input: PlaceOrderInput)',
+            'value object OrderDetails',
+            'identifier id: OrderId'
+        ]);
+        const constructorUsesDataObject = /constructor\s*\([^)]*\bplaceorderinput\b/.test(normalized);
+        const hasValidBoundary = /method\s+placeorder\s*\(\s*input:\s*placeorderinput\s*\)/.test(normalized) && !constructorUsesDataObject;
+        const score = generated.valid ? (features.score + Number(hasValidBoundary)) / 2 : 0;
+        return {
+            ...generated.result.data,
+            score,
+            valid: generated.valid,
+            featureScore: features.score,
+            missingFeatures: features.missing,
+            constructorUsesDataObject,
+            hasValidBoundary,
+            diagnostics: generated.errors.map(error => error.message),
+            generatedCode: generated.valid ? undefined : generated.code
+        };
+    });
+
     evaluation('models event publication, projections, and query repository prose', async (context: EvalContext) => {
         const generated = await generateAndValidate(
             'Generate a valid single-file Thinai Ordering bounded context. Declare aggregate Order with root entity Order { method place() { emits OrderPlaced; } identifier id: OrderId; }, and sibling value object OrderId { raw: string; }. Declare repository OrderRepository manages Order.Order outside the aggregate. Declare event OrderPlaced { orderId: string; status: string; }. Declare module Contracts { exposes OrderPlacedV1; integration event OrderPlacedV1 { orderId: string; status: string; } }. Declare read model OrderSummary { orderId: string; status: string; }, query repository OrderSummaryRepository serves OrderSummary, and projector OrderSummaryProjector with method onOrderPlaced(source: OrderPlaced) whose body declares `projects OrderSummary;` and behavior links OrderPlaced.orderId and OrderSummary.orderId and may mention [[OrderSummaryRepository]]. Add application service OrderApplication with method placeOrder(id: OrderId) { invokes Order.Order.place; } and method publish(source: OrderPlaced) { emits Contracts.OrderPlacedV1; behavior "Map the internal event to the contract."; }. Add query service OrderQueries with method search() returns List<OrderSummary> whose behavior specification links [[OrderSummaryRepository]]. Ensure all references resolve.',

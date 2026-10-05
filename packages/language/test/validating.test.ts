@@ -3,7 +3,7 @@ import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
 import { clearDocuments, parseHelper } from 'langium/test';
 import type { Model } from 'thinai-language';
 import { createThinaiServices, isModel } from 'thinai-language';
-import type { Diagnostic } from 'vscode-languageserver-types';
+import { DiagnosticSeverity, type Diagnostic } from 'vscode-languageserver-types';
 
 let services: ReturnType<typeof createThinaiServices>;
 let parse: ReturnType<typeof parseHelper<Model>>;
@@ -160,6 +160,80 @@ describe('Validating', () => {
         expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
+    test('allows the same transition in different methods', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() { transition status from Draft to Placed }
+                        method placeFromImport() { transition status from Draft to Placed }
+                        identifier id: OrderId
+                        status: OrderStatus initial Draft
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Duplicate state transition'))).toBe(false);
+    });
+
+    test('warns when a method repeats the same transition', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            transition status from Draft to Placed
+                            transition status from Draft to Placed
+                        }
+                        identifier id: OrderId
+                        status: OrderStatus initial Draft
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Warning && String(diagnostic.message).includes(
+                "Duplicate state transition 'Draft -> Placed' for 'status' in the same method."
+            )
+        )).toBe(true);
+    });
+
+    test('validates guarded emissions and coordinated transitions across fields', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method confirmPayment() {
+                            transition status from Draft to Placed,
+                                       paymentStatus from Pending to Confirmed
+                                when "Payment is accepted for [[status]] and [[paymentStatus]]."
+                            emits OrderPlaced, PaymentConfirmed
+                                when "The [[paymentStatus]] state change is accepted."
+                            emits OrderAudited
+                        }
+                        identifier id: OrderId
+                        status: OrderStatus initial Draft
+                        paymentStatus: PaymentStatus initial Pending
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                    enum PaymentStatus { Pending, Confirmed }
+                }
+                event OrderPlaced
+                event PaymentConfirmed
+                event OrderAudited
+            }
+        `);
+
+        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+    });
+
     test('rejects unreachable states from the declared initial state', async () => {
         const document = await parse(`
             bounded context Ordering {
@@ -200,6 +274,98 @@ describe('Validating', () => {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Duplicate field 'status'."))).toBe(true);
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Duplicate enum value 'Draft'."))).toBe(true);
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Duplicate constructor signature.'))).toBe(true);
+    });
+
+    test('accepts domain-value constructor inputs and DataObject application-service inputs', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        constructor(id: OrderId, total: Money, owner: string)
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        constructor(raw: string)
+                        raw: string
+                    }
+                    value object Money {
+                        constructor(amount: number, currency: string)
+                        amount: number
+                        currency: string
+                    }
+                }
+                data object PlaceOrderInput { orderId: OrderId }
+                application service OrderApplication {
+                    method placeOrder(input: PlaceOrderInput)
+                }
+            }
+        `);
+
+        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+    });
+
+    test('rejects DataObject inputs to entity and value-object constructors', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        constructor(input: PlaceOrderInput)
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                    value object Money {
+                        constructor(input: PlaceOrderInput)
+                        amount: number
+                    }
+                }
+                data object PlaceOrderInput { amount: number }
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic => String(diagnostic.message).includes(
+            'Constructors must accept domain values, not DataObjects'
+        ))).toHaveLength(2);
+    });
+
+    test('rejects event-typed constructor parameters', async () => {
+        const document = await parse(`
+            bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        constructor(source: OrderCreated)
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+                event OrderCreated
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Constructors must not accept events'
+        ))).toBe(true);
+    });
+
+    test('requires constructors to use an identifier instead of another aggregate root', async () => {
+        const document = await parse(`
+            bounded context Commerce {
+                aggregate CustomerRecords {
+                    root entity Buyer { identifier id: BuyerId }
+                    value object BuyerId { raw: string }
+                }
+                aggregate Order {
+                    root entity Order {
+                        constructor(buyer: Buyer)
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A constructor must reference another aggregate through its identifier'
+        ))).toBe(true);
     });
 
     test('requires each entity to declare an identifier', async () => {

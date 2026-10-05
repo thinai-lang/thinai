@@ -66,6 +66,16 @@ invoke a factory method when creation is part of the use case. Thinai describes
 these domain relationships; it does not require a load/save sequence or declare
 transaction mechanics.
 
+An `emits` clause may list multiple events and may have a descriptive `when`
+guard. The guard applies to every event in that clause; use separate `emits`
+clauses when the events have different conditions. A transition can similarly
+group changes to multiple enum fields declared on the same entity under one
+descriptive `when` guard. Each field change is validated against its own enum.
+Grouping records coordinated intent, not an implementation-level atomicity
+guarantee. Guards are prose, not evaluated conditions; state-graph reachability
+therefore treats guarded transitions as possible edges. The `when` guard on a
+journey step is separate and describes a condition for invoking the command.
+
 ## Integration Events and Event-Triggered Methods
 
 Domain events are private to their bounded context. To publish a fact across a

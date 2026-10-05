@@ -70,6 +70,11 @@ in constructor and method bodies, but not beside fields. Constructors take typed
 parameters and return their owning type implicitly. Methods may declare a return
 type with `returns`:
 
+Constructor parameters should be domain values such as primitives, enums, and
+value objects. Keep DataObjects and events at operation-handler boundaries, and
+refer to entities in another aggregate by their identifiers rather than passing
+the entity instances.
+
 ```thinai
 bounded context Ordering {
     aggregate Order {
@@ -113,7 +118,22 @@ transition must target an enum field declared on that entity. Application
 services enter through the aggregate root; root behavior coordinates changes to
 child entities so the aggregate's invariants remain protected. An enum state
 field may declare an initial value with `initial State`; when present, every enum
-state must be reachable through the entity's declared transition graph.
+state must be reachable through the entity's declared transition graph. A
+transition statement may group changes to multiple enum fields on the same
+entity, with one descriptive `when` guard applying to the whole group:
+
+```thinai
+method confirmPayment() {
+    transition status from Draft to Placed,
+               paymentStatus from Pending to Confirmed
+        when "The payment has been accepted."
+}
+```
+
+Each change is validated against its field's enum. Grouping conveys coordinated
+intent, not runtime atomicity. Guards are descriptive and do not affect the
+state-graph reachability check. Identical transitions are allowed in different
+methods; repeating one within a method produces a warning.
 
 Repositories and factories are declared beside their target aggregate at
 bounded-context or module scope. Application services orchestrate use cases and

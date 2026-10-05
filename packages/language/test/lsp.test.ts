@@ -107,6 +107,31 @@ describe('LSP services', () => {
         ].join('\n'));
     });
 
+    test('formats guarded event emissions and grouped transitions', async () => {
+        const source = `bounded context Ordering{aggregate Order{root entity Order{method confirm(){transition status from Draft to Placed,paymentStatus from Pending to Confirmed when "Payment approved"emits OrderPlaced,PaymentConfirmed when "The status is [[status]]"}identifier id:OrderId status:OrderStatus paymentStatus:PaymentStatus}value object OrderId{raw:string}enum OrderStatus{Draft,Placed}enum PaymentStatus{Pending,Confirmed}}event OrderPlaced event PaymentConfirmed}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/guarded-effects-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('transition status from Draft to Placed, paymentStatus from Pending to Confirmed when "Payment approved"');
+        expect(formatted).toContain('emits OrderPlaced, PaymentConfirmed when "The status is [[status]]"');
+    });
+
     test('formats the complete order-fulfillment example', async () => {
         const source = await readFile(new URL('../../../examples/order-fulfillment/ordering-events.tni', import.meta.url), 'utf8');
         const misformattedSource = source

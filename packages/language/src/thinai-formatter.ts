@@ -34,6 +34,8 @@ const commaSeparatedTypes = new Set([
     'ContextMapEndpoint',
     'Exposure',
     'Method',
+    'Transition',
+    'EventEmission',
     'CollectionType'
 ]);
 
@@ -74,6 +76,12 @@ export class ThinaiFormatter extends AbstractFormatter {
         if (node.$type === 'JourneyStep') {
             formatter.keywords('with', 'when').prepend(Formatting.indent());
         }
+        if (node.$type === 'Transition' || node.$type === 'EventEmission') {
+            formatter.keyword('when').prepend(Formatting.oneSpace());
+        }
+        if (node.$type === 'EventEmission') {
+            formatter.keyword('emits').append(Formatting.oneSpace());
+        }
         if (node.$type === 'CollectionType') {
             formatter.keywords('<', '>').surround(Formatting.noSpace());
         }
@@ -94,8 +102,8 @@ export class ThinaiFormatter extends AbstractFormatter {
                     formatter.keyword('participants').prepend(Formatting.indent());
                 }
                 if (node.$type === 'Method') {
-                    formatter.keywords('projects', 'emits').prepend(Formatting.indent());
-                    formatter.keywords('projects', 'emits').append(Formatting.oneSpace());
+                    formatter.keyword('projects').prepend(Formatting.indent());
+                    formatter.keyword('projects').append(Formatting.oneSpace());
                 }
                 close.prepend(Formatting.newLine());
             }
@@ -186,6 +194,9 @@ export class ThinaiFormatter extends AbstractFormatter {
             postconditions?: AstNode[];
             behaviors?: AstNode[];
             transitions?: AstNode[];
+            emissions?: AstNode[];
+            changes?: AstNode[];
+            events?: AstNode[];
             invocations?: AstNode[];
         };
 
@@ -236,8 +247,15 @@ export class ThinaiFormatter extends AbstractFormatter {
                     ...(properties.postconditions ?? []),
                     ...(properties.behaviors ?? []),
                     ...(properties.transitions ?? []),
+                    ...(properties.emissions ?? []),
                     ...(properties.invocations ?? [])
                 ];
+                break;
+            case 'Transition':
+                children = properties.changes ?? [];
+                break;
+            case 'EventEmission':
+                children = properties.events ?? [];
                 break;
             case 'Constructor':
                 children = [

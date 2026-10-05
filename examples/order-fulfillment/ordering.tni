@@ -15,12 +15,15 @@ part of bounded context Ordering {
       method ensureOwner()
 
       method place() {
-        emits OrderPlaced
+        emits OrderPlaced when "The order is ready to be placed."
         transition status from Draft to Placed
       }
 
       method pay() {
-        transition status from Placed to Paid
+        transition status from Placed to Paid,
+                   paymentStatus from Pending to Confirmed
+          when "The payment provider has confirmed the payment."
+        emits OrderPaid when "The payment provider has confirmed the payment."
       }
 
       method fulfillItem(itemId: OrderItemId) {
@@ -40,6 +43,7 @@ part of bounded context Ordering {
       currency: Common.Currency
       customerId: CustomerId
       status: OrderStatus initial Draft
+      paymentStatus: PaymentStatus initial Pending
       lines: List<OrderLine>
       items: List<OrderItem>
       labels: Set<string>
@@ -66,6 +70,8 @@ part of bounded context Ordering {
     }
 
     entity OrderItem {
+      constructor(id: OrderItemId, line: OrderLine)
+
       method ship() {
         transition status from Open to Shipped
       }
@@ -83,6 +89,11 @@ part of bounded context Ordering {
       Draft,
       Placed,
       Paid
+    }
+
+    enum PaymentStatus {
+      Pending,
+      Confirmed
     }
 
     enum OrderItemStatus {
@@ -147,6 +158,8 @@ part of bounded context Ordering {
     customerId: CustomerId
     status: OrderStatus
   }
+
+  event OrderPaid
 
   event CustomerRegistered {
     customerId: CustomerId

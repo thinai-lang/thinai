@@ -6,6 +6,7 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
 
 ## Core syntax
 
+- Thinai declarations and method-body clauses do not use semicolon terminators. Never add `;` after a declaration, field, or clause.
 - The entry model can contain relative imports and top-level subdomains, bounded contexts, context parts, shared kernels, and context maps.
 - Declare subdomains with the exact form `subdomain Commerce kind core;`; valid kinds are `core`, `supporting`, and `generic`. A bounded context can `realize` one or more declared subdomains. Keep strategic declarations at model scope. Imports are relative and explicit: select components when importing a multi-component file, and use an alias on the selected component when needed.
 - A bounded context is written `bounded context Name { ... }`. A later file can contribute declarations with `part of bounded context Name { ... }`; it must directly import the file declaring the canonical context.
@@ -32,18 +33,18 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
   }
   ```
 
-- Constructors have typed parameters and no explicit return type. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses are `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, and `emits`. `invokes` names a method; `emits` names an event. Both are descriptive navigable relationships, not required workflows. A `transition` belongs in an entity method and must target that entity's own enum field. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or factory methods and domain-service methods directly; if both are needed, declare both relationships from the application service. Domain services model policies or calculations and must not invoke aggregate-owned methods, directly or transitively. Aggregate-owned methods must not invoke domain services. Root behavior coordinates changes to child entities.
+- Constructors have typed parameters and no explicit return type. Pass domain values such as primitives, enums, collections of domain values, and value objects to constructors; do not pass DataObjects or event types. Use DataObjects at application-service and other operation boundaries, and map their contents into domain values before construction. Refer to entities in another aggregate by their identifiers, not by passing entity instances. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses are `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, and `emits`. `invokes` names a method; `emits` names one or more events. Both are descriptive navigable relationships, not required workflows. A transition belongs in an entity method and targets enum fields owned by that entity. A transition statement may list multiple `field from State to State` changes separated by commas; one optional trailing `when "..."` guard applies to the whole group. An `emits` clause may similarly list multiple events followed by one optional `when "..."` guard. Use separate clauses for effects with different guards. These guards are descriptive linked prose, not executable conditions; guarded transitions still count as possible edges for state-reachability validation. The same transition may appear in different methods; an exact duplicate within one method produces a warning. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or factory methods and domain-service methods directly; if both are needed, declare both relationships from the application service. Domain services model policies or calculations and must not invoke aggregate-owned methods, directly or transitively. Aggregate-owned methods must not invoke domain services. Root behavior coordinates changes to child entities.
 - Fields and parameters may be optional with `?`; collections are `List<T>`, `Set<T>`, and `Map<K, V>`, and collection element/value types may themselves be collections. An initial enum state is optional; when used, every enum value must be reachable from it through the entity's declared transitions.
 - Domain services use `domain service Name { method ... }` at bounded-context or module scope, not inside an aggregate. They may invoke other domain services only if the invocation chain does not reach aggregate-owned methods. Aggregate behavior is declared on its root entity; aggregate-wide invariants may be declared on the aggregate.
 - Repositories are declared at bounded-context or module scope and keep an explicit `for Aggregate` association. Factories are declared at bounded-context or module scope as `factory Name { method ... }`; each factory method returns the aggregate root it creates. An application-service method can link to a factory method with `invokes` and does not need a separate creation clause.
 - Modules use `module Name [depends on OtherModule] { ... }`; `exposes Declaration;` entries go inside the module before its declarations. Modules may be nested in a bounded context or shared kernel, and dependencies/exposures apply only to declarations in that owning context or kernel.
 - Application services use `application service Name { method ... }` to orchestrate use cases and may coordinate multiple aggregates. Use `query service Name { method ... }` for bounded-context read operations. Methods with an event-typed parameter react to that event on an application service or projector.
 - A query method must declare a result. Query services may read through query or aggregate repositories, including when both sides use the same physical database tables, and may link to those repositories in descriptive text. Read models, query repositories, and projectors are optional. Projectors describe event-driven projections and do not call application services or change aggregates.
-- Actors are declared once at model scope. Top-level journeys use `by Actor { ... }` blocks to group user-invoked application-service commands, which may belong to different bounded contexts. Journey steps use the singular keyword `invoke Method`; do not write `invokes` in a journey. Background event handoffs and event-triggered handlers are not journey steps. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with` and one semicolon at the end. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to be invoked in the journey.
+- Actors are declared once at model scope. Top-level journeys use `by Actor { ... }` blocks to group user-invoked application-service commands, which may belong to different bounded contexts. Journey steps use the singular keyword `invoke Method`; do not write `invokes` in a journey. Background event handoffs and event-triggered handlers are not journey steps. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with`. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to be invoked in the journey.
 - Fields and method parameters may be optional with `?`, as in `discount?: number`.
 - Built-in collections are `List<T>`, `Set<T>`, and `Map<K, V>`. Do not invent user-defined generic types.
 - DomainEvents are private to their bounded context and event payloads must not expose entity instances. IntegrationEvents are public cross-context contracts: expose module-nested contracts, import the producer context and an authorized context map at consumers, and do not put aggregate-owned types in their payloads. An application-service handler may emit an IntegrationEvent for a local DomainEvent; delivery timing, including an outbox, is an implementation detail.
-- Declare event payloads as `event Name { field: type; }` or `integration event Name { field: type; }`. `exposes Name;` is a separate statement inside the containing module. `invokes` and `emits` references use qualified declaration names without `()`; parentheses belong only to method declarations and calls described in prose.
+- Declare event payloads as `event Name { field: type }` or `integration event Name { field: type }`. `exposes Name` is a separate statement inside the containing module. `invokes` and `emits` references use qualified declaration names without `()`; parentheses belong only to method declarations and calls described in prose.
 
 Use this valid pattern as a reference for declaration nesting and clause order:
 
@@ -52,72 +53,80 @@ bounded context Ordering {
     aggregate Order {
         root entity Order {
             method place() {
-                emits OrderPlaced;
-                transition status from Draft to Placed;
+                emits OrderPlaced when "The order is ready to be placed."
+                transition status from Draft to Placed
             }
-            identifier id: OrderId;
-            status: OrderStatus initial Draft;
+            method pay() {
+                transition status from Placed to Paid, paymentStatus from Pending to Confirmed
+                    when "The payment provider has confirmed payment."
+                emits OrderPaid when "The payment provider has confirmed payment."
+            }
+            identifier id: OrderId
+            status: OrderStatus initial Draft
+            paymentStatus: PaymentStatus initial Pending
         }
         value object OrderId {
-            method normalize() returns string;
-            raw: string;
+            method normalize() returns string
+            raw: string
         }
-        enum OrderStatus { Draft, Placed }
+        enum OrderStatus { Draft, Placed, Paid }
+        enum PaymentStatus { Pending, Confirmed }
     }
-    repository OrderRepository manages Order.Order;
+    repository OrderRepository manages Order.Order
     factory OrderFactory {
-        method createOrder() returns Order.Order;
+        method createOrder() returns Order.Order
     }
-    read model OrderReadModel { orderId: string; status: string; }
-    query repository OrderReadModelRepository serves OrderReadModel;
+    read model OrderReadModel { orderId: string status: string }
+    query repository OrderReadModelRepository serves OrderReadModel
     projector OrderReadModelProjector {
         method onOrderPlaced(source: OrderPlaced) {
-            projects OrderReadModel;
-            behavior "Update the order summary from the event via [[OrderReadModelRepository]].";
+            projects OrderReadModel
+            behavior "Update the order summary from the event via [[OrderReadModelRepository]]."
         }
     }
 
-    event OrderPlaced;
-    integration event OrderPlacedV1;
+    event OrderPlaced
+    event OrderPaid
+    integration event OrderPlacedV1
 
     application service OrderApplication {
         method placeOrder(id: OrderId) {
-            precondition "The order can be placed.";
-            invokes Order.Order.place;
-            behavior "Place the order through its aggregate root.";
+            precondition "The order can be placed."
+            invokes Order.Order.place
+            behavior "Place the order through its aggregate root."
         }
         method createOrder() {
-            invokes OrderFactory.createOrder;
+            invokes OrderFactory.createOrder
         }
         method publishOrderPlaced(source: OrderPlaced) {
-            emits OrderPlacedV1;
-            behavior "Map the domain event to the public integration contract.";
+            emits OrderPlacedV1
+            behavior "Map the domain event to the public integration contract."
         }
     }
     query service OrderQueries {
         method getStatus(id: OrderId) returns OrderStatus {
-            behavior "Read [[OrderReadModelRepository]] for the selected order.";
+            behavior "Read [[OrderReadModelRepository]] for the selected order."
         }
         method search(term: string) returns List<string> {
-            behavior "Search [[OrderReadModelRepository]] for matching orders.";
+            behavior "Search [[OrderReadModelRepository]] for matching orders."
         }
     }
 }
 ```
 
-In particular, put `Order` and `OrderId` as sibling members of `Order`; do not nest the value object inside the entity. Use `raw: string;` as a field declaration, not `value: string;` unless the field itself is actually named `value`.
+In particular, put `Order` and `OrderId` as sibling members of `Order`; do not nest the value object inside the entity. Use `raw: string` as a field declaration, not `value: string` unless the field itself is actually named `value`.
 
 ## Behavior specifications
 
 Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Plain quoted text is valid; use an interpolated template string to link a method inline:
 
 ```thinai
-behavior "Check [[Order.Order.ensureOwner]], then calculate the total with [[Pricing.calculateTotal]].";
+behavior "Check [[Order.Order.ensureOwner]], then calculate the total with [[Pricing.calculateTotal]]."
 ```
 
 Each `[[...]]` reference must name a visible declaration, method, parameter, repository, type, enum value, or field. A dotted path such as `[[input.address.street]]` is one linked reference with independently navigable segments: `input` targets the parameter, `address` its field, and `street` the nested field. Method and Journey text refer to parameters by local name, not by qualifying them with their method. Method text can link its parameters and `result` fields; Journey `with`/`when` text can link the invoked method's parameters and relevant fields. Query-result paths use `[[Context.QueryService.method.result.field]]`. These links are navigable references, not expressions or executable calls. Use fully qualified paths when names collide, e.g. `[[Ordering.Order]]` for an aggregate and `[[Ordering.Order.Order]]` for a same-named root entity. Escape `[[` as `\[[` for a literal marker. Multiline specification text dedents common indentation. Do not model assignments, returns, loops, or general-purpose control flow in prose.
 
-An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these optional clauses to the relevant type, constructor, or method. Inside a method body, optional `invokes Method;` and `emits Event;` statements provide navigable relationships, while `transition` models an entity's state change. None of these statements is a required workflow or executable instruction; behavior text remains descriptive.
+An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these optional clauses to the relevant type, constructor, or method. Inside a method body, optional `invokes Method` and `emits Event` clauses provide navigable relationships, while `transition` models an entity's state change. Effect-level `when "..."` guards document when a grouped transition or emission applies; they are not evaluated. None of these statements is a required workflow or executable instruction; behavior text remains descriptive.
 
 ## References and bounded-context boundaries
 

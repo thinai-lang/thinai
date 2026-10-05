@@ -516,20 +516,25 @@ export class ThinaiValidator {
             if (!stateType || !isEnumType(stateType)) {
                 continue;
             }
-            const edges = entity.methods.flatMap(method => method.transitions)
-                .filter(transition => transition.field?.ref === field && transition.from?.ref !== undefined && transition.to?.ref !== undefined);
-            const seenEdges = new Set<string>();
-            for (const edge of edges) {
-                const from = edge.from.ref!.name;
-                const to = edge.to.ref!.name;
-                const key = `${from}->${to}`;
-                if (seenEdges.has(key)) {
-                    accept('error', `Duplicate state transition '${from} -> ${to}' for '${field.name}'.`, {
-                        node: edge,
-                        property: 'from'
-                    });
+            const edges = entity.methods.flatMap(method => method.transitions.flatMap(transition =>
+                transition.changes
+                    .filter(change => change.field?.ref === field && change.from?.ref !== undefined && change.to?.ref !== undefined)
+                    .map(change => ({ method, change }))
+            ));
+            for (const method of entity.methods) {
+                const seenEdges = new Set<string>();
+                for (const { change } of edges.filter(edge => edge.method === method)) {
+                    const from = change.from.ref!.name;
+                    const to = change.to.ref!.name;
+                    const key = `${from}->${to}`;
+                    if (seenEdges.has(key)) {
+                        accept('warning', `Duplicate state transition '${from} -> ${to}' for '${field.name}' in the same method.`, {
+                            node: change,
+                            property: 'from'
+                        });
+                    }
+                    seenEdges.add(key);
                 }
-                seenEdges.add(key);
             }
 
             if (field.initialState === undefined) {
@@ -539,9 +544,9 @@ export class ThinaiValidator {
             let changed = true;
             while (changed) {
                 changed = false;
-                for (const edge of edges) {
-                    const from = edge.from.ref!.name;
-                    const to = edge.to.ref!.name;
+                for (const { change } of edges) {
+                    const from = change.from.ref!.name;
+                    const to = change.to.ref!.name;
                     if (reachable.has(from) && !reachable.has(to)) {
                         reachable.add(to);
                         changed = true;
@@ -612,7 +617,7 @@ export class ThinaiValidator {
                     property: 'returnType'
                 });
             }
-            if (eventParameters.length > 0 || method.events.length > 0) {
+            if (eventParameters.length > 0 || method.emissions.length > 0) {
                 accept('error', 'A query cannot handle events or emit events.', {
                     node: method,
                     property: 'returnType'
@@ -786,40 +791,42 @@ export class ThinaiValidator {
             this.checkProjectorMethod(method, projectorService!, accept);
         }
         const owningAggregate = this.getOwningAggregate(method);
-        for (const emitted of method.events) {
-            const emittedEvent = emitted.target.ref;
-            if (!emittedEvent) {
-                continue;
-            }
-            if (this.isCrossContextOwned(method, emittedEvent)) {
-                accept('error', 'A method may emit only events owned by its bounded context.', {
-                    node: method,
-                    property: 'events'
-                });
-            }
-            if (queryService) {
-                accept('error', 'A query cannot emit events.', { node: method, property: 'events' });
-                continue;
-            }
-            if (owningAggregate && this.isAggregateRootMethod(method, owningAggregate)) {
-                if (!isDomainEvent(emittedEvent)) {
-                    accept('error', 'Aggregate-root behavior may emit only domain events.', {
-                        node: method,
+        for (const emission of method.emissions) {
+            for (const emitted of emission.events) {
+                const emittedEvent = emitted.target.ref;
+                if (!emittedEvent) {
+                    continue;
+                }
+                if (this.isCrossContextOwned(method, emittedEvent)) {
+                    accept('error', 'A method may emit only events owned by its bounded context.', {
+                        node: emission,
                         property: 'events'
                     });
                 }
-            } else if (applicationService && eventParameters.length === 1 && isDomainEvent(this.getEventParameterType(eventParameters[0]))) {
-                if (!isIntegrationEvent(emittedEvent)) {
-                    accept('error', 'A domain-event handler may emit only integration events.', {
-                        node: method,
+                if (queryService) {
+                    accept('error', 'A query cannot emit events.', { node: emission, property: 'events' });
+                    continue;
+                }
+                if (owningAggregate && this.isAggregateRootMethod(method, owningAggregate)) {
+                    if (!isDomainEvent(emittedEvent)) {
+                        accept('error', 'Aggregate-root behavior may emit only domain events.', {
+                            node: emission,
+                            property: 'events'
+                        });
+                    }
+                } else if (applicationService && eventParameters.length === 1 && isDomainEvent(this.getEventParameterType(eventParameters[0]))) {
+                    if (!isIntegrationEvent(emittedEvent)) {
+                        accept('error', 'A domain-event handler may emit only integration events.', {
+                            node: emission,
+                            property: 'events'
+                        });
+                    }
+                } else {
+                    accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
+                        node: emission,
                         property: 'events'
                     });
                 }
-            } else if (method.events.length > 0) {
-                accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
-                    node: method,
-                    property: 'events'
-                });
             }
         }
     }
@@ -892,7 +899,7 @@ export class ThinaiValidator {
                 property: 'returnType'
             });
         }
-        if (method.invocations.length > 0 || method.events.length > 0 || method.transitions.length > 0) {
+        if (method.invocations.length > 0 || method.emissions.length > 0 || method.transitions.length > 0) {
             accept('error', 'A projector describes a read-model projection and cannot invoke domain/application methods, emit events, or transition aggregate state.', {
                 node: method,
                 property: 'invocations'
@@ -935,23 +942,25 @@ export class ThinaiValidator {
             });
             return;
         }
-        const field = transition.field?.ref;
-        const stateType = field?.type?.ref;
-        if (!field || !stateType || !isEnumType(stateType)) {
-            accept('error', 'A transition must target an enum field declared on the owning entity.', {
-                node: transition,
-                property: 'field'
-            });
-            return;
-        }
-        const from = transition.from?.ref;
-        const to = transition.to?.ref;
-        const states = new Set(stateType.values);
-        if (!from || !to || !states.has(from) || !states.has(to)) {
-            accept('error', `Transition states must be values of ${stateType.name}.`, {
-                node: transition,
-                property: !from || !states.has(from) ? 'from' : 'to'
-            });
+        for (const change of transition.changes) {
+            const field = change.field?.ref;
+            const stateType = field?.type?.ref;
+            if (!field || field.$container !== entity || !stateType || !isEnumType(stateType)) {
+                accept('error', 'A transition must target an enum field declared on the owning entity.', {
+                    node: change,
+                    property: 'field'
+                });
+                continue;
+            }
+            const from = change.from?.ref;
+            const to = change.to?.ref;
+            const states = new Set(stateType.values);
+            if (!from || !to || !states.has(from) || !states.has(to)) {
+                accept('error', `Transition states must be values of ${stateType.name}.`, {
+                    node: change,
+                    property: !from || !states.has(from) ? 'from' : 'to'
+                });
+            }
         }
     }
 
@@ -1001,6 +1010,33 @@ export class ThinaiValidator {
 
     checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {
         this.checkUniqueParameterNames(constructor.parameters, accept);
+        const sourceAggregate = this.getOwningAggregate(constructor);
+        for (const parameter of constructor.parameters) {
+            if (this.isEventParameter(parameter)) {
+                accept('error', 'Constructors must not accept events; handle events in application-service methods or projectors.', {
+                    node: parameter,
+                    property: 'type'
+                });
+                continue;
+            }
+            const typeReferences = this.collectTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
+            if (typeReferences.some(reference => isDataObject(reference.ref))) {
+                accept('error', 'Constructors must accept domain values, not DataObjects; map DataObjects at the application boundary.', {
+                    node: parameter,
+                    property: 'type'
+                });
+            }
+            const foreignRoot = typeReferences.find(reference => {
+                const target = reference.ref;
+                return isEntity(target) && target.root && this.getOwningAggregate(target) !== sourceAggregate;
+            });
+            if (foreignRoot) {
+                accept('error', 'A constructor must reference another aggregate through its identifier, not its root entity.', {
+                    node: parameter,
+                    property: 'type'
+                });
+            }
+        }
     }
 
     private checkUniqueParameterNames(parameters: Parameter[], accept: ValidationAcceptor): void {
@@ -1322,7 +1358,7 @@ export class ThinaiValidator {
             return false;
         }
         visited.add(method);
-        if (method.transitions.length > 0 || method.events.length > 0) {
+        if (method.transitions.length > 0 || method.emissions.length > 0) {
             return true;
         }
         return method.invocations.some(invocation => {

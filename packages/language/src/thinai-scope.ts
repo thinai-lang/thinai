@@ -20,6 +20,7 @@ import {
     type JourneyStep,
     type Method,
     type ReadModel,
+    type TransitionChange,
     isContextMap,
     isConstructor,
     isBoundedContext,
@@ -42,7 +43,7 @@ import {
     isModel,
     isMethod,
     isEnumType,
-    isTransition,
+    isTransitionChange,
     isModule,
     isSharedKernel,
     isImportComponent,
@@ -222,7 +223,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     override getScope(context: ReferenceInfo): Scope {
-        if (isTransition(context.container)) {
+        if (isTransitionChange(context.container)) {
             if (context.property === 'field') {
                 return this.getTransitionFieldScope(context.container);
             }
@@ -272,7 +273,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return context;
     }
 
-    private getTransitionFieldScope(transition: import('./generated/ast.js').Transition): Scope {
+    private getTransitionFieldScope(transition: TransitionChange): Scope {
         let current: AstNode | undefined = transition.$container;
         while (current && !isEntity(current)) {
             current = current.$container;
@@ -283,7 +284,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         ));
     }
 
-    private getTransitionStateScope(transition: import('./generated/ast.js').Transition): Scope {
+    private getTransitionStateScope(transition: TransitionChange): Scope {
         const enumType = transition.field.ref?.type?.ref;
         if (!isEnumType(enumType)) {
             return this.createScope([]);
@@ -649,7 +650,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return false;
         }
         visited.add(method);
-        return method.transitions.length > 0 || method.events.length > 0 || method.invocations.some(invocation => {
+        return method.transitions.length > 0 || method.emissions.length > 0 || method.invocations.some(invocation => {
             const target = invocation.targets.at(-1)?.ref;
             return isMethod(target) && this.hasBehaviorSideEffects(target, visited);
         });
