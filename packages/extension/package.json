@@ -12,6 +12,15 @@
         "Programming Languages"
     ],
     "contributes": {
+        "configurationDefaults": {
+            "[thinai]": {
+                "editor.detectIndentation": false,
+                "editor.insertSpaces": true,
+                "editor.tabSize": 2,
+                "files.insertFinalNewline": true,
+                "files.trimTrailingWhitespace": true
+            }
+        },
         "languages": [{
             "id": "thinai",
             "aliases": ["Thinai", "thinai"],
@@ -28,9 +37,6 @@
             "path": "syntaxes/thinai.tmLanguage.json"
         }]
     },
-    "activationEvents": [
-        "onLanguage:thinai"
-    ],
     "main": "./out/extension/main.cjs",
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out syntaxes",

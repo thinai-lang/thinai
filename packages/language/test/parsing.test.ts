@@ -19,41 +19,46 @@ beforeAll(() => {
 });
 
 describe('Parsing tests', () => {
+    test('rejects semicolon terminators', async () => {
+        const document = await parse('actor Customer;');
+        expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
+    });
+
     test('parses strategic, tactical, and behavior elements', async () => {
         const document = await parse(s`
-            subdomain OrderManagement kind core;
-            actor Customer;
+            subdomain OrderManagement kind core
+            actor Customer
 
             bounded context Ordering realizes OrderManagement {
                 aggregate Order {
                     root entity Order {
                         method place() {
-                            emits OrderPlaced;
+                            emits OrderPlaced
                         }
-                        identifier id: OrderId;
+                        identifier id: OrderId
                     }
                     value object OrderId {
-                        raw: string;
+                        raw: string
                     }
                 }
 
                 application service OrderApplication {
                     method placeOrder(items: string) {
-                        invokes Order.Order.place;
+                        invokes Order.Order.place
                     }
                     method publishOrderPlaced(source: OrderPlaced) {
-                        emits OrderPlacedV1, OrderPlacedAuditV1;
+                        emits OrderPlacedV1, OrderPlacedAuditV1
                     }
                 }
                 event OrderPlaced {
-                    orderId: OrderId;
+                    orderId: OrderId
                 }
-                integration event OrderPlacedV1;
-                integration event OrderPlacedAuditV1;
+                integration event OrderPlacedV1
+                integration event OrderPlacedAuditV1
             }
             journey PlaceOrder {
                 by Customer {
-                    invoke Ordering.OrderApplication.placeOrder with "items from the selected order";
+                    invoke Ordering.OrderApplication.placeOrder with "items from the selected order"
                 }
             }
         `);
@@ -80,10 +85,10 @@ describe('Parsing tests', () => {
 
     test('parses canonical context parts and imports', async () => {
         const document = await parse(s`
-            import "./ordering.tni";
+            import "./ordering.tni"
 
             part of bounded context Ordering {
-                integration event OrderPlacedV1;
+                integration event OrderPlacedV1
             }
         `);
 
@@ -97,33 +102,33 @@ describe('Parsing tests', () => {
                 aggregate Order {
                     root entity Order {
                         constructor(id: OrderId) {
-                            invariant "An order must have an identifier";
-                            precondition "The id must be non-empty";
-                            behavior "Normalize an order's id with [[OrderId.normalize]] before creating";
-                            postcondition "The identifier is set";
+                            invariant "An order must have an identifier"
+                            precondition "The id must be non-empty"
+                            behavior "Normalize an order's id with [[OrderId.normalize]] before creating"
+                            postcondition "The identifier is set"
                         }
                         method ensureOwner() {
-                            invariant "An order has a valid owner.";
+                            invariant "An order has a valid owner."
                         }
-                        method addLines(lines: List<OrderLine>) returns Order.Order;
-                        identifier id: OrderId;
+                        method addLines(lines: List<OrderLine>) returns Order.Order
+                        identifier id: OrderId
                     }
                     value object OrderId {
-                        method normalize() returns string;
-                        raw: string;
+                        method normalize() returns string
+                        raw: string
                     }
-                    invariant "Placed orders retain [[Order.ensureOwner]]";
+                    invariant "Placed orders retain [[Order.ensureOwner]]"
                 }
                 domain service Pricing {
                     method calculate(lines: List<OrderLine>, currency?: Currency) returns Money {
-                        behavior "Calculate a total for [[Order.Order.ensureOwner]]";
+                        behavior "Calculate a total for [[Order.Order.ensureOwner]]"
                     }
                 }
                 application service OrderApplication {
                     method placeOrder(description?: string) {
-                        precondition "The order can be placed";
-                        behavior "Validate with [[Order.Order.ensureOwner]] then place";
-                        postcondition "OrderPlaced is emitted";
+                        precondition "The order can be placed"
+                        behavior "Validate with [[Order.Order.ensureOwner]] then place"
+                        postcondition "OrderPlaced is emitted"
                     }
                 }
             }
@@ -161,17 +166,17 @@ describe('Parsing tests', () => {
     test('preserves multiline behavior text and links in quoted strings', async () => {
         const document = await parse([
             'bounded context Ordering {',
-            '    aggregate Order { root entity Order { method ensureOwner(); identifier id: OrderId; } value object OrderId { raw: string; } }',
+            '    aggregate Order { root entity Order { method ensureOwner() identifier id: OrderId } value object OrderId { raw: string } }',
             '    application service OrderApplication {',
             '    method placeOrder() {',
             '        behavior "Place the order',
-            'after validation";',
+            'after validation"',
             '        behavior "Check [[Order.ensureOwner]]',
-            'before placing";',
+            'before placing"',
             '        behavior "',
             '            Check [[Order.ensureOwner]]',
             '            before placing.',
-            '            ";',
+            '            "',
             '    } }',
             '}'
         ].join('\n'));
@@ -201,7 +206,7 @@ describe('Parsing tests', () => {
 
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text"; } } aggregate Run { root entity Run { identifier id: RunId; } value object RunId { raw: string; } } }'
+            'bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text" } } aggregate Run { root entity Run { identifier id: RunId } value object RunId { raw: string } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();
@@ -222,7 +227,7 @@ describe('Parsing tests', () => {
     });
 
     test('rejects the former dollar-prefixed reference syntax', async () => {
-        const document = await parse('bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}"; } }');
+        const document = await parse('bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}" } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 });

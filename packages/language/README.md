@@ -3,6 +3,7 @@
 Thinai is a domain-specific modeling language for expressing DDD structures,
 relationships, and behavioral intent in a shared, navigable model. It models
  strategic and tactical DDD, aggregates, application services, events, and journeys.
+Thinai uses braces for blocks and does not use semicolon terminators.
 
 ## File Model
 
@@ -10,61 +11,75 @@ Declare a bounded context once, then extend it from explicitly imported files:
 
 ```thinai
 // ordering.tni
-subdomain OrderManagement kind core;
+subdomain OrderManagement kind core
 
 bounded context Ordering realizes OrderManagement {
-    aggregate Order {
-        root entity Order {
-            method place() {
-                emits OrderPlaced;
-                transition status from Draft to Placed;
-            }
-            identifier id: OrderId;
-            status: OrderStatus;
-        }
-        value object OrderId { raw: string; }
-        enum OrderStatus { Draft, Placed }
+  aggregate Order {
+    root entity Order {
+      method place() {
+        emits OrderPlaced
+        transition status from Draft to Placed
+      }
+
+      identifier id: OrderId
+      status: OrderStatus
     }
-    repository OrderRepository manages Order.Order;
-    event OrderPlaced;
+
+    value object OrderId {
+      raw: string
+    }
+
+    enum OrderStatus {
+      Draft,
+      Placed
+    }
+  }
+
+  repository OrderRepository manages Order.Order
+
+  event OrderPlaced
 }
 ```
 
 ```thinai
 // ordering-events.tni
-import "./ordering.tni";
-actor Customer;
+import "./ordering.tni"
+
+actor Customer
 
 part of bounded context Ordering {
-    data object PlaceOrderInput {
-        orderId: OrderId;
-        items: List<OrderLine>;
-    }
-    data object PlaceOrderResult {
-        orderId: OrderId;
-        status: OrderStatus;
-    }
+  data object PlaceOrderInput {
+    orderId: OrderId
+    items: List<OrderLine>
+  }
 
-    application service OrderApplication {
-        method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
-            invokes Order.Order.place;
-            behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]].";
-        }
+  data object PlaceOrderResult {
+    orderId: OrderId
+    status: OrderStatus
+  }
 
-        method publishOrderPlaced(source: OrderPlaced) {
-            emits OrderPlacedV1;
-            behavior "Map the internal event to the public contract.";
-        }
+  application service OrderApplication {
+    method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
+      invokes Order.Order.place
+      behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]]."
     }
 
-    integration event OrderPlacedV1 { orderId: string; }
+    method publishOrderPlaced(source: OrderPlaced) {
+      emits OrderPlacedV1
+      behavior "Map the internal event to the public contract."
+    }
+  }
 
+  integration event OrderPlacedV1 {
+    orderId: string
+  }
 }
 
 journey PlaceOrder {
-    by Customer {
-        invoke Ordering.OrderApplication.placeOrder with "orderId from the selected order and items from the order form";
-    }
+  by Customer {
+    invoke Ordering.OrderApplication.placeOrder
+      with "orderId from the selected order and items from the order form"
+  }
 }
 ```
 
@@ -98,15 +113,17 @@ contexts' event declarations and handlers.
 An incoming integration event can invoke a local command method:
 
 ```thinai
-application service ShipmentApplication {
+bounded context Shipping {
+  application service ShipmentApplication {
     method createShipment(shipmentId: ShipmentId) {
-        invokes Shipment.Shipment.start;
+      invokes Shipment.Shipment.start
     }
 
     method onOrderPlaced(source: Ordering.OrderPlacedV1) {
-        invokes createShipment;
-        behavior "Map the incoming event to the local command input.";
+      invokes createShipment
+      behavior "Map the incoming event to the local command input."
     }
+  }
 }
 ```
 
@@ -137,7 +154,7 @@ IntegrationEvent payloads cannot expose entities or types owned by aggregates.
 When a file declares multiple components, select them explicitly:
 
 ```thinai
-import { Ordering as Orders, Shipping } from "./contexts.tni";
+import { Ordering as Orders, Shipping } from "./contexts.tni"
 ```
 
 Shared value objects belong in an explicit `shared kernel`. Context maps record
@@ -172,12 +189,15 @@ Built-in collections are
 `List<T>`, `Set<T>`, and `Map<K, V>`.
 
 The language server provides keyword and cross-reference completion,
-navigation, diagnostics, import-path completion, and quick fixes for unresolved
-declarations that can be imported.
+navigation, diagnostics, import-path completion, document formatting, and quick
+fixes for unresolved declarations that can be imported. Formatting uses the
+editor's indentation options; the VS Code extension defaults Thinai files to two
+spaces.
 
 ## What's in the folder?
 
 - [src/thinai.langium](src/thinai.langium) — grammar definition.
+- [src/thinai-formatter.ts](src/thinai-formatter.ts) — document formatting.
 - [src/thinai-validator.ts](src/thinai-validator.ts) — semantic validation.
 - [src/thinai-scope.ts](src/thinai-scope.ts) — import and reference scoping.
 - [test](test) — parsing, linking, validation, and LSP tests.

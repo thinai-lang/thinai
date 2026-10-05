@@ -1,129 +1,155 @@
-import "./context-catalog.tni";
-import { CommonTypes as Common } from "./common-types.tni";
-import { FulfillmentMap } from "./context-map.tni";
+import "./context-catalog.tni"
+import { CommonTypes as Common } from "./common-types.tni"
+import { FulfillmentMap } from "./context-map.tni"
 
 part of bounded context Ordering {
+  aggregate Order {
+    root entity Order {
+      constructor(id: OrderId, owner: string) {
+        invariant "An order must have an owner; check [[Order.ensureOwner]]."
+        precondition "The supplied identifier is non-empty."
+        behavior "Normalize the identifier with [[OrderId.normalize]] before creating the order."
+        postcondition "The order has an identifier and owner."
+      }
 
-    aggregate Order {
-        root entity Order {
-            constructor(id: OrderId, owner: string) {
-                invariant "An order must have an owner; check [[Order.ensureOwner]].";
-                precondition "The supplied identifier is non-empty.";
-                behavior "Normalize the identifier with [[OrderId.normalize]] before creating the order.";
-                postcondition "The order has an identifier and owner.";
-            }
-            method ensureOwner();
-            method place() {
-                emits OrderPlaced;
-                transition status from Draft to Placed;
-            }
-            method pay() {
-                transition status from Placed to Paid;
-            }
-            method fulfillItem(itemId: OrderItemId) {
-                invokes Order.OrderItem.ship;
-            }
-            method validateCanDelete() {
-                precondition "Only a draft order can be deleted.";
-            }
-            method addLine(line: OrderLine) {
-                behavior "Add the line quantity to the order's lines.";
-            }
+      method ensureOwner()
 
-            identifier id: OrderId;
-            owner: string;
-            currency: Common.Currency;
-            customerId: CustomerId;
-            status: OrderStatus initial Draft;
-            lines: List<OrderLine>;
-            items: List<OrderItem>;
-            labels: Set<string>;
-            quantities: Map<string, number>;
-            externalReference?: string;
-        }
+      method place() {
+        emits OrderPlaced
+        transition status from Draft to Placed
+      }
 
-        value object OrderId {
-            constructor(raw: string) {
-                invariant "An order identifier is non-empty.";
-                precondition "The raw identifier is non-empty.";
-                behavior "Normalize the value with [[OrderId.normalize]].";
-                postcondition "The identifier value is normalized.";
-            }
-            method normalize() returns string;
+      method pay() {
+        transition status from Placed to Paid
+      }
 
-            raw: string;
-        }
+      method fulfillItem(itemId: OrderItemId) {
+        invokes Order.OrderItem.ship
+      }
 
-        value object OrderLine {
-            sku: string;
-            quantity: number;
-        }
+      method validateCanDelete() {
+        precondition "Only a draft order can be deleted."
+      }
 
-        entity OrderItem {
-            method ship() {
-                transition status from Open to Shipped;
-            }
-            identifier id: OrderItemId;
-            line: OrderLine;
-            status: OrderItemStatus initial Open;
-        }
-        value object OrderItemId { raw: string; }
+      method addLine(line: OrderLine) {
+        behavior "Add the line quantity to the order's lines."
+      }
 
-        enum OrderStatus {
-            Draft, Placed, Paid
-        }
-        enum OrderItemStatus { Open, Shipped }
-
-        invariant "Every order line has a positive quantity.";
-    }
-    domain service OrderPricing {
-        method calculateTotal(amount: number, adjustments?: List<number>) returns number {
-            precondition "The amount is non-negative.";
-            behavior "Validate the order with [[Order.ensureOwner]], then calculate its total.";
-            postcondition "The returned total includes all adjustments.";
-        }
-    }
-    repository OrderRepository manages Order.Order;
-    factory OrderFactory;
-
-    aggregate Customer {
-        root entity Customer {
-            method register() {
-                emits CustomerRegistered;
-            }
-            identifier id: CustomerId;
-            name: string;
-        }
-        value object CustomerId { raw: string; }
-    }
-    repository CustomerRepository manages Customer.Customer;
-    factory CustomerFactory {
-            method createCustomer(id: CustomerId, name: string) returns Customer.Customer;
+      identifier id: OrderId
+      owner: string
+      currency: Common.Currency
+      customerId: CustomerId
+      status: OrderStatus initial Draft
+      lines: List<OrderLine>
+      items: List<OrderItem>
+      labels: Set<string>
+      quantities: Map<string, number>
+      externalReference?: string
     }
 
-    application service CustomerRegistration {
-        method registerCustomer(id: CustomerId, name: string) {
-            invokes CustomerFactory.createCustomer;
-            invokes Customer.Customer.register;
-        }
+    value object OrderId {
+      constructor(raw: string) {
+        invariant "An order identifier is non-empty."
+        precondition "The raw identifier is non-empty."
+        behavior "Normalize the value with [[OrderId.normalize]]."
+        postcondition "The identifier value is normalized."
+      }
+
+      method normalize() returns string
+
+      raw: string
     }
 
-    domain service Authorization {
-        method authorize(role: Common.Role, action: string) returns boolean {
-            precondition "The role and requested action are known.";
-            behavior "Allow the action only when the supplied role is authorized for it.";
-            postcondition "The result indicates whether the role is authorized for the action.";
-        }
+    value object OrderLine {
+      sku: string
+      quantity: number
     }
 
-    event OrderPlaced {
-        orderId: OrderId;
-        customerId: CustomerId;
-        status: OrderStatus;
+    entity OrderItem {
+      method ship() {
+        transition status from Open to Shipped
+      }
+
+      identifier id: OrderItemId
+      line: OrderLine
+      status: OrderItemStatus initial Open
     }
 
-    event CustomerRegistered {
-        customerId: CustomerId;
-        name: string;
+    value object OrderItemId {
+      raw: string
     }
+
+    enum OrderStatus {
+      Draft,
+      Placed,
+      Paid
+    }
+
+    enum OrderItemStatus {
+      Open,
+      Shipped
+    }
+
+    invariant "Every order line has a positive quantity."
+  }
+
+  domain service OrderPricing {
+    method calculateTotal(amount: number, adjustments?: List<number>) returns number {
+      precondition "The amount is non-negative."
+      behavior "Validate the order with [[Order.ensureOwner]], then calculate its total."
+      postcondition "The returned total includes all adjustments."
+    }
+  }
+
+  repository OrderRepository manages Order.Order
+
+  factory OrderFactory
+
+  aggregate Customer {
+    root entity Customer {
+      method register() {
+        emits
+        CustomerRegistered
+      }
+
+      identifier id: CustomerId
+      name: string
+    }
+
+    value object CustomerId {
+      raw: string
+    }
+  }
+
+  repository CustomerRepository manages Customer.Customer
+
+  factory CustomerFactory {
+    method createCustomer(id: CustomerId, name: string) returns Customer.Customer
+  }
+
+  application service CustomerRegistration {
+    method registerCustomer(id: CustomerId, name: string) {
+      invokes CustomerFactory.createCustomer
+      invokes Customer.Customer.register
+    }
+  }
+
+  domain service Authorization {
+    method authorize(role: Common.Role, action: string) returns boolean {
+      precondition "The role and requested action are known."
+      behavior "Allow the action only when the supplied role is authorized for it."
+      postcondition "The result indicates whether the role is authorized for the action."
+    }
+  }
+
+  event OrderPlaced {
+    orderId: OrderId
+    customerId: CustomerId
+    status: OrderStatus
+  }
+
+  event CustomerRegistered {
+    customerId: CustomerId
+    name: string
+  }
 }

@@ -32,41 +32,41 @@ describe('Linking tests', () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
-                subdomain OrderManagement kind core;
+                subdomain OrderManagement kind core
                 bounded context Ordering realizes OrderManagement {
                     aggregate Order {
                         root entity Order {
-                            method place() { emits OrderPlaced; }
-                            identifier id: OrderId;
-                            status: OrderStatus;
+                            method place() { emits OrderPlaced }
+                            identifier id: OrderId
+                            status: OrderStatus
                         }
                         value object OrderId {
-                            raw: string;
+                            raw: string
                         }
                         enum OrderStatus { Draft, Placed }
                 }
-                    repository OrderRepository manages Order.Order;
+                    repository OrderRepository manages Order.Order
                 application service OrderApplication {
                     method placeOrder(id: OrderId) {
-                        invokes Order.Order.place;
+                        invokes Order.Order.place
                     }
                     method publishOrderPlaced(source: OrderPlaced) {
-                        emits OrderPlacedV1;
+                        emits OrderPlacedV1
                     }
                     }
-                    event OrderPlaced;
-                    integration event OrderPlacedV1 { orderId: string; }
+                    event OrderPlaced
+                    integration event OrderPlacedV1 { orderId: string }
                 }
             `
         );
         const part = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-events.tni'),
             s`
-                import "./ordering.tni";
+                import "./ordering.tni"
 
                 part of bounded context Ordering {
-                    event OrderConfirmed;
-                    integration event OrderConfirmedV1;
+                    event OrderConfirmed
+                    integration event OrderConfirmedV1
                 }
             `
         );
@@ -74,34 +74,34 @@ describe('Linking tests', () => {
             URI.file('/workspace/shipping.tni'),
             `bounded context Shipping {
                 aggregate Shipment {
-                    root entity Shipment { method start(); identifier id: ShipmentId; }
-                    value object ShipmentId { raw: string; }
+                    root entity Shipment { method start() identifier id: ShipmentId }
+                    value object ShipmentId { raw: string }
                 }
-                repository ShipmentRepository manages Shipment.Shipment;
+                repository ShipmentRepository manages Shipment.Shipment
                 factory ShipmentFactory {
-                    method createShipment() returns Shipment.Shipment;
+                    method createShipment() returns Shipment.Shipment
                     }
                 application service ShipmentApplication {
                     method createShipment() {
-                        invokes ShipmentFactory.createShipment;
+                        invokes ShipmentFactory.createShipment
                     }
                 }
             }`
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./ordering.tni"; import "./shipping.tni"; context map Fulfillment {
-                customer Shipping -> supplier Ordering;
+            `import "./ordering.tni" import "./shipping.tni" context map Fulfillment {
+                customer Shipping -> supplier Ordering
             }`
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-flow.tni'),
-            `import "./ordering.tni"; import "./order-events.tni"; import "./shipping.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./ordering.tni" import "./order-events.tni" import "./shipping.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Shipping {
                   application service ShipmentEventHandler {
                         method onOrderPlaced(source: Ordering.OrderPlacedV1) {
-                            invokes ShipmentApplication.createShipment;
-                           behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event.";
+                            invokes ShipmentApplication.createShipment
+                           behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event."
                        }
                   }
               }`
@@ -140,7 +140,7 @@ describe('Linking tests', () => {
     test('does not expose workspace-global declarations without an import', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { event OrderPlaced; }'
+            'bounded context Ordering { event OrderPlaced }'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
@@ -156,25 +156,25 @@ describe('Linking tests', () => {
     test('rejects direct consumption of a private domain event across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { event OrderPlaced; }'
+            'bounded context Ordering { event OrderPlaced }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             s`
-                import "./ordering.tni";
+                import "./ordering.tni"
 
                 bounded context Shipping {
                     aggregate Shipment {
                         root entity Shipment {
-                            identifier id: ShipmentId;
+                            identifier id: ShipmentId
                         }
                         value object ShipmentId {
-                            raw: string;
+                            raw: string
                         }
                     }
                     application service ShipmentApplication {
                         method createShipment() {}
-                        method onOrderPlaced(source: Ordering.OrderPlaced) { invokes createShipment; }
+                        method onOrderPlaced(source: Ordering.OrderPlaced) { invokes createShipment }
                     }
                 }
             `
@@ -189,13 +189,13 @@ describe('Linking tests', () => {
     test('requires an authorized imported context map to consume an integration event', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { module Contracts { exposes OrderPlacedV1; integration event OrderPlacedV1; } }'
+            'bounded context Ordering { module Contracts { exposes OrderPlacedV1 integration event OrderPlacedV1 } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `import "./ordering.tni";
+            `import "./ordering.tni"
              bounded context Shipping {
-                 aggregate Shipment { root entity Shipment { identifier id: ShipmentId; } value object ShipmentId { raw: string; } }
+                 aggregate Shipment { root entity Shipment { identifier id: ShipmentId } value object ShipmentId { raw: string } }
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {}
                  }
@@ -213,18 +213,18 @@ describe('Linking tests', () => {
     test('authorizes event consumption across a partnership without pattern labels', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
+            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping {}'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./contexts.tni";
+            `import "./contexts.tni"
              context map Fulfillment {
                  partner Shipping <-> partner Ordering
              }`
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Shipping {
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
@@ -244,18 +244,18 @@ describe('Linking tests', () => {
     test('pattern labels do not control event authorization', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping {}'
+            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping {}'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./contexts.tni";
+            `import "./contexts.tni"
              context map Fulfillment {
-                 partner Shipping <-> partner Ordering { integrationPatterns: ["OpenHostService"]; }
+                 partner Shipping <-> partner Ordering { integrationPatterns: ["OpenHostService"] }
              }`
         );
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Shipping {
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
@@ -274,18 +274,18 @@ describe('Linking tests', () => {
     test('customer-supplier authorization does not permit supplier consumption of customer events', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1; } bounded context Shipping { integration event ShipmentSentV1; }'
+            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./contexts.tni";
+            `import "./contexts.tni"
              context map Fulfillment {
-                 customer Shipping -> supplier Ordering;
+                 customer Shipping -> supplier Ordering
              }`
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
@@ -304,18 +304,18 @@ describe('Linking tests', () => {
     test('authorizes partnership event consumption in the reverse direction too', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1; }'
+            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./contexts.tni";
+            `import "./contexts.tni"
              context map Fulfillment {
-                 partner Shipping <-> partner Ordering;
+                 partner Shipping <-> partner Ordering
              }`
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
@@ -334,18 +334,18 @@ describe('Linking tests', () => {
     test('separate-ways relationships do not authorize event consumption', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1; }'
+            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
-            `import "./contexts.tni";
+            `import "./contexts.tni"
              context map Fulfillment {
-                 separateWays Ordering -x- Shipping;
+                 separateWays Ordering -x- Shipping
              }`
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `import "./contexts.tni"; import { Fulfillment } from "./context-map.tni";
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
              part of bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
@@ -364,62 +364,62 @@ describe('Linking tests', () => {
     test('links shared values, identifier mirrors, and module exposures', async () => {
         const common = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/common.tni'),
-            'shared kernel CommonTypes { value object Currency { code: string; } }'
+            'shared kernel CommonTypes { value object Currency { code: string } }'
         );
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
-                import { CommonTypes } from "./common.tni";
+                import { CommonTypes } from "./common.tni"
 
                 bounded context Ordering {
                     aggregate Order {
                         root entity Order {
-                            identifier id: OrderId;
-                            currency: CommonTypes.Currency;
+                            identifier id: OrderId
+                            currency: CommonTypes.Currency
                         }
                         value object OrderId {
-                            raw: string;
+                            raw: string
                         }
                     }
                 }
                 bounded context Peer {}
                 context map SharedTypes {
-                    sharedKernel CommonTypes { participants: [Ordering, Peer]; }
+                    sharedKernel CommonTypes { participants: [Ordering, Peer] }
                 }
             `
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             s`
-                import "./ordering.tni";
+                import "./ordering.tni"
 
                 bounded context Shipping {
                     value object OrderId mirrors Ordering.Order.OrderId {
-                        raw: string;
-                    };
+                        raw: string
+                    }
 
                     aggregate Shipment {
                         root entity Shipment {
-                            identifier id: ShipmentId;
-                            orderId: OrderId;
+                            identifier id: ShipmentId
+                            orderId: OrderId
                         }
                         value object ShipmentId {
-                            raw: string;
-                        };
-                    };
+                            raw: string
+                        }
+                    }
 
                     module Public {
-                        exposes PublicCode;
+                        exposes PublicCode
                         value object PublicCode {
-                            raw: string;
-                        };
-                    };
+                            raw: string
+                        }
+                    }
 
                     module Consumer depends on Public {
                         value object LocalCode {
-                            publicCode: PublicCode;
-                        };
-                    };
+                            publicCode: PublicCode
+                        }
+                    }
                 }
             `
         );
@@ -456,10 +456,10 @@ describe('Linking tests', () => {
             URI.file('/workspace/repository-root.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity Order { identifier id: OrderId; }
-                    value object OrderId { raw: string; }
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order;
+                repository OrderRepository manages Order.Order
             }`
         );
         documents = [document];
@@ -489,14 +489,14 @@ describe('Linking tests', () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/qualified-list-paths.tni'),
             `bounded context Ordering {
-                module Contracts { event OrderPlaced; }
-                module Api depends on Ordering.Contracts { value object ApiCode { raw: string; } }
+                module Contracts { event OrderPlaced }
+                module Api depends on Ordering.Contracts { value object ApiCode { raw: string } }
                 aggregate Order {
                     root entity Order {
-                        method place() { emits Contracts.OrderPlaced; }
-                        identifier id: OrderId;
+                        method place() { emits Contracts.OrderPlaced }
+                        identifier id: OrderId
                     }
-                    value object OrderId { raw: string; }
+                    value object OrderId { raw: string }
                 }
             }`
         );
@@ -546,19 +546,19 @@ describe('Linking tests', () => {
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-part.tni'),
-            `import "./ordering-context.tni";
+            `import "./ordering-context.tni"
              part of bounded context Ordering {
                  aggregate Order {
-                     root entity Order { identifier id: OrderId; }
-                     value object OrderId { raw: string; }
+                     root entity Order { identifier id: OrderId }
+                     value object OrderId { raw: string }
                  }
              }`
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-mirror.tni'),
-            `import "./ordering-part.tni";
+            `import "./ordering-part.tni"
              bounded context Shipping {
-                 value object OrderId mirrors Ordering.Order.OrderId { raw: string; }
+                 value object OrderId mirrors Ordering.Order.OrderId { raw: string }
              }`
         );
         documents = [context, orderingPart, shipping];
@@ -601,12 +601,12 @@ describe('Linking tests', () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/multi-target-projector.tni'),
             `bounded context Commerce {
-                read model OrderSummary { orderId: string; }
-                read model CustomerSummary { customerId: string; }
-                event EntityChanged;
+                read model OrderSummary { orderId: string }
+                read model CustomerSummary { customerId: string }
+                event EntityChanged
                 projector SearchProjection {
                     method onEntityChanged(source: EntityChanged) {
-                        projects OrderSummary, CustomerSummary;
+                        projects OrderSummary, CustomerSummary
                     }
                 }
             }`
@@ -639,11 +639,11 @@ describe('Linking tests', () => {
             `bounded context Shipping {
                 aggregate Shipment {
                     root entity Shipment {
-                        method ship() { transition status from Open to Shipped; }
-                        identifier id: ShipmentId;
-                        status: ShipmentStatus;
+                        method ship() { transition status from Open to Shipped }
+                        identifier id: ShipmentId
+                        status: ShipmentStatus
                     }
-                    value object ShipmentId { raw: string; }
+                    value object ShipmentId { raw: string }
                     enum ShipmentStatus { Open, Shipped }
                 }
             }`
@@ -658,7 +658,7 @@ describe('Linking tests', () => {
         const targets = [
             { source: transition + 'transition '.length, name: 'status', declaration: text.indexOf('status: ShipmentStatus') },
             { source: text.indexOf('Open to Shipped'), name: 'Open', declaration: text.indexOf('Open, Shipped') },
-            { source: text.indexOf('Shipped;'), name: 'Shipped', declaration: text.indexOf('Shipped }') }
+            { source: text.indexOf('Open, Shipped') + 'Open, '.length, name: 'Shipped', declaration: text.indexOf('Open, Shipped') + 'Open, '.length }
         ];
         for (const target of targets) {
             const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
@@ -679,16 +679,16 @@ describe('Linking tests', () => {
     test('rejects direct use of a private value object across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { value object InternalCode { raw: string; } }'
+            'bounded context Ordering { value object InternalCode { raw: string } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             s`
-                import "./ordering.tni";
+                import "./ordering.tni"
 
                 bounded context Shipping {
                     value object LocalCode {
-                        source: Ordering.InternalCode;
+                        source: Ordering.InternalCode
                     }
                 }
             `
@@ -706,18 +706,18 @@ describe('Linking tests', () => {
             `bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        method ensureOwner();
-                        identifier id: OrderId;
+                        method ensureOwner()
+                        identifier id: OrderId
                     }
                     value object OrderId {
-                        raw: string;
+                        raw: string
                     }
                 }
-                repository OrderRepository manages Order.Order;
+                repository OrderRepository manages Order.Order
                 application service OrderApplication {
                      method placeOrder(id: OrderId) {
-                         invokes Order.Order.ensureOwner;
-                         behavior "Check [[Order.Order.ensureOwner]] before placing.";
+                         invokes Order.Order.ensureOwner
+                         behavior "Check [[Order.Order.ensureOwner]] before placing."
                      }
                 }
             }`
@@ -765,19 +765,19 @@ describe('Linking tests', () => {
             `bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        identifier id: OrderId;
-                        status: string;
+                        identifier id: OrderId
+                        status: string
                     }
-                    value object OrderId { raw: string; }
+                    value object OrderId { raw: string }
                 }
                 factory OrderFactory {
-                    method createOrder(id: OrderId) returns Order.Order;
+                    method createOrder(id: OrderId) returns Order.Order
                     }
-                repository OrderRepository manages Order.Order;
+                repository OrderRepository manages Order.Order
                 application service OrderApplication {
                     method placeOrder() {
-                        invokes OrderFactory.createOrder;
-                        behavior "Create through [[OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]].";
+                        invokes OrderFactory.createOrder
+                        behavior "Create through [[OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]]."
                     }
                 }
             }`
@@ -820,16 +820,16 @@ describe('Linking tests', () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/nested-specification-path.tni'),
             `bounded context Ordering {
-                data object AddressInput { street: string; }
-                data object OrderInput { address: AddressInput; }
+                data object AddressInput { street: string }
+                data object OrderInput { address: AddressInput }
                 aggregate Order {
                     root entity Order {
                         method place(input: OrderInput) {
-                            behavior "Place the order using [[input.address.street]].";
+                            behavior "Place the order using [[input.address.street]]."
                         }
-                        identifier id: OrderId;
+                        identifier id: OrderId
                     }
-                    value object OrderId { raw: string; }
+                    value object OrderId { raw: string }
                 }
             }`
         );
@@ -919,44 +919,44 @@ describe('Linking tests', () => {
             URI.file('/workspace/duplicate-context-symbols.tni'),
             `bounded context Shipping {
                 aggregate Order {
-                    root entity Order { identifier id: OrderId; }
-                    value object OrderId { raw: string; }
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order;
+                repository OrderRepository manages Order.Order
                 module Contracts {
-                    value object DeliveryCode { raw: string; }
+                    value object DeliveryCode { raw: string }
                 }
             }
             bounded context Ordering {
                 aggregate Order {
-                    root entity Order { method fulfillItem(); identifier id: OrderId; }
-                    value object OrderId { raw: string; }
+                    root entity Order { method fulfillItem() identifier id: OrderId }
+                    value object OrderId { raw: string }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order;
+                repository OrderRepository manages Order.Order
                 aggregate Invoice {
-                    root entity Invoice { method inspect(); identifier id: InvoiceId; orderId: Order.OrderId; }
-                    value object InvoiceId { raw: string; }
+                    root entity Invoice { method inspect() identifier id: InvoiceId orderId: Order.OrderId }
+                    value object InvoiceId { raw: string }
                 }
-                repository InvoiceRepository manages Invoice.Invoice;
+                repository InvoiceRepository manages Invoice.Invoice
                 module Contracts {
-                    exposes DeliveryCode;
-                    value object DeliveryCode { raw: string; }
+                    exposes DeliveryCode
+                    value object DeliveryCode { raw: string }
                 }
                 module Api depends on Contracts {
-                    value object ApiCode { code: Contracts.DeliveryCode; }
+                    value object ApiCode { code: Contracts.DeliveryCode }
                 }
                 application service InvoiceApplication {
                     method inspect(id: InvoiceId, code: Contracts.DeliveryCode) {
-                        invokes Invoice.Invoice.inspect;
-                        behavior "Use [[Order.OrderId.raw]] and [[Contracts.DeliveryCode.raw]].";
-                         behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.OrderRepository]].";
+                        invokes Invoice.Invoice.inspect
+                        behavior "Use [[Order.OrderId.raw]] and [[Contracts.DeliveryCode.raw]]."
+                         behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.OrderRepository]]."
                     }
                 }
                 application service OrderApplication {
                     method fulfillOrder() {
-                        invokes Order.Order.fulfillItem;
+                        invokes Order.Order.fulfillItem
                     }
                 }
             }`
@@ -1023,12 +1023,12 @@ describe('Linking tests', () => {
             return definitions?.[0]?.targetSelectionRange.start;
         };
         const orderingOffset = text.indexOf('bounded context Ordering');
-        const valueObjectTypePath = text.indexOf('Order.OrderId;');
+        const valueObjectTypePath = text.indexOf('Order.OrderId');
         expect(await getDefinitionStart(valueObjectTypePath)).toEqual(
             document.textDocument.positionAt(text.indexOf('aggregate Order {', orderingOffset) + 'aggregate '.length)
         );
         expect(await getDefinitionStart(valueObjectTypePath + 'Order.'.length)).toEqual(
-            document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string }', orderingOffset))
         );
         const typePrefixLink = (await getDefinitionLinks(valueObjectTypePath))?.[0];
         expect(typePrefixLink?.originSelectionRange).toEqual({
@@ -1043,10 +1043,10 @@ describe('Linking tests', () => {
         });
         const orderFieldPath = text.indexOf('Order.OrderId.raw');
         expect(await getDefinitionStart(orderFieldPath + 'Order.'.length)).toEqual(
-            document.textDocument.positionAt(text.indexOf('OrderId { raw: string; }', orderingOffset))
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string }', orderingOffset))
         );
         expect(await getDefinitionStart(orderFieldPath + 'Order.OrderId.'.length)).toEqual(
-            document.textDocument.positionAt(text.indexOf('raw: string;', text.indexOf('value object OrderId', orderingOffset)))
+            document.textDocument.positionAt(text.indexOf('raw: string', text.indexOf('value object OrderId', orderingOffset)))
         );
         const codePath = text.indexOf('Contracts.DeliveryCode.raw');
         expect(await getDefinitionStart(codePath)).toEqual(
@@ -1056,7 +1056,7 @@ describe('Linking tests', () => {
             document.textDocument.positionAt(text.indexOf('value object DeliveryCode', orderingOffset) + 'value object '.length)
         );
         expect(await getDefinitionStart(codePath + 'Contracts.DeliveryCode.'.length)).toEqual(
-            document.textDocument.positionAt(text.indexOf('raw: string;', text.indexOf('value object DeliveryCode', orderingOffset)))
+            document.textDocument.positionAt(text.indexOf('raw: string', text.indexOf('value object DeliveryCode', orderingOffset)))
         );
         expect(await getDefinitionStart(text.indexOf('depends on Contracts') + 'depends on '.length)).toEqual(
             document.textDocument.positionAt(text.indexOf('Contracts {', orderingOffset))
@@ -1126,22 +1126,22 @@ describe('Linking tests', () => {
         );
         const aggregatePart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-aggregate.tni'),
-            `import "./order-context.tni";
+            `import "./order-context.tni"
              part of bounded context Ordering {
                  aggregate Order {
-                     root entity Order { method place(); identifier id: OrderId; }
-                     value object OrderId { raw: string; }
+                     root entity Order { method place() identifier id: OrderId }
+                     value object OrderId { raw: string }
                  }
              }`
         );
         const applicationPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-application.tni'),
-            `import "./order-context.tni";
-             import "./order-aggregate.tni";
+            `import "./order-context.tni"
+             import "./order-aggregate.tni"
              part of bounded context Ordering {
                  application service OrderApplication {
                      method placeOrder(id: OrderId) {
-                         invokes Order.Order.place;
+                         invokes Order.Order.place
                      }
                  }
              }`
@@ -1177,12 +1177,12 @@ describe('Linking tests', () => {
             URI.file('/workspace/invalid-factory.tni'),
             `bounded context Ordering {
                 aggregate Order {
-                    root entity Order { identifier id: OrderId; }
-                    value object OrderId { raw: string; }
-                    value object Other { raw: string; }
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    value object Other { raw: string }
                 }
                 factory OrderFactory {
-                    method createOrder() returns Other;
+                    method createOrder() returns Other
                     }
             }`
         );
@@ -1202,11 +1202,11 @@ describe('Linking tests', () => {
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/map.tni'),
-            `import { Ordering as Orders, Shipping } from "./contexts.tni";
+            `import { Ordering as Orders, Shipping } from "./contexts.tni"
              context map FulfillmentMap {
-                 partner Orders <-> partner Shipping;
-                 partner Billing <-> partner Shipping;
-                 separateWays Orders -x- Billing;
+                 partner Orders <-> partner Shipping
+                 partner Billing <-> partner Shipping
+                 separateWays Orders -x- Billing
              }`
         );
         documents = [catalog, consumer];
@@ -1246,15 +1246,15 @@ describe('Linking tests', () => {
             `bounded context Ordering {
                 aggregate Order {
                     root entity Order {
-                        identifier id: OrderId;
+                        identifier id: OrderId
                     }
                     value object OrderId {
-                        raw: string;
+                        raw: string
                     }
                 }
                 application service OrderApplication {
                     method placeOrder() {
-                        behavior "Check [[Order.Order.missingMethod]] before placing.";
+                        behavior "Check [[Order.Order.missingMethod]] before placing."
                     }
                 }
             }`

@@ -1,4 +1,5 @@
-import "./strategic.tni";
+import "./strategic.tni"
 
 bounded context Ordering realizes OrderManagement {}
+
 bounded context Shipping realizes Fulfillment {}

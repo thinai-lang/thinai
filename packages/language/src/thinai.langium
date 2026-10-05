@@ -15,7 +15,7 @@ TopLevelDeclaration:
 Import:
     'import'
     ('{' components+=ImportComponent (',' components+=ImportComponent)* '}' 'from' path=StringLiteral
-    | path=StringLiteral ('as' alias=ID)?) ';'?;
+    | path=StringLiteral ('as' alias=ID)?);
 
 ImportComponent:
     component=[ImportableComponent:ID] ('as' alias=[ImportableComponent:ID])?;
@@ -26,17 +26,17 @@ BoundedContext:
     ('realizes' subdomains+=SubdomainReference (',' subdomains+=SubdomainReference)*)?
     '{'
         members+=ContextMember*
-    '}' ';'?;
+    '}' ;
 
 BoundedContextPart:
     'part' 'of' 'bounded' 'context' (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID] '{'
         members+=ContextMember*
-    '}' ';'?;
+    '}' ;
 
 ContextMap:
     'context' 'map' name=ID '{'
         relationships+=ContextRelationship*
-    '}' ';'?;
+    '}' ;
 
 ContextRelationship:
     CustomerSupplierRelationship
@@ -45,28 +45,28 @@ ContextRelationship:
     | SharedKernelRelationship;
 
 CustomerSupplierRelationship:
-    'customer' customer=ContextMapEndpoint '->' 'supplier' supplier=ContextMapEndpoint ';'?;
+    'customer' customer=ContextMapEndpoint '->' 'supplier' supplier=ContextMapEndpoint ;
 
 PartnershipRelationship:
-    'partner' left=ContextMapEndpoint '<->' 'partner' right=ContextMapEndpoint ';'?;
+    'partner' left=ContextMapEndpoint '<->' 'partner' right=ContextMapEndpoint ;
 
 SeparateWaysRelationship:
     'separateWays' (leftPath+=[NamedDeclaration:ID] '.')* left=[BoundedContext:ID]
-    '-x-' (rightPath+=[NamedDeclaration:ID] '.')* right=[BoundedContext:ID] ';'?;
+    '-x-' (rightPath+=[NamedDeclaration:ID] '.')* right=[BoundedContext:ID] ;
 
 SharedKernelRelationship:
     'sharedKernel' (sharedKernelPath+=[NamedDeclaration:ID] '.')* sharedKernel=[SharedKernel:ID] '{'
-        'participants' ':' '[' participants+=BoundedContextReference (',' participants+=BoundedContextReference)* ']' ';'?
-    '}' ';'?;
+        'participants' ':' '[' participants+=BoundedContextReference (',' participants+=BoundedContextReference)* ']'
+    '}' ;
 
 ContextMapEndpoint:
     (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID]
-    ('{' 'integrationPatterns' ':' '[' integrationPatterns+=StringLiteral (',' integrationPatterns+=StringLiteral)* ']' ';'? '}')?;
+    ('{' 'integrationPatterns' ':' '[' integrationPatterns+=StringLiteral (',' integrationPatterns+=StringLiteral)* ']' '}')?;
 
 ApplicationService:
     'application' 'service' name=ID '{'
         methods+=Method*
-    '}' ';'?;
+    '}' ;
 
 ContextMember:
     ApplicationService
@@ -85,7 +85,7 @@ ContextMember:
 SharedKernel:
     'shared' 'kernel' name=ID '{'
         members+=SharedKernelMember*
-    '}' ';'?;
+    '}' ;
 
 SharedKernelMember:
     ValueObject
@@ -99,10 +99,10 @@ Module:
     '{'
         exposures+=Exposure*
         members+=ModuleMember*
-    '}' ';'?;
+    '}' ;
 
 Exposure:
-    'exposes' declarations+=NamedDeclarationReference (',' declarations+=NamedDeclarationReference)* ';'?;
+    'exposes' declarations+=NamedDeclarationReference (',' declarations+=NamedDeclarationReference)* ;
 
 ModuleMember:
     ApplicationService
@@ -119,12 +119,12 @@ ModuleMember:
     | TypeDeclaration;
 
 Subdomain:
-    'subdomain' name=ID ('kind' kind=SubdomainKind)? ';'?;
+    'subdomain' name=ID ('kind' kind=SubdomainKind)? ;
 
 Aggregate:
     'aggregate' name=ID '{'
         (members+=AggregateMember | invariants+=Invariant)*
-    '}' ';'?;
+    '}' ;
 
 AggregateMember:
     Entity
@@ -133,15 +133,15 @@ AggregateMember:
 
 Entity:
     (root?='root')? 'entity' name=ID ('extends' (basePath+=[NamedDeclaration:ID] '.')* base=[Entity:ID])?
-    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
+    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ;
 
 ValueObject:
     'value' 'object' name=ID
     ('mirrors' (mirrorsPath+=[NamedDeclaration:ID] '.')* mirrors=[ValueObject:ID])?
-    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ';'?;
+    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ;
 
 EnumType:
-    'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ';'?;
+    'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ;
 
 EnumValue:
     name=ID;
@@ -149,19 +149,19 @@ EnumValue:
 Field:
     (identifier?='identifier')? name=ID (optional?='?')? ':'
     (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[TypeDeclaration:ID] | collection=CollectionType)
-    ('initial' initialState=ID)? ';'?;
+    ('initial' initialState=ID)? ;
 
 Invariant:
-    'invariant' description=SpecificationText ';'?;
+    'invariant' description=SpecificationText ;
 
 Precondition:
-    'precondition' description=SpecificationText ';'?;
+    'precondition' description=SpecificationText ;
 
 Postcondition:
-    'postcondition' description=SpecificationText ';'?;
+    'postcondition' description=SpecificationText ;
 
 Behavior:
-    'behavior' description=SpecificationText ';'?;
+    'behavior' description=SpecificationText ;
 
 TypeDeclaration:
     Entity
@@ -171,61 +171,59 @@ TypeDeclaration:
     | DataObject;
 
 ReadModel:
-    'read' 'model' name=ID '{' fields+=Field* '}' ';'?;
+    'read' 'model' name=ID '{' fields+=Field* '}' ;
 
 DataObject:
-    'data' 'object' name=ID '{' fields+=Field* '}' ';'?;
+    'data' 'object' name=ID '{' fields+=Field* '}' ;
 
 Projector:
-    'projector' name=ID '{' methods+=Method* '}' ';'?;
+    'projector' name=ID '{' methods+=Method* '}' ;
 
 DomainService:
-    'domain' 'service' name=ID ('{' methods+=Method* '}')? ';'?;
+    'domain' 'service' name=ID ('{' methods+=Method* '}')? ;
 
 Method:
     'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior | transitions+=Transition |
         invocations+=MethodInvocation |
-        'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)* ';'? |
-        'emits' events+=EventReference (',' events+=EventReference)* ';'?)* '}')? ';'?;
+        'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)* |
+        'emits' events+=EventReference (',' events+=EventReference)*)* '}')?;
 
 MethodInvocation:
-    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ';'?;
+    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ;
 
 Transition:
-    'transition' field=[Field:ID] 'from' from=[EnumValue:ID] 'to' to=[EnumValue:ID] ';'?;
+    'transition' field=[Field:ID] 'from' from=[EnumValue:ID] 'to' to=[EnumValue:ID] ;
 
 Constructor:
     'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
-    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ';'?;
+    ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ;
 
 Parameter:
     name=ID (optional?='?')? ':'
     (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[ParameterType:ID] | collection=CollectionType);
 
 Repository:
-    'repository' name=ID 'manages' (rootPath+=[NamedDeclaration:ID] '.')* root=[Entity:ID] ';'?;
+    'repository' name=ID 'manages' (rootPath+=[NamedDeclaration:ID] '.')* root=[Entity:ID] ;
 
 QueryRepository:
-    'query' 'repository' name=ID 'serves' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ';'?;
+    'query' 'repository' name=ID 'serves' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ;
 
 QueryService:
-    'query' 'service' name=ID '{' methods+=Method* '}' ';'?;
+    'query' 'service' name=ID '{' methods+=Method* '}' ;
 
 Factory:
     'factory' name=ID
-    ('{' methods+=Method* '}')? ';'?;
+    ('{' methods+=Method* '}')? ;
 
 DomainEvent:
     'event' name=ID
-    ('{' fields+=Field* '}')?
-    ';'?;
+    ('{' fields+=Field* '}')?;
 
 IntegrationEvent:
     'integration' 'event' name=ID
-    ('{' fields+=Field* '}')?
-    ';'?;
+    ('{' fields+=Field* '}')?;
 
 type EventDeclaration = DomainEvent | IntegrationEvent;
 type ParameterType = TypeDeclaration | EventDeclaration;
@@ -253,16 +251,16 @@ type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | Contex
     QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
 
 Actor:
-    'actor' name=ID ';'?;
+    'actor' name=ID ;
 
 Journey:
-    'journey' name=ID '{' actors+=JourneyActor* '}' ';'?;
+    'journey' name=ID '{' actors+=JourneyActor* '}' ;
 
 JourneyActor:
     'by' actor=[Actor:ID] '{' steps+=JourneyStep* '}';
 
 JourneyStep:
-    'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ';'?;
+    'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 

@@ -12,6 +12,7 @@ import { createThinaiParser } from './thinai-parser.js';
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
+import { ThinaiFormatter } from './thinai-formatter.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -53,6 +54,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         LangiumParser: services => createThinaiParser(services)
     },
     lsp: {
+        Formatter: () => new ThinaiFormatter(),
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),
         CompletionProvider: services => new ThinaiCompletionProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
