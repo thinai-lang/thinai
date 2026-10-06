@@ -230,6 +230,42 @@ describe('LSP services', () => {
         })).toEqual([]);
     });
 
+    test('formats a guarded method invocation on a continuation line', async () => {
+        const source = 'bounded context Ordering{aggregate Order{root entity Order{method place(){invokes validate when "The order is ready."}method validate(){}identifier id:OrderId}value object OrderId{raw:string}}}';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/guarded-invocation-formatting.tni'), source
+        );
+        documents = [document];
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+        const lines = formatted.split('\n');
+        const invocationLine = lines.findIndex(line => line.includes('invokes validate'));
+        expect(lines[invocationLine + 1].trimStart()).toBe('when "The order is ready."');
+        expect(lines[invocationLine + 1].match(/^\s*/)?.[0].length)
+            .toBe(lines[invocationLine].match(/^\s*/)![0].length + 2);
+
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/formatted-guarded-invocation.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
+    });
+
     test('formats the complete order-fulfillment example', async () => {
         const source = await readFile(new URL('../../../examples/order-fulfillment/ordering-events.tni', import.meta.url), 'utf8');
         const misformattedSource = source
@@ -797,6 +833,182 @@ describe('LSP services', () => {
             kind: CompletionItemKind.EnumMember,
             detail: expect.stringContaining('.Open')
         });
+    });
+
+    test('suggests when guards after transitions, emissions, method invocations, and journey steps', async () => {
+        const marker = '__completion_position__';
+        const common = `bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method validate()
+                    method place() { CLAUSE }
+                    identifier id: OrderId
+                    status: OrderStatus
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+            event OrderPlaced
+            application service OrderApplication {
+                method placeOrder() {}
+            }
+        }`;
+        const cases = [
+            {
+                name: 'transition',
+                expected: ['when'],
+                text: common.replace('CLAUSE', `transition status from Draft to Placed ${marker}`)
+            },
+            {
+                name: 'emission',
+                expected: ['when'],
+                text: common.replace('CLAUSE', `emits OrderPlaced ${marker}`)
+            },
+            {
+                name: 'method invocation',
+                expected: ['when'],
+                text: common.replace('CLAUSE', `invokes validate ${marker}`)
+            },
+            {
+                name: 'journey step',
+                expected: ['when'],
+                text: `actor Customer
+                    ${common.replace('CLAUSE', '')}
+                    journey PlaceOrder { by Customer { invoke Ordering.OrderApplication.placeOrder with "Order input" ${marker} } }`
+            },
+            {
+                name: 'journey step clauses',
+                expected: ['with', 'when'],
+                text: `actor Customer
+                    ${common.replace('CLAUSE', '')}
+                    journey PlaceOrder { by Customer { invoke Ordering.OrderApplication.placeOrder ${marker} } }`
+            }
+        ];
+
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.text.indexOf(marker);
+            const text = completionCase.text.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/when-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+            expect(document.parseResult.parserErrors, completionCase.name).toEqual([]);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            for (const keyword of completionCase.expected) {
+                expect(completion?.items.map(item => item.label), completionCase.name).toContain(keyword);
+            }
+        }
+
+        const partialText = common.replace('CLAUSE', 'invokes validate w');
+        const partialDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/when-prefix-completion.tni'), partialText
+        );
+        documents.push(partialDocument);
+        const partialOffset = partialText.indexOf('invokes validate w') + 'invokes validate w'.length;
+        const partialCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(partialDocument, {
+            textDocument: { uri: partialDocument.uri.toString() },
+            position: partialDocument.textDocument.positionAt(partialOffset)
+        });
+        const whenItem = partialCompletion?.items.find(item => item.label === 'when');
+        expect(services.Thinai.lsp.CompletionProvider?.completionOptions?.triggerCharacters).toContain('w');
+        expect(whenItem?.textEdit).toMatchObject({
+            newText: 'when',
+            range: {
+                start: partialDocument.textDocument.positionAt(partialOffset - 1),
+                end: partialDocument.textDocument.positionAt(partialOffset)
+            }
+        });
+    });
+
+    test('suggests optional keywords at their grammar positions', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker} {}` },
+            { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
+            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering { module Api ${marker} {} }` },
+            { name: 'entity inheritance', keyword: 'extends', source: `bounded context Ordering { aggregate Order { root entity Base { identifier id: Id } entity Child ${marker} {} value object Id { raw: string } } }` },
+            { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering { aggregate Order { value object Base { raw: string } value object Mirror ${marker} { raw: string } } }` },
+            { name: 'method return type', keyword: 'returns', source: `bounded context Ordering { application service Queries { method find() ${marker} } }` },
+            { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering { aggregate Order { root entity Order { identifier id: Id status: Status ${marker} } value object Id { raw: string } enum Status { Draft, Placed } } }` }
+        ];
+
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.source.indexOf(marker);
+            const text = completionCase.source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/optional-keyword-${index}.tni`), text
+            );
+            documents.push(document);
+            expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.map(item => item.label), completionCase.name).toContain(completionCase.keyword);
+        }
+    });
+
+    test('offers the allowed declaration and method-body keywords in each block', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'method body',
+                expected: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits', 'projects'],
+                source: `bounded context Ordering { application service App { method execute() { ${marker} } } }`
+            },
+            {
+                name: 'constructor body',
+                expected: ['invariant', 'precondition', 'postcondition', 'behavior'],
+                source: `bounded context Ordering { aggregate Order { root entity Order { constructor() { ${marker} } identifier id: OrderId } value object OrderId { raw: string } } }`
+            },
+            {
+                name: 'aggregate body',
+                expected: ['entity', 'value', 'enum', 'invariant'],
+                source: `bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }`
+            },
+            {
+                name: 'module body',
+                expected: ['exposes', 'aggregate', 'application', 'domain', 'query'],
+                source: `bounded context Ordering { module Api { ${marker} } }`
+            },
+            {
+                name: 'journey body',
+                expected: ['by'],
+                source: `actor Customer journey PlaceOrder { ${marker} }`
+            },
+            {
+                name: 'journey actor body',
+                expected: ['invoke'],
+                source: `actor Customer journey PlaceOrder { by Customer { ${marker} } }`
+            },
+            {
+                name: 'context map body',
+                expected: ['customer', 'partner', 'separateWays', 'sharedKernel'],
+                source: `context map Fulfillment { ${marker} }`
+            }
+        ];
+
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.source.indexOf(marker);
+            const text = completionCase.source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/block-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const keyword of completionCase.expected) {
+                expect(labels, completionCase.name).toContain(keyword);
+            }
+        }
     });
 
     test('hides declarations in sibling modules unless exposed through a dependency', async () => {

@@ -65,6 +65,45 @@ describe('Linking tests', () => {
         ]))).toBe(true);
     });
 
+    test('links descriptive guards on method invocations', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/guarded-invocation.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            invokes ensureOwner when "Place only when [[status]] is Draft."
+                        }
+                        method ensureOwner()
+                        identifier id: OrderId
+                        status: OrderStatus
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        const model = document.parseResult.value as Model;
+        type GuardedInvocation = {
+            targets: Array<{ ref?: AstNode }>;
+            guard?: { parts: Array<{ target?: { ref?: AstNode } }> };
+        };
+        const context = model.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ members?: Array<{ methods?: Array<{ invocations?: GuardedInvocation[] }> }> }>;
+        };
+        const aggregate = context.members[0];
+        const entity = aggregate.members?.[0];
+        const invocation = entity?.methods?.[0].invocations?.[0];
+        expect(invocation?.targets.at(-1)?.ref?.$type).toBe('Method');
+        expect(invocation?.guard?.parts[1].target?.ref?.$type).toBe('Field');
+    });
+
     test('links canonical context parts and imported domain concepts', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),

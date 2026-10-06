@@ -1207,7 +1207,7 @@ describe('Validating', () => {
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            'import "./ordering.tni" bounded context Shipping { application service ShippingApplication { method place() { invokes Ordering.Order.Order.place } } }'
+            'import "./ordering.tni" bounded context Shipping { application service ShippingApplication { method place() { invokes Ordering.Order.Order.place when "The order is ready." } } }'
         );
         documents = [ordering, shipping];
 

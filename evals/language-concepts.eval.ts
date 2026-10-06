@@ -41,13 +41,13 @@ describe('Thinai language concept evaluations', () => {
             'exposes OrderReference', 'data object OrderRequest'
         ]);
         return {
+            ...generated.result.data,
             score: generated.valid ? features.score : 0,
             valid: generated.valid,
             featureScore: features.score,
             missingFeatures: features.missing,
             diagnostics: generated.errors.map(error => error.message),
-            generatedCode: generated.valid ? undefined : generated.code,
-            ...generated.result.data
+            generatedCode: generated.valid ? undefined : generated.code
         };
     });
 
@@ -63,13 +63,13 @@ describe('Thinai language concept evaluations', () => {
             'method createOrder()'
         ]);
         return {
+            ...generated.result.data,
             score: generated.valid ? features.score : 0,
             valid: generated.valid,
             featureScore: features.score,
             missingFeatures: features.missing,
             diagnostics: generated.errors.map(error => error.message),
-            generatedCode: generated.valid ? undefined : generated.code,
-            ...generated.result.data
+            generatedCode: generated.valid ? undefined : generated.code
         };
     });
 
@@ -99,6 +99,23 @@ describe('Thinai language concept evaluations', () => {
             missingFeatures: features.missing,
             hasGroupedTransition,
             hasGuardedEmission,
+            diagnostics: generated.errors.map(error => error.message),
+            generatedCode: generated.valid ? undefined : generated.code
+        };
+    });
+
+    evaluation('models a descriptive guard on a method invocation', async (context: EvalContext) => {
+        const generated = await generateAndValidate(
+            'Generate a valid single-file Thinai Ordering bounded context. Declare aggregate Order with root entity Order. Give Order the field identifier id: OrderId and status: OrderStatus initial Draft, and methods place() and ensureOwner(). Add enum OrderStatus { Draft, Placed } and sibling value object OrderId { raw: string; }. Add application service OrderApplication with method placeOrder() whose body invokes Order.Order.place with a descriptive when guard saying the order is ready to be placed. Make the guard explicit after the fully qualified invocation target, and do not describe it as executable or as bypassing invocation rules.',
+            context
+        );
+        const normalized = generated.code.toLowerCase().replace(/\s+/g, ' ');
+        const hasGuardedInvocation = /invokes\s+order\.order\.place\s+when\s+"[^"]+"/.test(normalized);
+        return {
+            ...generated.result.data,
+            score: generated.valid && hasGuardedInvocation ? 1 : 0,
+            valid: generated.valid,
+            hasGuardedInvocation,
             diagnostics: generated.errors.map(error => error.message),
             generatedCode: generated.valid ? undefined : generated.code
         };
@@ -147,14 +164,14 @@ describe('Thinai language concept evaluations', () => {
         const hasReadsClause = /\breads\s+[A-Z_]/.test(generated.code);
         const score = generated.valid && !hasReadsClause ? features.score : 0;
         return {
+            ...generated.result.data,
             score,
             valid: generated.valid,
             featureScore: features.score,
             missingFeatures: features.missing,
             hasReadsClause,
             diagnostics: generated.errors.map(error => error.message),
-            generatedCode: generated.valid ? undefined : generated.code,
-            ...generated.result.data
+            generatedCode: generated.valid ? undefined : generated.code
         };
     });
 
@@ -169,13 +186,13 @@ describe('Thinai language concept evaluations', () => {
             'Map<string, List<string>>', 'warehouseIds: List<string>', 'data object StockSearch'
         ]);
         return {
+            ...generated.result.data,
             score: generated.valid ? features.score : 0,
             valid: generated.valid,
             featureScore: features.score,
             missingFeatures: features.missing,
             diagnostics: generated.errors.map(error => error.message),
-            generatedCode: generated.valid ? undefined : generated.code,
-            ...generated.result.data
+            generatedCode: generated.valid ? undefined : generated.code
         };
     });
 });

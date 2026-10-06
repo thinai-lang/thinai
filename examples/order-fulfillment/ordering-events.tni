@@ -8,6 +8,7 @@ part of bounded context Ordering {
     method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
       precondition "The order contains at least one item."
       invokes Order.Order.place
+        when "The order is ready to be placed."
       behavior "First, authorize the Common.Role.Customer role for placing an order with [[Authorization.authorize]]; stop if authorization fails. Then place the order identified by [[input.orderId]] and return its [[result.status]]."
       postcondition "The order is placed."
     }

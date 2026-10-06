@@ -28,28 +28,31 @@ bounded context Ordering {
     aggregate Order {
         root entity Order {
             method place() {
-                emits OrderPlaced;
-                transition status from Draft to Placed;
+                emits OrderPlaced
+                transition status from Draft to Placed
             }
-            status: OrderStatus;
+            identifier id: OrderId
+            status: OrderStatus initial Draft
         }
+        value object OrderId { raw: string }
+        value object OrderLine { sku: string }
         enum OrderStatus { Draft, Placed }
     }
-    repository OrderRepository manages Order.Order;
+    repository OrderRepository manages Order.Order
     factory OrderFactory {
-        method createOrder() returns Order.Order;
+        method createOrder() returns Order.Order
     }
 
-    event OrderPlaced;
+    event OrderPlaced { orderId: OrderId }
 
     application service OrderApplication {
         method placeOrder(orderId: OrderId, items: List<OrderLine>) {
-            precondition "The order contains at least one item.";
-            invokes Order.Order.place;
-            behavior "Place the order while its status is [[Order.Order.status]].";
+            precondition "The order contains at least one item."
+            invokes Order.Order.place when "The order is ready to be placed."
+            behavior "Place the order while its status is [[Order.Order.status]]."
         }
         method createOrder() {
-            invokes OrderFactory.createOrder;
+            invokes OrderFactory.createOrder
         }
     }
 }
@@ -71,6 +74,9 @@ guard. The guard applies to every event in that clause; use separate `emits`
 clauses when the events have different conditions. A transition can similarly
 group changes to multiple enum fields declared on the same entity under one
 descriptive `when` guard. Each field change is validated against its own enum.
+An `invokes` clause may also have a descriptive `when` guard. It describes when
+the invocation is intended to occur, but does not change which calls are allowed
+by Thinai's invocation rules or turn the relationship into executable behavior.
 Grouping records coordinated intent, not an implementation-level atomicity
 guarantee. Guards are prose, not evaluated conditions; state-graph reachability
 therefore treats guarded transitions as possible edges. The `when` guard on a

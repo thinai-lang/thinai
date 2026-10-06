@@ -128,6 +128,8 @@ Each `[[...]]` reference must name a visible declaration, method, parameter, rep
 
 An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these optional clauses to the relevant type, constructor, or method. Inside a method body, optional `invokes Method` and `emits Event` clauses provide navigable relationships, while `transition` models an entity's state change. Effect-level `when "..."` guards document when a grouped transition or emission applies; they are not evaluated. None of these statements is a required workflow or executable instruction; behavior text remains descriptive.
 
+Method-level `invokes Method when "..."` clauses may have descriptive guards. Keep `when` after the invocation target; it documents when the invocation is intended, but does not make the guard executable or bypass invocation authorization rules. A `when` guard is also available after `transition` and `emits`, and on a Journey `invoke` step (after optional `with` text).
+
 ## References and bounded-context boundaries
 
 - Resolve every cross-reference to a declaration in the same file or an explicitly imported file. Prefer qualified names when they improve clarity.

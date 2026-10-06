@@ -38,17 +38,19 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('uses linked behavior specifications for command logic', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai Ordering model. Use the structure root entity Order { constructor(id: OrderId) { invariant "A valid order has an identifier."; } method ensureOwner() { invariant "A valid order has an owner."; } method place() { emits OrderPlaced; } identifier id: OrderId; } followed by sibling declaration value object OrderId { raw: string; }. Do not put the value object inside the entity. Declare repository OrderRepository manages Order.Order. Define application service OrderApplication with method placeOrder(id: OrderId) { precondition "The order can be placed."; invokes Order.Order.place; behavior "Check [[Order.Order.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid.',
+            'Generate a valid, single-file Thinai Ordering model. Use the structure root entity Order { constructor(id: OrderId) { invariant "A valid order has an identifier."; } method ensureOwner() { invariant "A valid order has an owner."; } method place() { emits OrderPlaced; } identifier id: OrderId; } followed by sibling declaration value object OrderId { raw: string; }. Do not put the value object inside the entity. Declare repository OrderRepository manages Order.Order. Define application service OrderApplication with method placeOrder(id: OrderId) { precondition "The order can be placed."; invokes Order.Order.place when "The order is ready to be placed."; behavior "Check [[Order.Order.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid and describe the invocation guard as prose, not executable logic.',
             context
         );
         const lowerCode = generated.code.toLowerCase();
         const requiredFeatures = ['invariant', 'precondition', 'behavior', 'postcondition', 'ensureowner', '[['];
         const featureScore = requiredFeatures.filter(feature => lowerCode.includes(feature)).length / requiredFeatures.length;
-        const score = generated.valid ? featureScore : 0;
+        const hasGuardedInvocation = /invokes\s+order\.order\.place\s+when\s+"[^"]+"/.test(lowerCode);
+        const score = generated.valid ? featureScore * (hasGuardedInvocation ? 1 : 0.5) : 0;
         return {
             score,
             valid: generated.valid,
             featureScore,
+            hasGuardedInvocation,
             missingFeatures: requiredFeatures.filter(feature => !lowerCode.includes(feature)),
             errorCount: generated.errors.length,
             ...generated.result.data

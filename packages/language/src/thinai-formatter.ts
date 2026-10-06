@@ -181,6 +181,11 @@ export class ThinaiFormatter extends AbstractFormatter {
             formatter.keyword('when').append(Formatting.oneSpace());
             this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
         }
+        if (node.$type === 'MethodInvocation') {
+            formatter.keyword('when').prepend(Formatting.indent());
+            formatter.keyword('when').append(Formatting.oneSpace());
+            this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
+        }
         if (node.$type === 'EventEmission') {
             formatter.keyword('emits').append(Formatting.oneSpace());
         }

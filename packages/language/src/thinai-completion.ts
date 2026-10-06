@@ -3,6 +3,7 @@ import {
     type AstNodeDescription,
     type LangiumDocument,
     type ReferenceInfo,
+    AstUtils,
     URI,
     UriUtils,
     stream
@@ -10,6 +11,7 @@ import {
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
 import {
     CompletionItemKind,
+    type CompletionItem,
     type CompletionList,
     type CompletionParams,
     type Position,
@@ -19,6 +21,7 @@ import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
     isDomainEvent,
+    isEventEmission,
     isEnumValue,
     isField,
     isIntegrationEvent,
@@ -26,13 +29,14 @@ import {
     isMethod,
     isMethodInvocation,
     isParameter,
-    isSpecificationTextPart
+    isSpecificationTextPart,
+    isTransition
 } from './generated/ast.js';
 import { getExportedName, ThinaiScopeProvider } from './thinai-scope.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: ['"', '/', '.', '[']
+        triggerCharacters: ['"', '/', '.', '[', 'w']
     };
 
     private readonly thinaiServices: ThinaiServices;
@@ -146,6 +150,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const defaultCompletion = await super.getCompletion(document, params, cancelToken);
+        const optionalClauseCompletions = this.getOptionalClauseCompletions(document, params.position);
+        if (optionalClauseCompletions.length > 0) {
+            const optionalLabels = new Set(optionalClauseCompletions.map(item => item.label));
+            const items = (defaultCompletion?.items ?? []).filter(item =>
+                typeof item.label !== 'string' || !optionalLabels.has(item.label)
+            );
+            items.push(...optionalClauseCompletions);
+            return {
+                isIncomplete: defaultCompletion?.isIncomplete ?? false,
+                items
+            };
+        }
         const importContext = this.getImportPathContext(document, params.position);
         if (!importContext) {
             return defaultCompletion;
@@ -156,6 +172,68 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             isIncomplete: defaultCompletion?.isIncomplete ?? false,
             items: [...(defaultCompletion?.items ?? []), ...importItems]
         };
+    }
+
+    private getOptionalClauseCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const model = document.parseResult.value;
+        if (!model) {
+            return [];
+        }
+
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        let best: { end: number; prefix: string; keywords: string[] } | undefined;
+        for (const node of AstUtils.streamAst(model)) {
+            const keywords = isJourneyStep(node)
+                ? [
+                    ...(!node.arguments ? ['with'] : []),
+                    ...(!node.guard ? ['when'] : [])
+                ]
+                : isTransition(node) || isEventEmission(node) || isMethodInvocation(node)
+                    ? (!node.guard ? ['when'] : [])
+                    : [];
+            if (keywords.length === 0) {
+                continue;
+            }
+            const cstNode = node.$cstNode;
+            if (!cstNode) {
+                continue;
+            }
+            const end = document.textDocument.offsetAt(cstNode.range.end);
+            if (end > offset) {
+                continue;
+            }
+            const gap = text.slice(end, offset);
+            const match = /^(\s*)([\p{L}_]*)$/u.exec(gap);
+            if (!match || !keywords.some(keyword =>
+                match[2].length < keyword.length && keyword.startsWith(match[2].toLowerCase())
+            )) {
+                continue;
+            }
+            if (!best || end > best.end) {
+                best = { end, prefix: match[2], keywords };
+            }
+        }
+        if (!best) {
+            return [];
+        }
+
+        const prefixStart = offset - best.prefix.length;
+        return best.keywords
+            .filter(keyword => keyword.startsWith(best!.prefix.toLowerCase()))
+            .map(keyword => ({
+                label: keyword,
+                kind: CompletionItemKind.Keyword,
+                detail: keyword === 'when' ? 'Guard clause' : 'Journey input clause',
+                sortText: '1',
+                textEdit: {
+                    range: {
+                        start: document.textDocument.positionAt(prefixStart),
+                        end: position
+                    },
+                    newText: keyword
+                }
+            }));
     }
 
     private getImportPathContext(document: LangiumDocument, position: Position): {

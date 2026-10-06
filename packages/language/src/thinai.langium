@@ -190,7 +190,7 @@ Method:
         'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)*)* '}')?;
 
 MethodInvocation:
-    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ;
+    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('when' guard=SpecificationText)? ;
 
 Transition:
     'transition' changes+=TransitionChange (',' changes+=TransitionChange)* ('when' guard=SpecificationText)?;
