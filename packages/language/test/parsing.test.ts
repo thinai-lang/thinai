@@ -204,6 +204,53 @@ describe('Parsing tests', () => {
         expect(dedentedParts[1].targets.map(target => target.$refText)).toEqual(['ensureOwner']);
     });
 
+    test('dedents CRLF specification text while retaining intentional blank lines', async () => {
+        const document = await parse([
+            'bounded context CrLf {',
+            '    aggregate Sample {',
+            '        invariant "',
+            '            first line',
+            '',
+            '            second line',
+            '            "',
+            '        root entity Item { identifier id: ItemId }',
+            '        value object ItemId { raw: string }',
+            '    }',
+            '}'
+        ].join('\r\n'));
+        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
+        };
+        const aggregate = context.members.find(member => member.$type === 'Aggregate');
+        expect(aggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join(''))
+            .toBe('first line\n\nsecond line');
+    });
+
+    test('converts escaped characters in both specification string styles', async () => {
+        const document = await parse(String.raw`bounded context Escapes {
+            aggregate Sample {
+                invariant "\b\f\n\r\t\v\0\q"
+                root entity Item { identifier id: ItemId }
+                value object ItemId { raw: string }
+            }
+        }`);
+        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
+        };
+        const aggregate = context.members.find(member => member.$type === 'Aggregate');
+        expect(aggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join(''))
+            .toBe('\b\f\n\r\t\v\0q');
+
+        const singleQuoted = await parse(String.raw`bounded context Escapes {
+            aggregate Sample { invariant '\n\t' root entity Item { identifier id: ItemId } value object ItemId { raw: string } }
+        }`);
+        const singleContext = singleQuoted.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
+        };
+        const singleAggregate = singleContext.members.find(member => member.$type === 'Aggregate');
+        expect(singleAggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join('')).toBe('\n\t');
+    });
+
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
             'bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text" } } aggregate Run { root entity Run { identifier id: RunId } value object RunId { raw: string } } }'

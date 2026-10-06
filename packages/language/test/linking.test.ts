@@ -3,6 +3,7 @@ import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI } fr
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
 import type { Model } from 'thinai-language';
+import { ThinaiDocumentBuilder } from '../src/thinai-document-builder.js';
 import {
     createThinaiServices,
     isAggregate,
@@ -18,6 +19,12 @@ import {
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
 
+class TestableThinaiDocumentBuilder extends ThinaiDocumentBuilder {
+    shouldRelinkDocument(document: LangiumDocument, changedUris: Set<string>): boolean {
+        return this.shouldRelink(document, changedUris);
+    }
+}
+
 beforeAll(() => {
     services = createThinaiServices(EmptyFileSystem);
 });
@@ -28,6 +35,36 @@ afterEach(async () => {
 });
 
 describe('Linking tests', () => {
+    test('relinks importers when an imported file changes', () => {
+        const importingDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/importing.tni'),
+            'import "./dependency.tni" actor Customer'
+        );
+        documents = [importingDocument];
+
+        const builder = new TestableThinaiDocumentBuilder(services.shared);
+        expect(builder.shouldRelinkDocument(importingDocument, new Set([
+            URI.file('/workspace/dependency.tni').toString()
+        ]))).toBe(true);
+        expect(builder.shouldRelinkDocument(importingDocument, new Set([
+            URI.file('/workspace/unrelated.tni').toString()
+        ]))).toBe(false);
+    });
+
+    test('relinks documents with previous linking errors when any URI changes', async () => {
+        const brokenDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/broken-reference.tni'),
+            'bounded context Broken { aggregate Sample { root entity Item { identifier id: ItemId missing: MissingType } value object ItemId { raw: string } } }'
+        );
+        documents = [brokenDocument];
+        await services.shared.workspace.DocumentBuilder.build([brokenDocument], { validation: false });
+
+        const builder = new TestableThinaiDocumentBuilder(services.shared);
+        expect(builder.shouldRelinkDocument(brokenDocument, new Set([
+            URI.file('/workspace/unrelated.tni').toString()
+        ]))).toBe(true);
+    });
+
     test('links canonical context parts and imported domain concepts', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
@@ -1238,6 +1275,74 @@ describe('Linking tests', () => {
         expect(aliasDefinition?.[0]?.targetSelectionRange.start).toEqual(
             catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
         );
+    });
+
+    test('uses a file alias when the imported file contains one context', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/single-context.tni'),
+            `bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place()
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-consumer.tni'),
+            `import "./single-context.tni" as Orders
+             part of bounded context Orders {
+                 application service Handler {
+                     method handle() { invokes Orders.Order.Order.place }
+                 }
+             }`
+        );
+        documents = [catalog, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.parseResult.parserErrors).toHaveLength(0);
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        const consumerModel = consumer.parseResult.value as Model;
+        const boundedContext = consumerModel.declarations[0] as Model['declarations'][number] & {
+            members: Array<{ methods?: Array<{ invocations?: Array<{ targets: Array<{ ref?: AstNode }> }> }> }>;
+        };
+        const target = boundedContext.members[0].methods?.[0].invocations?.[0].targets.at(-1)?.ref;
+        expect(target?.$type).toBe('Method');
+        expect((target as AstNode & { name: string }).name).toBe('place');
+    });
+
+    test('keeps ambiguous imported suffixes unresolved but permits qualified names', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-money.tni'),
+            'bounded context Ordering { value object Money { raw: string } }'
+        );
+        const billing = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/billing-money.tni'),
+            'bounded context Billing { value object Money { raw: string } }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/money-consumer.tni'),
+            `import "./ordering-money.tni" import "./billing-money.tni"
+             bounded context Checkout {
+                 application service Handler {
+                     method handle(ambiguous: Money, qualified: Ordering.Money)
+                 }
+             }`
+        );
+        documents = [ordering, billing, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const checkout = (consumer.parseResult.value as Model).declarations[0] as Model['declarations'][number] & {
+            members: Array<{ methods?: Array<{ parameters: Array<{ type?: { ref?: AstNode } }> }> }>;
+        };
+        const parameters = checkout.members[0].methods?.[0].parameters ?? [];
+        expect(parameters[0].type?.ref).toBeUndefined();
+        expect(parameters[1].type?.ref?.$type).toBe('ValueObject');
+        expect((parameters[1].type?.ref as AstNode & { name: string }).name).toBe('Money');
     });
 
     test('reports unresolved method references in behavior specifications', async () => {

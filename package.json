@@ -15,7 +15,8 @@
         "build:clean": "npm run clean && npm run build",
         "langium:generate": "npm run --workspace packages/language langium:generate",
         "langium:watch": "npm run --workspace packages/language langium:watch",
-        "test": "npm run --workspace packages/language test"
+        "test": "npm run --workspace packages/language test",
+        "coverage": "npm run --workspace packages/language coverage"
     },
     "devDependencies": {
         "@types/node": "^22.20.4",

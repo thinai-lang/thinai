@@ -32,14 +32,18 @@
         "build:clean": "npm run clean && npm run build",
         "langium:generate": "langium generate && node scripts/patch-textmate.mjs",
         "langium:watch": "npm run langium:generate && node scripts/watch-langium.mjs",
-        "test": "npm run langium:generate && vitest run"
+        "test": "npm run langium:generate && vitest run",
+        "coverage": "npm run langium:generate && vitest run --coverage"
     },
     "dependencies": {
         "chevrotain": "~13.2.0",
         "langium": "~4.4.0"
     },
     "devDependencies": {
+        "@vitest/coverage-v8": "~4.1.10",
         "langium-cli": "~4.4.0",
-        "vitest": "~4.1.10"
+        "vitest": "~4.1.10",
+        "vscode-oniguruma": "^2.0.1",
+        "vscode-textmate": "^9.3.2"
     }
 }

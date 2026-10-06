@@ -1,10 +1,12 @@
-import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
+import { EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
 import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from 'thinai-language';
-import { CompletionItemKind } from 'vscode-languageserver';
+import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
+import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
+import { CompletionItemKind, SymbolKind } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -416,24 +418,176 @@ describe('LSP services', () => {
         expect(declaredTypes.get('Authorization')).toBe('class');
     });
 
+    test('maps all Thinai symbols to standard completion and symbol kinds', () => {
+        const provider = new ThinaiNodeKindProvider();
+        const mappings: Array<[string, CompletionItemKind, SymbolKind]> = [
+            ['Aggregate', CompletionItemKind.Class, SymbolKind.Class],
+            ['Entity', CompletionItemKind.Class, SymbolKind.Class],
+            ['ValueObject', CompletionItemKind.Struct, SymbolKind.Struct],
+            ['DataObject', CompletionItemKind.Struct, SymbolKind.Struct],
+            ['ReadModel', CompletionItemKind.Struct, SymbolKind.Struct],
+            ['EnumType', CompletionItemKind.Enum, SymbolKind.Enum],
+            ['EnumValue', CompletionItemKind.EnumMember, SymbolKind.EnumMember],
+            ['Field', CompletionItemKind.Field, SymbolKind.Field],
+            ['Parameter', CompletionItemKind.Variable, SymbolKind.Variable],
+            ['Method', CompletionItemKind.Method, SymbolKind.Method],
+            ['DomainEvent', CompletionItemKind.Event, SymbolKind.Event],
+            ['IntegrationEvent', CompletionItemKind.Event, SymbolKind.Event],
+            ['Repository', CompletionItemKind.Interface, SymbolKind.Interface],
+            ['QueryRepository', CompletionItemKind.Interface, SymbolKind.Interface],
+            ['Module', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['BoundedContext', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['BoundedContextPart', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['SharedKernel', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['Subdomain', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['ContextMap', CompletionItemKind.Module, SymbolKind.Namespace],
+            ['Journey', CompletionItemKind.Function, SymbolKind.Function],
+            ['Actor', CompletionItemKind.Variable, SymbolKind.Object],
+            ['ApplicationService', CompletionItemKind.Class, SymbolKind.Class],
+            ['DomainService', CompletionItemKind.Class, SymbolKind.Class],
+            ['QueryService', CompletionItemKind.Class, SymbolKind.Class],
+            ['Projector', CompletionItemKind.Class, SymbolKind.Class],
+            ['Factory', CompletionItemKind.Class, SymbolKind.Class]
+        ];
+
+        for (const [type, completionKind, symbolKind] of mappings) {
+            const node = { $type: type } as AstNode;
+            expect(provider.getCompletionItemKind(node), `${type} completion kind`).toBe(completionKind);
+            expect(provider.getSymbolKind(node), `${type} symbol kind`).toBe(symbolKind);
+        }
+
+        const unknownAst = { $type: 'Unknown' } as AstNode;
+        const unknownDescription = { type: 'Unknown' } as AstNodeDescription;
+        expect(provider.getCompletionItemKind(unknownAst)).toBe(CompletionItemKind.Reference);
+        expect(provider.getCompletionItemKind(unknownDescription)).toBe(CompletionItemKind.Reference);
+        expect(provider.getSymbolKind(unknownAst)).toBe(SymbolKind.Variable);
+        expect(provider.getSymbolKind(unknownDescription)).toBe(SymbolKind.Variable);
+    });
+
+    test('describes completion details for methods, fields, parameters, and enum values', () => {
+        const provider = new ThinaiCompletionProvider(services.Thinai);
+        const getDetail = (description: AstNodeDescription) =>
+            (provider as unknown as { getCompletionDetail(value: AstNodeDescription): string }).getCompletionDetail(description);
+        const typeNode = (type: string, name: string) => ({ $type: type, name }) as AstNode;
+        const domainEvent = typeNode('DomainEvent', 'OrderPlaced');
+
+        expect(getDetail({ type: 'Method', name: 'external' } as AstNodeDescription)).toBe('Method external');
+        expect(getDetail({
+            type: 'Method',
+            name: 'find',
+            node: {
+                $type: 'Method',
+                name: 'find',
+                parameters: [
+                    { $type: 'Parameter', name: 'id', primitive: 'string', optional: false },
+                    { $type: 'Parameter', name: 'source', type: { ref: domainEvent, $refText: 'OrderPlaced' }, optional: true },
+                    { $type: 'Parameter', name: 'ids', collection: { kind: 'List', elementPrimitive: 'number' }, optional: false }
+                ],
+                returnType: { ref: typeNode('ValueObject', 'OrderId'), $refText: 'OrderId' }
+            } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Method find(id: string, source?: event OrderPlaced, ids: List<number>) returns OrderId');
+        expect(getDetail({
+            type: 'Method',
+            name: 'summarize',
+            node: {
+                $type: 'Method', name: 'summarize', parameters: [],
+                returnCollection: {
+                    kind: 'Map',
+                    elementCollection: { kind: 'Set', elementType: { ref: typeNode('ValueObject', 'OrderId'), $refText: 'OrderId' } },
+                    valueCollection: { kind: 'List', elementPrimitive: 'string' }
+                }
+            } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Method summarize() returns Map<Set<OrderId>, List<string>>');
+        expect(getDetail({
+            type: 'Method',
+            name: 'count',
+            node: { $type: 'Method', name: 'count', parameters: [], returnPrimitive: 'number' } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Method count() returns number');
+        expect(getDetail({
+            type: 'Method',
+            name: 'clear',
+            node: { $type: 'Method', name: 'clear', parameters: [] } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Method clear()');
+
+        expect(getDetail({
+            type: 'Field',
+            name: 'items',
+            node: { $type: 'Field', name: 'items', collection: { kind: 'List', elementPrimitive: 'number' } } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Field items: List<number>');
+        expect(getDetail({
+            type: 'Field',
+            name: 'status',
+            node: { $type: 'Field', name: 'status', type: { ref: typeNode('EnumType', 'OrderStatus'), $refText: 'OrderStatus' } } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Field status: OrderStatus');
+        expect(getDetail({
+            type: 'Parameter',
+            name: 'source',
+            node: { $type: 'Parameter', name: 'source', type: { ref: domainEvent, $refText: 'OrderPlaced' }, optional: false } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Parameter source: event OrderPlaced');
+        expect(getDetail({
+            type: 'Parameter',
+            name: 'value',
+            node: { $type: 'Parameter', name: 'value', optional: false } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Parameter value: unknown');
+        expect(getDetail({
+            type: 'EnumValue',
+            name: 'Placed',
+            node: { $type: 'EnumValue', name: 'Placed', $container: typeNode('EnumType', 'OrderStatus') } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Enum value OrderStatus.Placed (OrderStatus)');
+        expect(getDetail({
+            type: 'Aggregate',
+            name: 'Order',
+            node: { $type: 'Aggregate', name: 'Order' } as AstNode
+        } as AstNodeDescription)).toBe('Aggregate Order');
+    });
+
     test('suggests workspace files inside import paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             'bounded context Ordering {}'
         );
-        const sourceText = 'import "./';
+        documents = [target];
+        const sourceText = 'import "./o';
         const source = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/consumer.tni'),
+            URI.file('/workspace/ordering-consumer.tni'),
             sourceText
         );
-        documents = [target, source];
+        documents.push(source);
+
+        const workspaceManager = services.shared.workspace.WorkspaceManager;
+        const workspaceFolders = vi.spyOn(workspaceManager, 'workspaceFolders', 'get').mockReturnValue([
+            { uri: URI.file('/workspace').toString(), name: 'workspace' }
+        ]);
+        const searchFolder = vi.spyOn(workspaceManager, 'searchFolder').mockResolvedValue([
+            URI.file('/workspace/notes.md')
+        ]);
 
         const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(source, {
             textDocument: { uri: source.uri.toString() },
             position: source.textDocument.positionAt(sourceText.length)
         });
+        workspaceFolders.mockRestore();
+        searchFolder.mockRestore();
 
-        expect(completion?.items.some(item => item.label === './ordering.tni')).toBe(true);
+        const importSuggestions = completion?.items.filter(item => item.kind === CompletionItemKind.File) ?? [];
+        expect(importSuggestions.map(item => item.label)).toEqual(['./ordering.tni']);
+        expect(importSuggestions[0].textEdit).toMatchObject({
+            newText: './ordering.tni',
+            range: {
+                start: source.textDocument.positionAt('import "'.length),
+                end: source.textDocument.positionAt(sourceText.length)
+            }
+        });
+
+        const outsideImport = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/outside-import.tni'), 'actor Customer'
+        );
+        documents.push(outsideImport);
+        const ordinaryCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(outsideImport, {
+            textDocument: { uri: outsideImport.uri.toString() },
+            position: outsideImport.textDocument.positionAt('actor Customer'.length)
+        });
+        expect(ordinaryCompletion?.items.some(item => item.kind === CompletionItemKind.File)).toBe(false);
     });
 
     test('navigates from import paths to the start of target documents', async () => {
@@ -459,6 +613,33 @@ describe('LSP services', () => {
             end: source.textDocument.positionAt(pathOffset + './common-types.tni'.length)
         });
         expect(definitions?.[0]?.targetSelectionRange.start).toEqual({ line: 0, character: 0 });
+    });
+
+    test('navigates only from within single- or double-quoted import paths', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/common-types.tni'), 'shared kernel CommonTypes {}'
+        );
+        const sourceText = `import './common-types.tni'\nimport { CommonTypes } from "./common-types.tni"`;
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/quoted-imports.tni'), sourceText
+        );
+        documents = [target, source];
+        const provider = services.Thinai.lsp.DefinitionProvider!;
+
+        for (const pathStart of [sourceText.indexOf('./common-types.tni'), sourceText.lastIndexOf('./common-types.tni')]) {
+            const definition = await provider.getDefinition(source, {
+                textDocument: { uri: source.uri.toString() },
+                position: source.textDocument.positionAt(pathStart)
+            });
+            expect(definition).toHaveLength(1);
+            expect(definition?.[0]?.targetUri).toBe(target.uri.toString());
+        }
+
+        const closingQuote = sourceText.indexOf("'./common-types.tni'") + './common-types.tni'.length + 1;
+        expect(await provider.getDefinition(source, {
+            textDocument: { uri: source.uri.toString() },
+            position: source.textDocument.positionAt(closingQuote)
+        })).toBeUndefined();
     });
 
     test('completes invocation path segments with Thinai symbol kinds', async () => {
