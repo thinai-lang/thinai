@@ -23,7 +23,7 @@ afterEach(async () => {
 describe('Validating', () => {
     test('accepts aggregate effects and an application-service command', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() {
@@ -53,7 +53,7 @@ describe('Validating', () => {
 
     test('requires identifier fields to reference value objects', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: string }
                 }
@@ -67,7 +67,7 @@ describe('Validating', () => {
 
     test('requires references to another aggregate entity to use its identifier', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Customer {
                     root entity Customer {
                         identifier id: CustomerId
@@ -90,7 +90,7 @@ describe('Validating', () => {
 
     test('allows a non-root entity to identify itself and transition its own state', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         identifier id: OrderId
@@ -112,7 +112,7 @@ describe('Validating', () => {
 
     test('allows the aggregate root to coordinate a child-entity transition', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method shipLine(lineId: OrderLineId) {
@@ -143,7 +143,7 @@ describe('Validating', () => {
 
     test('validates a state graph from its declared initial state', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { transition status from Draft to Placed }
@@ -162,7 +162,7 @@ describe('Validating', () => {
 
     test('allows the same transition in different methods', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { transition status from Draft to Placed }
@@ -181,7 +181,7 @@ describe('Validating', () => {
 
     test('warns when a method repeats the same transition', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() {
@@ -206,7 +206,7 @@ describe('Validating', () => {
 
     test('validates guarded emissions and coordinated transitions across fields', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method confirmPayment() {
@@ -236,7 +236,7 @@ describe('Validating', () => {
 
     test('rejects unreachable states from the declared initial state', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { transition status from Draft to Placed }
@@ -256,7 +256,7 @@ describe('Validating', () => {
 
     test('rejects duplicate fields and enum values', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         constructor(id: OrderId)
@@ -278,7 +278,7 @@ describe('Validating', () => {
 
     test('accepts domain-value constructor inputs and DataObject application-service inputs', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         constructor(id: OrderId, total: Money, owner: string)
@@ -306,7 +306,7 @@ describe('Validating', () => {
 
     test('rejects DataObject inputs to entity and value-object constructors', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         constructor(input: PlaceOrderInput)
@@ -329,7 +329,7 @@ describe('Validating', () => {
 
     test('rejects event-typed constructor parameters', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         constructor(source: OrderCreated)
@@ -348,7 +348,7 @@ describe('Validating', () => {
 
     test('requires constructors to use an identifier instead of another aggregate root', async () => {
         const document = await parse(`
-            bounded context Commerce {
+            bounded context Commerce in bounded context Commerce {
                 aggregate CustomerRecords {
                     root entity Buyer { identifier id: BuyerId }
                     value object BuyerId { raw: string }
@@ -370,7 +370,7 @@ describe('Validating', () => {
 
     test('requires each entity to declare an identifier', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -386,7 +386,7 @@ describe('Validating', () => {
 
     test('rejects optional entity identifiers', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id?: OrderId }
                     value object OrderId { raw: string }
@@ -401,7 +401,7 @@ describe('Validating', () => {
 
     test('requires entities to belong to an aggregate', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 entity Order {
                     identifier id: OrderId
                 }
@@ -416,7 +416,7 @@ describe('Validating', () => {
 
     test('requires an entity identifier value object to belong to that aggregate', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Customer {
                     root entity Customer { identifier id: CustomerId }
                     value object CustomerId { raw: string }
@@ -435,7 +435,7 @@ describe('Validating', () => {
 
     test('keeps entity inheritance within an aggregate', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Customer {
                     root entity Customer { identifier id: CustomerId }
                     value object CustomerId { raw: string }
@@ -456,7 +456,7 @@ describe('Validating', () => {
 
     test('requires an entity transition to target a field on that entity', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method placeLine() { transition status from Open to Shipped }
@@ -482,7 +482,7 @@ describe('Validating', () => {
 
     test('requires application services to enter an aggregate through its root', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -508,7 +508,7 @@ describe('Validating', () => {
 
     test('allows an application service to coordinate multiple aggregate roots', async () => {
         const document = await parse(`
-            bounded context Commerce {
+            bounded context Commerce in bounded context Commerce {
                 aggregate Order {
                     root entity Order { method place() identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -532,7 +532,7 @@ describe('Validating', () => {
 
     test('prevents child entities from crossing into application-service signatures', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -552,7 +552,7 @@ describe('Validating', () => {
 
     test('prevents domain behavior from invoking application-service methods', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -573,7 +573,7 @@ describe('Validating', () => {
 
     test('prevents domain call chains from reaching application services', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
                 domain service Pricing {
                     method calculate() { invokes OrderApplication.placeOrder }
@@ -592,7 +592,7 @@ describe('Validating', () => {
 
     test('prevents domain services from invoking aggregate-owned methods', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { method place() identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -613,7 +613,7 @@ describe('Validating', () => {
 
     test('prevents domain-service call chains from reaching aggregate-owned methods', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { method place() identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -634,7 +634,7 @@ describe('Validating', () => {
 
     test('prevents aggregate-owned methods from invoking domain services', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { invokes OrderPolicy.calculate }
@@ -653,7 +653,7 @@ describe('Validating', () => {
 
     test('prevents aggregate-owned call chains from reaching domain services', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { invokes OrderPricing.calculate }
@@ -675,7 +675,7 @@ describe('Validating', () => {
 
     test('allows application services to invoke a pure domain service and aggregate root directly', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 data object PriceRequest { subtotal: number }
                 data object PriceQuote { total: number }
                 aggregate Order {
@@ -703,7 +703,7 @@ describe('Validating', () => {
 
     test('prevents domain services from returning aggregate entities', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -721,7 +721,7 @@ describe('Validating', () => {
 
     test('allows aggregates to omit an optional write-repository declaration', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -734,7 +734,7 @@ describe('Validating', () => {
 
     test('prevents a context-level domain service from invoking a child entity directly', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -755,7 +755,7 @@ describe('Validating', () => {
     test('allows command journeys to describe query results without invoking the query', async () => {
         const document = await parse(`
             actor Customer
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { method place() identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -786,7 +786,7 @@ describe('Validating', () => {
 
     test('does not require repository choreography in application-service methods', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -806,7 +806,7 @@ describe('Validating', () => {
     test('allows application services to orchestrate commands and cross-aggregate query reads', async () => {
         const document = await parse(`
             actor Customer
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -857,7 +857,7 @@ describe('Validating', () => {
     test('supports read models, projectors, command journeys, and descriptive guards', async () => {
         const document = await parse(`
             actor Customer
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -913,7 +913,7 @@ describe('Validating', () => {
 
     test('allows nested data objects but rejects entity and read-model fields', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -937,7 +937,7 @@ describe('Validating', () => {
 
     test('requires projector methods to declare targets and rejects projects on other methods', async () => {
         const document = await parse(`
-            bounded context Commerce {
+            bounded context Commerce in bounded context Commerce {
                 read model OrderSummary { orderId: string }
                 event OrderPlaced
                 projector OrderProjection {
@@ -956,7 +956,7 @@ describe('Validating', () => {
 
     test('rejects more than one write repository for an aggregate', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -973,7 +973,7 @@ describe('Validating', () => {
 
     test('requires a write repository to manage an aggregate-root entity', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -991,7 +991,7 @@ describe('Validating', () => {
 
     test('allows application services to invoke factory methods without repository choreography', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1013,7 +1013,7 @@ describe('Validating', () => {
 
     test('allows a factory to create different aggregate roots with different methods', async () => {
         const document = await parse(`
-            bounded context Commerce {
+            bounded context Commerce in bounded context Commerce {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1035,7 +1035,7 @@ describe('Validating', () => {
 
     test('allows read queries and descriptive delete commands without repository choreography', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method validateDeletion()
@@ -1065,7 +1065,7 @@ describe('Validating', () => {
 
     test('allows query services to read aggregate repositories without query projections', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -1087,7 +1087,7 @@ describe('Validating', () => {
 
     test('allows integration-event handlers without an after-commit clause', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
                 event OrderPlaced
                 integration event OrderPlacedV1
@@ -1104,7 +1104,7 @@ describe('Validating', () => {
 
     test('rejects an integration-event payload that exposes an entity', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1131,7 +1131,7 @@ describe('Validating', () => {
 
     test('accepts integration-event payload types explicitly exposed by their contract module', async () => {
         const document = await parse(`
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 module Contracts {
                     exposes OrderPlacedV1, OrderReference
                     value object OrderReference { raw: string }
@@ -1145,12 +1145,12 @@ describe('Validating', () => {
 
     test('requires module-nested integration events to be exposed before cross-context use', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 module Contracts {
                     integration event OrderPlacedV1
                 }
             }
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 aggregate Shipment {
                     root entity Shipment { identifier id: ShipmentId }
                     value object ShipmentId { raw: string }
@@ -1168,7 +1168,7 @@ describe('Validating', () => {
 
     test('rejects event publication from a context-level domain service', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 domain service OrderPolicy {
                     method check() { emits OrderPlaced }
                 }
@@ -1183,7 +1183,7 @@ describe('Validating', () => {
 
     test('rejects integration-event publication from aggregate-root behavior', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { emits OrderPlacedV1 }
@@ -1203,11 +1203,11 @@ describe('Validating', () => {
     test('prevents application services from invoking cross-context aggregates', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { aggregate Order { root entity Order { method place() identifier id: OrderId } value object OrderId { raw: string } } }'
+            'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { method place() identifier id: OrderId } value object OrderId { raw: string } } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            'import "./ordering.tni" bounded context Shipping { application service ShippingApplication { method place() { invokes Ordering.Order.Order.place when "The order is ready." } } }'
+            'import "./ordering.tni" bounded context Shipping in bounded context Shipping { application service ShippingApplication { method place() { invokes Ordering.Order.Order.place when "The order is ready." } } }'
         );
         documents = [ordering, shipping];
 
@@ -1221,11 +1221,11 @@ describe('Validating', () => {
     test('rejects duplicate canonical context declarations', async () => {
         const first = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-one.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         const second = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-two.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         documents = [first, second];
 
@@ -1236,7 +1236,7 @@ describe('Validating', () => {
 
     test('requires a shared-kernel relationship to name at least two contexts', async () => {
         const document = await parse(`
-            bounded context Ordering {}
+            bounded context Ordering
             shared kernel CommonTypes {}
             context map SharedTypes {
                 sharedKernel CommonTypes { participants: [Ordering] }
@@ -1274,12 +1274,12 @@ describe('Validating', () => {
         ))).toBe(true);
 
         const coLocated = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 application service OrderApplication {
                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
                 }
             }
-            bounded context Shipping {}
+            bounded context Shipping
             shared kernel Common {
                 domain service PricingPolicy { method normalize(amount: number) returns number }
             }
@@ -1297,7 +1297,7 @@ describe('Validating', () => {
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping {}'
+            'bounded context Ordering bounded context Shipping'
         );
         const map = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-map.tni'),
@@ -1308,7 +1308,7 @@ describe('Validating', () => {
             `import "./shared-policy-contexts.tni"
              import { Common } from "./shared-policy-kernel.tni"
              import { SharedPolicies } from "./shared-policy-map.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
                  }
@@ -1319,7 +1319,7 @@ describe('Validating', () => {
             `import "./shared-policy-contexts.tni"
              import { Common } from "./shared-policy-kernel.tni"
              import { SharedPolicies } from "./shared-policy-map.tni"
-             part of bounded context Shipping {
+             in bounded context Shipping {
                  application service ShippingApplication {
                      method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
                  }
@@ -1341,13 +1341,13 @@ describe('Validating', () => {
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/unlinked-shared-policy-contexts.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/unlinked-shared-policy-consumer.tni'),
             `import "./unlinked-shared-policy-contexts.tni"
              import { Common } from "./unlinked-shared-policy-kernel.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
                  }
@@ -1363,8 +1363,8 @@ describe('Validating', () => {
 
     test('rejects duplicate integration patterns on a context-map endpoint', async () => {
         const document = await parse(`
-            bounded context Ordering {}
-            bounded context Shipping {}
+            bounded context Ordering
+            bounded context Shipping
             context map Fulfillment {
                 customer Shipping { integrationPatterns: ["AntiCorruptionLayer", "AntiCorruptionLayer"] }
                     -> supplier Ordering
@@ -1378,8 +1378,8 @@ describe('Validating', () => {
 
     test('rejects unknown integration pattern labels', async () => {
         const document = await parse(`
-            bounded context Ordering {}
-            bounded context Shipping {}
+            bounded context Ordering
+            bounded context Shipping
             context map Fulfillment {
                 customer Shipping { integrationPatterns: ["AntiCorruptionLayre"] }
                     -> supplier Ordering
@@ -1393,7 +1393,7 @@ describe('Validating', () => {
 
     test('requires map collections to declare both key and value types', async () => {
         const document = await parse(`
-            bounded context Inventory {
+            bounded context Inventory in bounded context Inventory {
                 value object InventoryIndex {
                     entries: Map<string>
                 }
@@ -1405,7 +1405,7 @@ describe('Validating', () => {
 
     test('rejects circular module dependencies', async () => {
         const document = await parse(`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 module Orders depends on Pricing {}
                 module Pricing depends on Orders {}
             }
@@ -1414,14 +1414,31 @@ describe('Validating', () => {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Module dependencies cannot contain a cycle'))).toBe(true);
     });
 
+    test('accepts bodyless bounded-context declarations and imported contributions', async () => {
+        const canonical = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/canonical-context.tni'),
+            'subdomain OrderManagement kind core bounded context Ordering realizes OrderManagement'
+        );
+        const directImport = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/direct-context-import.tni'),
+            'import "./canonical-context.tni" in bounded context Ordering { event OrderPlaced }'
+        );
+        documents = [canonical, directImport];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(canonical.parseResult.parserErrors).toHaveLength(0);
+        expect(directImport.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
     test('requires a component selector for file aliases that contain multiple bounded contexts', async () => {
         const catalog = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/catalog.tni'),
-            'bounded context Ordering {} bounded context Shipping {}'
+            'bounded context Ordering bounded context Shipping'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'import "./catalog.tni" as Contexts bounded context Billing {}'
+            'import "./catalog.tni" as Contexts bounded context Billing'
         );
         documents = [catalog, consumer];
 

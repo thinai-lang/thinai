@@ -6,6 +6,7 @@ import type { Model } from 'thinai-language';
 import {
     createThinaiServices,
     isBoundedContext,
+    isBoundedContextPart,
     isJourney,
     isModel
 } from 'thinai-language';
@@ -29,7 +30,9 @@ describe('Parsing tests', () => {
             subdomain OrderManagement kind core
             actor Customer
 
-            bounded context Ordering realizes OrderManagement {
+            bounded context Ordering realizes OrderManagement
+
+            in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() {
@@ -68,11 +71,12 @@ describe('Parsing tests', () => {
             'Subdomain',
             'Actor',
             'BoundedContext',
+            'BoundedContextPart',
             'Journey'
         ]);
-        expect((document.parseResult.value?.declarations[2] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(5);
+        expect((document.parseResult.value?.declarations[3] as Model['declarations'][number] & { members?: unknown[] }).members).toHaveLength(5);
 
-        const journey = document.parseResult.value?.declarations[3];
+        const journey = document.parseResult.value?.declarations[4];
         expect(journey && isJourney(journey)).toBe(true);
         if (journey && isJourney(journey)) {
             expect(journey.actors[0].actor.ref?.name).toBe('Customer');
@@ -81,13 +85,14 @@ describe('Parsing tests', () => {
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);
         expect(document.parseResult.value && isBoundedContext(document.parseResult.value.declarations[2])).toBe(true);
+        expect(document.parseResult.value && isBoundedContextPart(document.parseResult.value.declarations[3])).toBe(true);
     });
 
-    test('parses canonical context parts and imports', async () => {
+    test('parses bounded-context contribution blocks and imports', async () => {
         const document = await parse(s`
             import "./ordering.tni"
 
-            part of bounded context Ordering {
+            in bounded context Ordering {
                 integration event OrderPlacedV1
             }
         `);
@@ -96,9 +101,17 @@ describe('Parsing tests', () => {
         expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
     });
 
+    test('rejects braced canonical contexts and the former part-of syntax', async () => {
+        const braced = await parse('bounded context Ordering {}');
+        const partOf = await parse('part of bounded context Ordering {}');
+
+        expect(braced.parseResult.lexerErrors.length + braced.parseResult.parserErrors.length).toBeGreaterThan(0);
+        expect(partOf.parseResult.lexerErrors.length + partOf.parseResult.parserErrors.length).toBeGreaterThan(0);
+    });
+
     test('parses behavior specifications, method signatures, constructors, and collections', async () => {
         const document = await parse(s`
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         constructor(id: OrderId) {
@@ -146,7 +159,7 @@ describe('Parsing tests', () => {
             constructors?: Array<{ behaviors: BehaviorShape[]; invariants: unknown[] }>;
             methods?: Array<{ parameters: Array<{ optional: boolean }>; invariants: unknown[] }>;
         };
-        const context = model?.declarations[0] as Model['declarations'][number] & { members: MemberShape[] };
+        const context = model?.declarations[1] as Model['declarations'][number] & { members: MemberShape[] };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
         const root = aggregate?.members?.find(member => member.name === 'Order');
         const behaviorParts = root?.constructors?.[0].behaviors[0].description.parts ?? [];
@@ -165,7 +178,7 @@ describe('Parsing tests', () => {
 
     test('preserves multiline behavior text and links in quoted strings', async () => {
         const document = await parse([
-            'bounded context Ordering {',
+            'bounded context Ordering in bounded context Ordering {',
             '    aggregate Order { root entity Order { method ensureOwner() identifier id: OrderId } value object OrderId { raw: string } }',
             '    application service OrderApplication {',
             '    method placeOrder() {',
@@ -185,7 +198,7 @@ describe('Parsing tests', () => {
         type Part = { text?: string; target?: { $refText: string }; targets: Array<{ $refText: string }> };
         type BehaviorShape = { description: { parts: Part[] } };
         type MethodShape = { behaviors: BehaviorShape[] };
-        const context = document.parseResult.value?.declarations[0] as {
+        const context = document.parseResult.value?.declarations[1] as {
             members: Array<{ $type: string; methods?: MethodShape[] }>;
         };
         const service = context.members.find(member => member.$type === 'ApplicationService');
@@ -206,7 +219,7 @@ describe('Parsing tests', () => {
 
     test('dedents CRLF specification text while retaining intentional blank lines', async () => {
         const document = await parse([
-            'bounded context CrLf {',
+            'bounded context CrLf in bounded context CrLf {',
             '    aggregate Sample {',
             '        invariant "',
             '            first line',
@@ -218,7 +231,7 @@ describe('Parsing tests', () => {
             '    }',
             '}'
         ].join('\r\n'));
-        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
             members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
         };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
@@ -227,24 +240,24 @@ describe('Parsing tests', () => {
     });
 
     test('converts escaped characters in both specification string styles', async () => {
-        const document = await parse(String.raw`bounded context Escapes {
+        const document = await parse(String.raw`bounded context Escapes in bounded context Escapes {
             aggregate Sample {
                 invariant "\b\f\n\r\t\v\0\q"
                 root entity Item { identifier id: ItemId }
                 value object ItemId { raw: string }
             }
         }`);
-        const context = document.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
             members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
         };
         const aggregate = context.members.find(member => member.$type === 'Aggregate');
         expect(aggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join(''))
             .toBe('\b\f\n\r\t\v\0q');
 
-        const singleQuoted = await parse(String.raw`bounded context Escapes {
+        const singleQuoted = await parse(String.raw`bounded context Escapes in bounded context Escapes {
             aggregate Sample { invariant '\n\t' root entity Item { identifier id: ItemId } value object ItemId { raw: string } }
         }`);
-        const singleContext = singleQuoted.parseResult.value?.declarations[0] as Model['declarations'][number] & {
+        const singleContext = singleQuoted.parseResult.value?.declarations[1] as Model['declarations'][number] & {
             members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
         };
         const singleAggregate = singleContext.members.find(member => member.$type === 'Aggregate');
@@ -253,7 +266,7 @@ describe('Parsing tests', () => {
 
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
-            'bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text" } } aggregate Run { root entity Run { identifier id: RunId } value object RunId { raw: string } } }'
+            'bounded context Escape in bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text" } } aggregate Run { root entity Run { identifier id: RunId } value object RunId { raw: string } } }'
         );
 
         expect(checkDocumentValid(document)).toBeUndefined();
@@ -263,7 +276,7 @@ describe('Parsing tests', () => {
         }
         type Part = { text?: string; target?: unknown };
         type BehaviorShape = { description: { parts: Part[] } };
-        const context = model.declarations[0] as Model['declarations'][number] & {
+        const context = model.declarations[1] as Model['declarations'][number] & {
             members: Array<{ $type: string; methods?: Array<{ behaviors?: BehaviorShape[] }> }>;
         };
         const service = context.members.find(member => member.$type === 'ApplicationService');
@@ -274,7 +287,7 @@ describe('Parsing tests', () => {
     });
 
     test('rejects the former dollar-prefixed reference syntax', async () => {
-        const document = await parse('bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}" } }');
+        const document = await parse('bounded context Legacy in bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}" } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 });

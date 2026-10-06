@@ -1,5 +1,5 @@
 import "./strategic.tni"
 
-bounded context Ordering realizes OrderManagement {}
+bounded context Ordering realizes OrderManagement
 
-bounded context Shipping realizes Fulfillment {}
+bounded context Shipping realizes Fulfillment

@@ -155,9 +155,9 @@ export class ThinaiValidator {
             ))
             : false;
         if (!imported) {
-            accept('error', 'A bounded-context part must directly import its canonical context.', {
+            accept('error', 'A bounded-context contribution must directly import its canonical declaration.', {
                 node: part,
-                keyword: 'part'
+                keyword: 'in'
             });
         }
     }

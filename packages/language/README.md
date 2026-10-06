@@ -12,13 +12,16 @@ and the [complete Order Fulfillment example](../../examples/order-fulfillment/RE
 
 ## File Model
 
-Declare a bounded context once, then extend it from explicitly imported files:
+Declare a bounded context once, without braces. Put members in one or more
+`in bounded context Name { ... }` blocks; contributions in other files import
+the file containing the canonical declaration:
 
 ```thinai
 // ordering.tni
 subdomain OrderManagement kind core
 
-bounded context Ordering realizes OrderManagement {
+bounded context Ordering realizes OrderManagement
+in bounded context Ordering {
   aggregate Order {
     root entity Order {
       method place() {
@@ -52,7 +55,7 @@ import "./ordering.tni"
 
 actor Customer
 
-part of bounded context Ordering {
+in bounded context Ordering {
   data object PlaceOrderInput {
     orderId: OrderId
     items: List<OrderLine>
@@ -118,7 +121,8 @@ contexts' event declarations and handlers.
 An incoming integration event can invoke a local command method:
 
 ```thinai
-bounded context Shipping {
+bounded context Shipping
+in bounded context Shipping {
   application service ShipmentApplication {
     method createShipment(shipmentId: ShipmentId) {
       invokes Shipment.Shipment.start

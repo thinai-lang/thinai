@@ -8,7 +8,7 @@ import {
     createThinaiServices,
     isAggregate,
     isApplicationService,
-    isBoundedContext,
+    isBoundedContextPart,
     isDataObject,
     isEntity,
     isModule,
@@ -54,7 +54,7 @@ describe('Linking tests', () => {
     test('relinks documents with previous linking errors when any URI changes', async () => {
         const brokenDocument = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/broken-reference.tni'),
-            'bounded context Broken { aggregate Sample { root entity Item { identifier id: ItemId missing: MissingType } value object ItemId { raw: string } } }'
+            'bounded context Broken in bounded context Broken { aggregate Sample { root entity Item { identifier id: ItemId missing: MissingType } value object ItemId { raw: string } } }'
         );
         documents = [brokenDocument];
         await services.shared.workspace.DocumentBuilder.build([brokenDocument], { validation: false });
@@ -68,7 +68,7 @@ describe('Linking tests', () => {
     test('links descriptive guards on method invocations', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/guarded-invocation.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() {
@@ -94,7 +94,7 @@ describe('Linking tests', () => {
             targets: Array<{ ref?: AstNode }>;
             guard?: { parts: Array<{ target?: { ref?: AstNode } }> };
         };
-        const context = model.declarations[0] as Model['declarations'][number] & {
+        const context = model.declarations[1] as Model['declarations'][number] & {
             members: Array<{ members?: Array<{ methods?: Array<{ invocations?: GuardedInvocation[] }> }> }>;
         };
         const aggregate = context.members[0];
@@ -104,12 +104,13 @@ describe('Linking tests', () => {
         expect(invocation?.guard?.parts[1].target?.ref?.$type).toBe('Field');
     });
 
-    test('links canonical context parts and imported domain concepts', async () => {
+    test('links canonical context declarations and imported contributions', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
                 subdomain OrderManagement kind core
-                bounded context Ordering realizes OrderManagement {
+                bounded context Ordering realizes OrderManagement
+                in bounded context Ordering {
                     aggregate Order {
                         root entity Order {
                             method place() { emits OrderPlaced }
@@ -140,7 +141,7 @@ describe('Linking tests', () => {
             s`
                 import "./ordering.tni"
 
-                part of bounded context Ordering {
+                in bounded context Ordering {
                     event OrderConfirmed
                     integration event OrderConfirmedV1
                 }
@@ -148,7 +149,7 @@ describe('Linking tests', () => {
         );
         const shippingContext = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `bounded context Shipping {
+            `bounded context Shipping in bounded context Shipping {
                 aggregate Shipment {
                     root entity Shipment { method start() identifier id: ShipmentId }
                     value object ShipmentId { raw: string }
@@ -173,7 +174,7 @@ describe('Linking tests', () => {
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-flow.tni'),
             `import "./ordering.tni" import "./order-events.tni" import "./shipping.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Shipping {
+             in bounded context Shipping {
                   application service ShipmentEventHandler {
                         method onOrderPlaced(source: Ordering.OrderPlacedV1) {
                             invokes ShipmentApplication.createShipment
@@ -216,11 +217,11 @@ describe('Linking tests', () => {
     test('does not expose workspace-global declarations without an import', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { event OrderPlaced }'
+            'bounded context Ordering in bounded context Ordering { event OrderPlaced }'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
+            'bounded context Shipping in bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
         );
         documents = [context, consumer];
 
@@ -232,14 +233,14 @@ describe('Linking tests', () => {
     test('rejects direct consumption of a private domain event across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { event OrderPlaced }'
+            'bounded context Ordering in bounded context Ordering { event OrderPlaced }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             s`
                 import "./ordering.tni"
 
-                bounded context Shipping {
+                bounded context Shipping in bounded context Shipping {
                     aggregate Shipment {
                         root entity Shipment {
                             identifier id: ShipmentId
@@ -265,12 +266,12 @@ describe('Linking tests', () => {
     test('requires an authorized imported context map to consume an integration event', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { module Contracts { exposes OrderPlacedV1 integration event OrderPlacedV1 } }'
+            'bounded context Ordering in bounded context Ordering { module Contracts { exposes OrderPlacedV1 integration event OrderPlacedV1 } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             `import "./ordering.tni"
-             bounded context Shipping {
+             bounded context Shipping in bounded context Shipping {
                  aggregate Shipment { root entity Shipment { identifier id: ShipmentId } value object ShipmentId { raw: string } }
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {}
@@ -289,7 +290,7 @@ describe('Linking tests', () => {
     test('authorizes event consumption across a partnership without pattern labels', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping {}'
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
@@ -301,7 +302,7 @@ describe('Linking tests', () => {
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Shipping {
+             in bounded context Shipping {
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
                  }
@@ -320,7 +321,7 @@ describe('Linking tests', () => {
     test('pattern labels do not control event authorization', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping {}'
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
@@ -332,7 +333,7 @@ describe('Linking tests', () => {
         const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Shipping {
+             in bounded context Shipping {
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
                  }
@@ -350,7 +351,7 @@ describe('Linking tests', () => {
     test('customer-supplier authorization does not permit supplier consumption of customer events', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping { integration event ShipmentSentV1 }'
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
@@ -362,7 +363,7 @@ describe('Linking tests', () => {
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
@@ -380,7 +381,7 @@ describe('Linking tests', () => {
     test('authorizes partnership event consumption in the reverse direction too', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1 }'
+            'bounded context Ordering bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
@@ -392,7 +393,7 @@ describe('Linking tests', () => {
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
@@ -410,7 +411,7 @@ describe('Linking tests', () => {
     test('separate-ways relationships do not authorize event consumption', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping { integration event ShipmentSentV1 }'
+            'bounded context Ordering bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-map.tni'),
@@ -422,7 +423,7 @@ describe('Linking tests', () => {
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method onShipmentSent(source: Shipping.ShipmentSentV1) {}
                  }
@@ -447,7 +448,7 @@ describe('Linking tests', () => {
             s`
                 import { CommonTypes } from "./common.tni"
 
-                bounded context Ordering {
+                bounded context Ordering in bounded context Ordering {
                     aggregate Order {
                         root entity Order {
                             identifier id: OrderId
@@ -458,7 +459,7 @@ describe('Linking tests', () => {
                         }
                     }
                 }
-                bounded context Peer {}
+                bounded context Peer
                 context map SharedTypes {
                     sharedKernel CommonTypes { participants: [Ordering, Peer] }
                 }
@@ -469,7 +470,7 @@ describe('Linking tests', () => {
             s`
                 import "./ordering.tni"
 
-                bounded context Shipping {
+                bounded context Shipping in bounded context Shipping {
                     value object OrderId mirrors Ordering.Order.OrderId {
                         raw: string
                     }
@@ -513,10 +514,10 @@ describe('Linking tests', () => {
         };
         const orderingModel = ordering.parseResult.value as Model;
         const shippingModel = shipping.parseResult.value as Model;
-        const orderingContext = orderingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
+        const orderingContext = orderingModel.declarations[1] as Model['declarations'][number] & { members: TestNode[] };
         const orderAggregate = orderingContext.members.find(member => member.$type === 'Aggregate');
         const orderRoot = orderAggregate?.members?.find(member => member.name === 'Order');
-        const shippingPart = shippingModel.declarations[0] as Model['declarations'][number] & { members: TestNode[] };
+        const shippingPart = shippingModel.declarations[1] as Model['declarations'][number] & { members: TestNode[] };
         const mirroredId = shippingPart.members.find(member => member.$type === 'ValueObject' && member.mirrors);
         const publicModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Public');
         const consumerModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Consumer');
@@ -530,7 +531,7 @@ describe('Linking tests', () => {
     test('navigates repository ownership to the aggregate and its root entity', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/repository-root.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -564,7 +565,7 @@ describe('Linking tests', () => {
     test('navigates qualified module dependencies and emitted-event paths', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/qualified-list-paths.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 module Contracts { event OrderPlaced }
                 module Api depends on Ordering.Contracts { value object ApiCode { raw: string } }
                 aggregate Order {
@@ -615,15 +616,15 @@ describe('Linking tests', () => {
         }
     });
 
-    test('resolves every mirror path segment through an imported bounded-context part', async () => {
+    test('resolves every mirror path segment through an imported bounded-context contribution', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-context.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-part.tni'),
             `import "./ordering-context.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  aggregate Order {
                      root entity Order { identifier id: OrderId }
                      value object OrderId { raw: string }
@@ -633,7 +634,7 @@ describe('Linking tests', () => {
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-mirror.tni'),
             `import "./ordering-part.tni"
-             bounded context Shipping {
+             bounded context Shipping in bounded context Shipping {
                  value object OrderId mirrors Ordering.Order.OrderId { raw: string }
              }`
         );
@@ -676,7 +677,7 @@ describe('Linking tests', () => {
     test('navigates multiple method-level projector targets', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/multi-target-projector.tni'),
-            `bounded context Commerce {
+            `bounded context Commerce in bounded context Commerce {
                 read model OrderSummary { orderId: string }
                 read model CustomerSummary { customerId: string }
                 event EntityChanged
@@ -712,7 +713,7 @@ describe('Linking tests', () => {
     test('navigates transition fields and enum values', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/transition-navigation.tni'),
-            `bounded context Shipping {
+            `bounded context Shipping in bounded context Shipping {
                 aggregate Shipment {
                     root entity Shipment {
                         method ship() { transition status from Open to Shipped }
@@ -755,14 +756,14 @@ describe('Linking tests', () => {
     test('rejects direct use of a private value object across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { value object InternalCode { raw: string } }'
+            'bounded context Ordering in bounded context Ordering { value object InternalCode { raw: string } }'
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
             s`
                 import "./ordering.tni"
 
-                bounded context Shipping {
+                bounded context Shipping in bounded context Shipping {
                     value object LocalCode {
                         source: Ordering.InternalCode
                     }
@@ -779,7 +780,7 @@ describe('Linking tests', () => {
     test('links inline method references in command behavior specifications', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method ensureOwner()
@@ -808,9 +809,9 @@ describe('Linking tests', () => {
         if (!model || !isModel(model)) {
             return;
         }
-        const context = model.declarations[0];
-        expect(context && isBoundedContext(context)).toBe(true);
-        if (!context || !isBoundedContext(context)) {
+        const context = model.declarations[1];
+        expect(context && isBoundedContextPart(context)).toBe(true);
+        if (!context || !isBoundedContextPart(context)) {
             return;
         }
         const aggregate = context.members.find(isAggregate);
@@ -838,7 +839,7 @@ describe('Linking tests', () => {
     test('links entity fields and factory creation methods in behavior specifications', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/factory-links.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         identifier id: OrderId
@@ -869,9 +870,9 @@ describe('Linking tests', () => {
         if (!model || !isModel(model)) {
             return;
         }
-        const context = model.declarations[0];
-        expect(context && isBoundedContext(context)).toBe(true);
-        if (!context || !isBoundedContext(context)) {
+        const context = model.declarations[1];
+        expect(context && isBoundedContextPart(context)).toBe(true);
+        if (!context || !isBoundedContextPart(context)) {
             return;
         }
         const aggregate = context.members.find(isAggregate);
@@ -895,7 +896,7 @@ describe('Linking tests', () => {
     test('navigates each segment of one nested specification reference independently', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/nested-specification-path.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 data object AddressInput { street: string }
                 data object OrderInput { address: AddressInput }
                 aggregate Order {
@@ -920,9 +921,9 @@ describe('Linking tests', () => {
         if (!model || !isModel(model)) {
             return;
         }
-        const context = model.declarations[0];
-        expect(isBoundedContext(context)).toBe(true);
-        if (!isBoundedContext(context)) {
+        const context = model.declarations[1];
+        expect(isBoundedContextPart(context)).toBe(true);
+        if (!isBoundedContextPart(context)) {
             return;
         }
         const aggregate = context.members.find(isAggregate);
@@ -993,7 +994,7 @@ describe('Linking tests', () => {
     test('resolves same-suffix value objects, fields, and modules in the owning context', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/duplicate-context-symbols.tni'),
-            `bounded context Shipping {
+            `bounded context Shipping in bounded context Shipping {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1004,7 +1005,7 @@ describe('Linking tests', () => {
                     value object DeliveryCode { raw: string }
                 }
             }
-            bounded context Ordering {
+            bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { method fulfillItem() identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1048,10 +1049,10 @@ describe('Linking tests', () => {
             return;
         }
         const ordering = model.declarations.find(declaration =>
-            isBoundedContext(declaration) && declaration.name === 'Ordering'
+            isBoundedContextPart(declaration) && declaration.context.ref?.name === 'Ordering'
         );
-        expect(ordering && isBoundedContext(ordering)).toBe(true);
-        if (!ordering || !isBoundedContext(ordering)) {
+        expect(ordering && isBoundedContextPart(ordering)).toBe(true);
+        if (!ordering || !isBoundedContextPart(ordering)) {
             return;
         }
         const aggregates = ordering.members.filter(isAggregate);
@@ -1195,15 +1196,15 @@ describe('Linking tests', () => {
         }
     });
 
-    test('links every segment of a qualified invocation across imported context parts', async () => {
+    test('links every segment of a qualified invocation across imported context contributions', async () => {
         const canonical = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-context.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         const aggregatePart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-aggregate.tni'),
             `import "./order-context.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  aggregate Order {
                      root entity Order { method place() identifier id: OrderId }
                      value object OrderId { raw: string }
@@ -1214,7 +1215,7 @@ describe('Linking tests', () => {
             URI.file('/workspace/order-application.tni'),
             `import "./order-context.tni"
              import "./order-aggregate.tni"
-             part of bounded context Ordering {
+             in bounded context Ordering {
                  application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.place
@@ -1251,7 +1252,7 @@ describe('Linking tests', () => {
     test('requires factory methods to return their aggregate root', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/invalid-factory.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -1274,7 +1275,7 @@ describe('Linking tests', () => {
     test('selectively imports bounded contexts from a multi-context file', async () => {
         const catalog = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping {} bounded context Billing {}'
+            'bounded context Ordering bounded context Shipping bounded context Billing'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/map.tni'),
@@ -1319,7 +1320,7 @@ describe('Linking tests', () => {
     test('uses a file alias when the imported file contains one context', async () => {
         const catalog = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/single-context.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -1332,7 +1333,7 @@ describe('Linking tests', () => {
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/aliased-consumer.tni'),
             `import "./single-context.tni" as Orders
-             part of bounded context Orders {
+             in bounded context Orders {
                  application service Handler {
                      method handle() { invokes Orders.Order.Order.place }
                  }
@@ -1356,16 +1357,16 @@ describe('Linking tests', () => {
     test('keeps ambiguous imported suffixes unresolved but permits qualified names', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-money.tni'),
-            'bounded context Ordering { value object Money { raw: string } }'
+            'bounded context Ordering in bounded context Ordering { value object Money { raw: string } }'
         );
         const billing = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/billing-money.tni'),
-            'bounded context Billing { value object Money { raw: string } }'
+            'bounded context Billing in bounded context Billing { value object Money { raw: string } }'
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/money-consumer.tni'),
             `import "./ordering-money.tni" import "./billing-money.tni"
-             bounded context Checkout {
+             bounded context Checkout in bounded context Checkout {
                  application service Handler {
                      method handle(ambiguous: Money, qualified: Ordering.Money)
                  }
@@ -1375,7 +1376,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
 
-        const checkout = (consumer.parseResult.value as Model).declarations[0] as Model['declarations'][number] & {
+        const checkout = (consumer.parseResult.value as Model).declarations[1] as Model['declarations'][number] & {
             members: Array<{ methods?: Array<{ parameters: Array<{ type?: { ref?: AstNode } }> }> }>;
         };
         const parameters = checkout.members[0].methods?.[0].parameters ?? [];
@@ -1387,7 +1388,7 @@ describe('Linking tests', () => {
     test('reports unresolved method references in behavior specifications', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/unresolved-behavior.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         identifier id: OrderId

@@ -16,7 +16,8 @@ scoped to its aggregate; references to an entity in another aggregate must use
 that aggregate's identifier rather than the entity itself.
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     aggregate Order {
         root entity Order {
             method update();
@@ -55,7 +56,8 @@ of the local model:
 import "./context-catalog.tni";
 import "./ordering.tni";
 
-bounded context Shipping {
+bounded context Shipping
+in bounded context Shipping {
     value object OrderId mirrors Ordering.Order.OrderId {
         raw: string;
     }
@@ -76,7 +78,8 @@ refer to entities in another aggregate by their identifiers rather than passing
 the entity instances.
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     aggregate Order {
         root entity Order {
             constructor(id: OrderId) {
@@ -159,7 +162,8 @@ objects, read models, or collections of these; application-service methods must
 not return entities. For example:
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     aggregate Order {
         root entity Order {
             method update();
@@ -214,7 +218,8 @@ Use `exposes` to list declarations available to other modules, and `depends on`
 to declare a module dependency:
 
 ```thinai
-bounded context Shipping {
+bounded context Shipping
+in bounded context Shipping {
     module Operations {
         exposes TrackingCode;
 

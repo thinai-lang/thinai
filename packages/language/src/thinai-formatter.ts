@@ -2,7 +2,6 @@ import { isCompositeCstNode, isLeafCstNode, type AstNode, type CstNode } from 'l
 import { AbstractFormatter, Formatting } from 'langium/lsp';
 
 const blockTypes = new Set([
-    'BoundedContext',
     'BoundedContextPart',
     'ContextMap',
     'ContextMapEndpoint',
@@ -50,12 +49,12 @@ const relationshipTypes = new Set([
 ]);
 
 const keywordPairs = [
-    'bounded', 'application', 'domain', 'query', 'shared', 'value', 'read', 'data', 'integration', 'part', 'of', 'context'
+    'bounded', 'application', 'domain', 'query', 'shared', 'value', 'read', 'data', 'integration', 'context'
 ];
 
 const keywordValueSeparators = [
     'aggregate', 'actor', 'by', 'depends', 'emits', 'enum', 'event', 'exposes', 'factory', 'from',
-    'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
+    'in', 'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
     'kernel', 'map', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
     'repository', 'service',
     'returns', 'root', 'separateWays', 'serves', 'subdomain', 'supplier', 'customer', 'partner',
@@ -246,7 +245,7 @@ export class ThinaiFormatter extends AbstractFormatter {
             this.separateSiblings(formatter, module.members);
         }
 
-        if (['BoundedContext', 'BoundedContextPart', 'SharedKernel'].includes(node.$type)) {
+        if (['BoundedContextPart', 'SharedKernel'].includes(node.$type)) {
             const declaration = node as AstNode & { members?: AstNode[] };
             this.separateSiblings(formatter, declaration.members);
         } else if (node.$type === 'Aggregate') {
@@ -350,7 +349,6 @@ export class ThinaiFormatter extends AbstractFormatter {
 
         let children: AstNode[];
         switch (node.$type) {
-            case 'BoundedContext':
             case 'BoundedContextPart':
             case 'SharedKernel':
                 children = properties.members ?? [];

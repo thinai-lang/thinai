@@ -24,7 +24,8 @@ of the invocation boundary explicit.
 Domain events are emitted by aggregate-root behavior:
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     aggregate Order {
         root entity Order {
             method place() {
@@ -101,7 +102,8 @@ must return data, not entity instances. Projectors do not call application
 services or change aggregates:
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     event OrderPlaced { orderId: string; }
     read model OrderSummary { orderId: string; status: string; }
     query repository OrderSummaryRepository serves OrderSummary;
@@ -115,7 +117,8 @@ bounded context Ordering {
 ```
 
 ```thinai
-bounded context Ordering {
+bounded context Ordering
+in bounded context Ordering {
     event OrderPlaced {
         orderId: OrderId;
     }

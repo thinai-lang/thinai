@@ -103,7 +103,8 @@ describe('Thinai generation evaluations', () => {
 
 describe('Thinai understanding evaluations', () => {
     evaluation('explains a behavior specification and its method reference', async (context: EvalContext) => {
-        const source = `bounded context Ordering {
+        const source = `bounded context Ordering
+        in bounded context Ordering {
             aggregate Order {
                 root entity Order {
                     method ensureOwner() {
@@ -163,7 +164,7 @@ describe('Thinai understanding evaluations', () => {
 
     evaluation('understands imports, modules, and bounded-context boundaries', async (context: EvalContext) => {
         const explanation = await generateResponse(
-            'In plain English, explain these Thinai rules: imports are direct and relative; when a file imports multiple components it selects them and may alias a selected component; a `part of bounded context` file must directly import the canonical context; module references require both dependency and exposure; and only IntegrationEvents may cross bounded-context boundaries, with an authorized imported context map. Explain that DomainEvents stay private.',
+            'In plain English, explain these Thinai rules: imports are direct and relative; when a file imports multiple components it selects them and may alias a selected component; an `in bounded context` contribution must directly import the canonical bounded-context declaration; module references require both dependency and exposure; and only IntegrationEvents may cross bounded-context boundaries, with an authorized imported context map. Explain that DomainEvents stay private.',
             { systemPrompt: context.systemPrompt }
         );
         const normalized = explanation.replace(/[*_`]/g, '').toLowerCase();
@@ -171,7 +172,7 @@ describe('Thinai understanding evaluations', () => {
             ['relative', 'direct import'],
             ['select', 'component selector'],
             ['alias'],
-            ['part of', 'canonical context'],
+            ['in bounded context', 'canonical context'],
             ['dependency', 'depends'],
             ['exposure', 'expose', 'exposes'],
             ['integrationevent'],

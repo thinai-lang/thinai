@@ -10,7 +10,8 @@ This example declares a subdomain, bounded context, aggregate, application-servi
 ```thinai
 subdomain OrderManagement kind core;
 
-bounded context Ordering realizes OrderManagement {
+bounded context Ordering realizes OrderManagement
+in bounded context Ordering {
     aggregate Order {
         root entity Order {
             method place() {
@@ -49,21 +50,23 @@ context can realize one or more subdomains:
 ```thinai
 subdomain Fulfillment kind supporting;
 
-bounded context Shipping realizes Fulfillment {
+bounded context Shipping realizes Fulfillment
+in bounded context Shipping {
     // Context members go here.
 }
 ```
 
-Declare a bounded context canonically once. Other files can add declarations
-to it with `part of bounded context Name`.
+Declare a bounded context canonically once, without braces. Put its members in
+one or more `in bounded context Name { ... }` blocks. A contribution in another
+file must directly import the file containing the canonical declaration.
 
 ## Context Maps and Shared Kernels
 
 A context map describes relationships between bounded contexts:
 
 ```thinai
-bounded context Ordering {}
-bounded context Shipping {}
+bounded context Ordering
+bounded context Shipping
 shared kernel CommonTypes {}
 
 context map FulfillmentMap {
@@ -121,15 +124,15 @@ shared kernel Common {
 
 Imports are explicit, direct, and relative to the importing `.tni` file. A
 declaration in an unrelated workspace file is not automatically visible. A
-later file can extend a bounded context by importing the file that declares
-the canonical context and using `part of`:
+later file can contribute to a bounded context by importing the file that
+declares it and using an `in bounded context` block:
 
 ```thinai
 // ordering-events.tni
 import "./context-catalog.tni";
 import "./ordering.tni";
 
-part of bounded context Ordering {
+in bounded context Ordering {
     application service OrderApplication {
         method placeOrder(id: OrderId) {
             invokes Order.Order.place;

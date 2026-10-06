@@ -3,7 +3,7 @@ import "./ordering.tni"
 
 actor Customer
 
-part of bounded context Ordering {
+in bounded context Ordering {
   application service OrderApplication {
     method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
       precondition "The order contains at least one item."

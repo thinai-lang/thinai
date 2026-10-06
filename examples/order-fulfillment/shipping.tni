@@ -4,7 +4,7 @@ import "./ordering-events.tni"
 import { FulfillmentMap } from "./context-map.tni"
 import { CommonTypes as Common } from "./common-types.tni"
 
-part of bounded context Shipping {
+in bounded context Shipping {
   value object OrderId mirrors Ordering.Order.OrderId {
     raw: string
   }

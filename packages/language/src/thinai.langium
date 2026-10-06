@@ -23,13 +23,10 @@ ImportComponent:
 
 BoundedContext:
     'bounded' 'context' name=ID
-    ('realizes' subdomains+=SubdomainReference (',' subdomains+=SubdomainReference)*)?
-    '{'
-        members+=ContextMember*
-    '}' ;
+    ('realizes' subdomains+=SubdomainReference (',' subdomains+=SubdomainReference)*)?;
 
 BoundedContextPart:
-    'part' 'of' 'bounded' 'context' (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID] '{'
+    'in' 'bounded' 'context' (contextPath+=[NamedDeclaration:ID] '.')* context=[BoundedContext:ID] '{'
         members+=ContextMember*
     '}' ;
 

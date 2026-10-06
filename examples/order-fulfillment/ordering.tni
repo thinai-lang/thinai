@@ -2,7 +2,7 @@ import "./context-catalog.tni"
 import { CommonTypes as Common } from "./common-types.tni"
 import { FulfillmentMap } from "./context-map.tni"
 
-part of bounded context Ordering {
+in bounded context Ordering {
   aggregate Order {
     root entity Order {
       constructor(id: OrderId, owner: string) {

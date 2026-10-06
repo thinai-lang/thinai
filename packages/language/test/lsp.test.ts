@@ -22,7 +22,7 @@ afterEach(async () => {
 
 describe('LSP services', () => {
     test('formats nested Thinai declarations using the editor indentation options', async () => {
-        const source = 'bounded context Ordering { aggregate Order { root entity Order { identifier id:OrderId items:Map<string,number> } } enum OrderStatus { Draft,Placed } } actor Customer';
+        const source = 'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id:OrderId items:Map<string,number> } } enum OrderStatus { Draft,Placed } } actor Customer';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/formatting.tni'), source
         );
@@ -45,7 +45,9 @@ describe('LSP services', () => {
             }, source);
 
         expect(formatted).toBe([
-            'bounded context Ordering {',
+            'bounded context Ordering',
+            '',
+            'in bounded context Ordering {',
             '  aggregate Order {',
             '    root entity Order {',
             '      identifier id: OrderId',
@@ -116,7 +118,7 @@ describe('LSP services', () => {
     });
 
     test('normalizes import, reference, constructor, and enum separators', async () => {
-        const source = 'import{One as First,Two}from"things.tni" bounded   context Example realizes Core,Supporting{aggregate Order{root entity Item{constructor(first:string,second:number){}method combine(first:string,second:number){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
+        const source = 'import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second:number){}method combine(first:string,second:number){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/list-formatting.tni'), source
         );
@@ -137,7 +139,8 @@ describe('LSP services', () => {
             }, source);
 
         expect(formatted).toContain('import { One as First, Two } from "things.tni"');
-        expect(formatted).toContain('bounded context Example realizes Core, Supporting {');
+        expect(formatted).toContain('bounded context Example realizes Core, Supporting');
+        expect(formatted).toContain('in bounded context Example {');
         expect(formatted).toContain('constructor(first: string, second: number) {}');
         expect(formatted).toContain('method combine(first: string, second: number) {}');
         expect(formatted).toContain('Draft,\n      Placed');
@@ -145,7 +148,7 @@ describe('LSP services', () => {
     });
 
     test('separates member groups without splitting adjacent fields and preserves comments and text', async () => {
-        const source = 'bounded context Sample{aggregate Thing{root entity Item{\n// Keep this; note\nmethod first(){behavior "Preserve; this text"}method second(){}identifier id:string name:string}}}';
+        const source = 'bounded context Sample in bounded context Sample {aggregate Thing{root entity Item{\n// Keep this; note\nmethod first(){behavior "Preserve; this text"}method second(){}identifier id:string name:string}}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/member-formatting.tni'), source
         );
@@ -164,7 +167,9 @@ describe('LSP services', () => {
             }, source);
 
         expect(formatted).toBe([
-            'bounded context Sample {',
+            'bounded context Sample',
+            '',
+            'in bounded context Sample {',
             '  aggregate Thing {',
             '    root entity Item {',
             '      // Keep this; note',
@@ -183,7 +188,7 @@ describe('LSP services', () => {
     });
 
     test('formats guarded event emissions and grouped transitions', async () => {
-        const source = `bounded context Ordering{aggregate Order{root entity Order{method confirm(){transition status from Draft to Placed,paymentStatus from Pending to Confirmed when "Payment approved"emits OrderPlaced,PaymentConfirmed when "The status is [[status]]"}identifier id:OrderId status:OrderStatus paymentStatus:PaymentStatus}value object OrderId{raw:string}enum OrderStatus{Draft,Placed}enum PaymentStatus{Pending,Confirmed}}event OrderPlaced event PaymentConfirmed}`;
+        const source = `bounded context Ordering in bounded context Ordering {aggregate Order{root entity Order{method confirm(){transition status from Draft to Placed,paymentStatus from Pending to Confirmed when "Payment approved"emits OrderPlaced,PaymentConfirmed when "The status is [[status]]"}identifier id:OrderId status:OrderStatus paymentStatus:PaymentStatus}value object OrderId{raw:string}enum OrderStatus{Draft,Placed}enum PaymentStatus{Pending,Confirmed}}event OrderPlaced event PaymentConfirmed}`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/guarded-effects-formatting.tni'), source
         );
@@ -231,7 +236,7 @@ describe('LSP services', () => {
     });
 
     test('formats a guarded method invocation on a continuation line', async () => {
-        const source = 'bounded context Ordering{aggregate Order{root entity Order{method place(){invokes validate when "The order is ready."}method validate(){}identifier id:OrderId}value object OrderId{raw:string}}}';
+        const source = 'bounded context Ordering in bounded context Ordering {aggregate Order{root entity Order{method place(){invokes validate when "The order is ready."}method validate(){}identifier id:OrderId}value object OrderId{raw:string}}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/guarded-invocation-formatting.tni'), source
         );
@@ -293,7 +298,7 @@ describe('LSP services', () => {
             }, misformattedSource);
 
         expect(edits.length).toBeGreaterThan(0);
-        expect(formatted).toContain('actor Customer\n\npart of bounded context Ordering {');
+        expect(formatted).toContain('actor Customer\n\nin bounded context Ordering {');
         expect(formatted).toContain('  application service OrderApplication {');
         expect(formatted).toContain('      emits Contracts.OrderPlacedV1');
         expect(formatted).toContain('      projects OrderSummary');
@@ -311,7 +316,7 @@ describe('LSP services', () => {
     });
 
     test('formats existing tabs as two spaces when requested by the editor', async () => {
-        const source = 'bounded context Sample {\n\taggregate Order {\n\t\troot entity Order {\n\t\t\tidentifier id:string\n\t\t}\n\t}\n}';
+        const source = 'bounded context Sample in bounded context Sample {\n\taggregate Order {\n\t\troot entity Order {\n\t\t\tidentifier id:string\n\t\t}\n\t}\n}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/tab-indented.tni'), source
         );
@@ -330,7 +335,9 @@ describe('LSP services', () => {
             }, source);
 
         expect(formatted).toBe([
-            'bounded context Sample {',
+            'bounded context Sample',
+            '',
+            'in bounded context Sample {',
             '  aggregate Order {',
             '    root entity Order {',
             '      identifier id: string',
@@ -342,7 +349,7 @@ describe('LSP services', () => {
     });
 
     test('does not apply document-wide separators to a selected range', async () => {
-        const source = 'import "./common.tni"\nactor Customer\nbounded context Sample {}';
+        const source = 'import "./common.tni"\nactor Customer\nbounded context Sample';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/format-selection.tni'), source
         );
@@ -361,7 +368,7 @@ describe('LSP services', () => {
     });
 
     test('offers context members and declaration keywords automatically', async () => {
-        const text = 'bounded context Sample {\n    \n}\n';
+        const text = 'bounded context Sample in bounded context Sample {\n    \n}\n';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/declaration-completion.tni'), text
         );
@@ -382,7 +389,7 @@ describe('LSP services', () => {
     test('highlights linked behavior references as methods and fields', async () => {
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/behavior-highlighting.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -422,7 +429,7 @@ describe('LSP services', () => {
     test('classifies Thinai declarations with standard semantic token types', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/semantic-declarations.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place()
@@ -580,7 +587,7 @@ describe('LSP services', () => {
     test('suggests workspace files inside import paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering {}'
+            'bounded context Ordering'
         );
         documents = [target];
         const sourceText = 'import "./o';
@@ -679,7 +686,7 @@ describe('LSP services', () => {
     });
 
     test('completes invocation path segments with Thinai symbol kinds', async () => {
-        const template = `bounded context Ordering {
+        const template = `bounded context Ordering in bounded context Ordering {
             aggregate Order {
                 root entity Order {
                     method place()
@@ -728,7 +735,7 @@ describe('LSP services', () => {
 
     test('keeps nested behavior references available while typing', async () => {
         for (const prefix of ['o', 'or', 'order']) {
-            const text = `bounded context Ordering {
+            const text = `bounded context Ordering in bounded context Ordering {
                 data object Request { orderId: string }
                 application service OrderApplication {
                     method place(request: Request) { behavior "Use [[request.${prefix}]]" }
@@ -750,7 +757,7 @@ describe('LSP services', () => {
     });
 
     test('triggers completion when an inline specification reference opens', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             data object Request { orderId: string }
             application service OrderApplication {
                 method place(request: Request) { behavior "Use [[request.orderId]]" }
@@ -772,7 +779,7 @@ describe('LSP services', () => {
     });
 
     test('offers read models for projector targets with read-model icons', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             read model OrderSummary { status: string }
             event OrderPlaced
             projector OrderProjector {
@@ -797,7 +804,7 @@ describe('LSP services', () => {
     });
 
     test('offers entity fields and enum members in transition clauses', async () => {
-        const text = `bounded context Shipping {
+        const text = `bounded context Shipping in bounded context Shipping {
             aggregate Shipment {
                 root entity Shipment {
                     method ship() { transition status from  to Shipped }
@@ -837,7 +844,7 @@ describe('LSP services', () => {
 
     test('suggests when guards after transitions, emissions, method invocations, and journey steps', async () => {
         const marker = '__completion_position__';
-        const common = `bounded context Ordering {
+        const common = `bounded context Ordering in bounded context Ordering {
             aggregate Order {
                 root entity Order {
                     method validate()
@@ -927,13 +934,13 @@ describe('LSP services', () => {
     test('suggests optional keywords at their grammar positions', async () => {
         const marker = '__completion_position__';
         const cases = [
-            { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker} {}` },
+            { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker}` },
             { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
-            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering { module Api ${marker} {} }` },
-            { name: 'entity inheritance', keyword: 'extends', source: `bounded context Ordering { aggregate Order { root entity Base { identifier id: Id } entity Child ${marker} {} value object Id { raw: string } } }` },
-            { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering { aggregate Order { value object Base { raw: string } value object Mirror ${marker} { raw: string } } }` },
-            { name: 'method return type', keyword: 'returns', source: `bounded context Ordering { application service Queries { method find() ${marker} } }` },
-            { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering { aggregate Order { root entity Order { identifier id: Id status: Status ${marker} } value object Id { raw: string } enum Status { Draft, Placed } } }` }
+            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering in bounded context Ordering { module Api ${marker} {} }` },
+            { name: 'entity inheritance', keyword: 'extends', source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Base { identifier id: Id } entity Child ${marker} {} value object Id { raw: string } } }` },
+            { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering in bounded context Ordering { aggregate Order { value object Base { raw: string } value object Mirror ${marker} { raw: string } } }` },
+            { name: 'method return type', keyword: 'returns', source: `bounded context Ordering in bounded context Ordering { application service Queries { method find() ${marker} } }` },
+            { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id: Id status: Status ${marker} } value object Id { raw: string } enum Status { Draft, Placed } } }` }
         ];
 
         for (const [index, completionCase] of cases.entries()) {
@@ -958,22 +965,22 @@ describe('LSP services', () => {
             {
                 name: 'method body',
                 expected: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits', 'projects'],
-                source: `bounded context Ordering { application service App { method execute() { ${marker} } } }`
+                source: `bounded context Ordering in bounded context Ordering { application service App { method execute() { ${marker} } } }`
             },
             {
                 name: 'constructor body',
                 expected: ['invariant', 'precondition', 'postcondition', 'behavior'],
-                source: `bounded context Ordering { aggregate Order { root entity Order { constructor() { ${marker} } identifier id: OrderId } value object OrderId { raw: string } } }`
+                source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { constructor() { ${marker} } identifier id: OrderId } value object OrderId { raw: string } } }`
             },
             {
                 name: 'aggregate body',
                 expected: ['entity', 'value', 'enum', 'invariant'],
-                source: `bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }`
+                source: `bounded context Ordering in bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }`
             },
             {
                 name: 'module body',
                 expected: ['exposes', 'aggregate', 'application', 'domain', 'query'],
-                source: `bounded context Ordering { module Api { ${marker} } }`
+                source: `bounded context Ordering in bounded context Ordering { module Api { ${marker} } }`
             },
             {
                 name: 'journey body',
@@ -1012,7 +1019,7 @@ describe('LSP services', () => {
     });
 
     test('hides declarations in sibling modules unless exposed through a dependency', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             module Internal {
                 value object PrivateCode { raw: string }
             }
@@ -1033,7 +1040,7 @@ describe('LSP services', () => {
         });
         expect(completion?.items.some(item => item.label === 'PrivateCode')).toBe(false);
 
-        const allowedText = `bounded context Shipping {
+        const allowedText = `bounded context Shipping in bounded context Shipping {
             module Producer {
                 exposes ExposedCode
                 value object ExposedCode { raw: string }
@@ -1058,10 +1065,10 @@ describe('LSP services', () => {
     test('filters private cross-context types and domain events from completion', async () => {
         const producer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/completion-producer.tni'),
-            'bounded context Ordering { value object OrderId { raw: string } event OrderPlaced }'
+            'bounded context Ordering in bounded context Ordering { value object OrderId { raw: string } event OrderPlaced }'
         );
         const text = `import "./completion-producer.tni"
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 application service ShipmentApplication {
                     method receive(source: Order) {}
                 }
@@ -1083,7 +1090,7 @@ describe('LSP services', () => {
 
         const eventContexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/authorized-event-contexts.tni'),
-            'bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping {}'
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
         );
         const eventMap = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/authorized-event-map.tni'),
@@ -1091,7 +1098,7 @@ describe('LSP services', () => {
         );
         const authorizedText = `import "./authorized-event-contexts.tni"
             import "./authorized-event-map.tni"
-            part of bounded context Shipping {
+            in bounded context Shipping {
                 application service ShipmentApplication {
                     method receive(source: OrderPlaced) {}
                 }
@@ -1112,10 +1119,10 @@ describe('LSP services', () => {
     test('filters private cross-context declarations from inline specification references', async () => {
         const producer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/specification-private-producer.tni'),
-            'bounded context Ordering { aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }'
+            'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }'
         );
         const text = `import "./specification-private-producer.tni"
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 application service ShipmentApplication {
                     method receive() { behavior "Use [[Ordering.Order]]" }
                 }
@@ -1137,10 +1144,10 @@ describe('LSP services', () => {
     test('filters foreign read models and events from projector and emit completions', async () => {
         const producer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/foreign-projections.tni'),
-            'bounded context Ordering { read model OrderSummary { total: number } integration event OrderPlacedV1 }'
+            'bounded context Ordering in bounded context Ordering { read model OrderSummary { total: number } integration event OrderPlacedV1 }'
         );
         const text = `import "./foreign-projections.tni"
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 read model ShipmentSummary { status: string }
                 event ShipmentSent
                 aggregate Shipment {
@@ -1187,7 +1194,7 @@ describe('LSP services', () => {
     });
 
     test('filters unqualified child entities from repository-root completion', async () => {
-        const text = `bounded context Shipping {
+        const text = `bounded context Shipping in bounded context Shipping {
             aggregate Shipment {
                 root entity Shipment { identifier id: ShipmentId }
                 entity ShipmentLine { identifier id: ShipmentLineId }
@@ -1211,7 +1218,7 @@ describe('LSP services', () => {
     });
 
     test('filters inaccessible module and query-service invocation targets', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             module Producer {
                 domain service Policy { method check() }
             }
@@ -1245,13 +1252,13 @@ describe('LSP services', () => {
     test('does not suggest cross-context invocation targets from an event handler', async () => {
         const producer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/cross-context-invocation-producer.tni'),
-            `bounded context Ordering {
+            `bounded context Ordering in bounded context Ordering {
                 integration event OrderPlacedV1
                 application service OrderApplication { method placeOrder() }
             }`
         );
         const text = `import "./cross-context-invocation-producer.tni"
-            bounded context Shipping {
+            bounded context Shipping in bounded context Shipping {
                 application service ShipmentApplication {
                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {
                         invokes Ordering.OrderApplication.placeOrder
@@ -1273,7 +1280,7 @@ describe('LSP services', () => {
     });
 
     test('completion reflects application-service invocation direction', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             aggregate Order {
                 root entity Order {
                     method place() { invokes Pricing }
@@ -1324,7 +1331,7 @@ describe('LSP services', () => {
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/completion-shared-contexts.tni'),
-            'bounded context Ordering {} bounded context Shipping {}'
+            'bounded context Ordering bounded context Shipping'
         );
         const map = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/completion-shared-map.tni'),
@@ -1333,7 +1340,7 @@ describe('LSP services', () => {
         const text = `import "./completion-shared-contexts.tni"
             import { Common } from "./completion-shared-kernel.tni"
             import { SharedPolicies } from "./completion-shared-map.tni"
-            part of bounded context Ordering {
+            in bounded context Ordering {
                 application service OrderApplication {
                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.norm }
                 }
@@ -1353,7 +1360,7 @@ describe('LSP services', () => {
     });
 
     test('journey path completion offers commands but not query methods', async () => {
-        const text = `bounded context Ordering {
+        const text = `bounded context Ordering in bounded context Ordering {
             application service OrderApplication {
                 method placeOrder()
             }
@@ -1386,11 +1393,11 @@ describe('LSP services', () => {
     test('offers an import code action for an unresolved indexed declaration', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
-            'bounded context Ordering { event OrderPlaced }'
+            'bounded context Ordering in bounded context Ordering { event OrderPlaced }'
         );
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
+            'bounded context Shipping in bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
         );
         documents = [target, source];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
