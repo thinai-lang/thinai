@@ -1,15 +1,40 @@
-# Workspace overview
+# Thinai
 
-Depending on the selection during the project generation you will have one or more packages contained in the packages directory.
-Please check the specific projects here:
+<p><img src="packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="96"></p>
 
-- [packages/language](./packages/language/README.md) This package is always available and contains the language definition.
-- [Thinai language docs](./docs/README.md) Guides to the language model, tactical modeling, events, and behavior.
-- [packages/cli](./packages/cli/README.md) *Optional* Is only available if you chose to use the command-line interface.
-- [packages/extension](./packages/extension/langium-quickstart.md) *Optional* Contains the VSCode extension if you chose to create it.
-- [examples/order-fulfillment](./examples/order-fulfillment/README.md) Complete multi-file DDD example.
+Thinai is a domain-specific language for modeling domain-driven design (DDD).
+Describe subdomains, bounded contexts, aggregates, services, events, and user
+journeys in a shared model that is easy to navigate and evolve across files.
 
-## LLM evaluations
+Thinai's VS Code language support provides completion, navigation, diagnostics,
+formatting, and import quick fixes for `.tni` files.
+
+## Get started
+
+- Explore the [language guides](./docs/README.md) for strategic and tactical
+  modeling, events, and behavior.
+- Browse the [Order Fulfillment example](./examples/order-fulfillment/README.md)
+  for a complete multi-file model.
+- See the [Thinai language package](./packages/language/README.md),
+  [CLI](./packages/cli/README.md), and
+  [VS Code extension development guide](./packages/extension/langium-quickstart.md).
+
+After installing dependencies and building the workspace (`npm install` then
+`npm run build`), generate a JavaScript summary of the example model and its
+imports from the repository root:
+
+```bash
+node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
+```
+
+## Development
+
+This workspace targets Node.js 22 or later. To build and test the language
+package, run `npm run build` and `npm test` from the repository root. The
+language implementation uses [Langium](https://langium.org/); Thinai's grammar,
+validation, and language behavior are defined in this project.
+
+### LLM evaluations
 
 Evaluations use an API that implements the OpenAI-compatible chat completions
 format. Set the model and, if needed, the API endpoint and key for the service
@@ -32,12 +57,3 @@ lai evaluate
 
 Review the selected service's data handling policies before sending project
 content.
-
-## What's in the folder?
-
-Some file are contained in the root directory as well.
-
-- [package.json](./package.json) - The manifest file the main workspace package
-- [tsconfig.json](./tsconfig.json) - The base TypeScript compiler configuration
-- [tsconfig.build.json](./tsconfig.build.json) - Configuration used to build the complete source code.
-- [.gitignore](.gitignore) - Files ignored by git

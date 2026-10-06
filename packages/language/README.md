@@ -1,9 +1,14 @@
 # Thinai Language
 
+<p><img src="../extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
+
 Thinai is a domain-specific modeling language for expressing DDD structures,
 relationships, and behavioral intent in a shared, navigable model. It models
- strategic and tactical DDD, aggregates, application services, events, and journeys.
+strategic and tactical DDD, aggregates, application services, events, and journeys.
 Thinai uses braces for blocks and does not use semicolon terminators.
+
+For topic-based introductions, see the [Thinai language guides](../../docs/README.md)
+and the [complete Order Fulfillment example](../../examples/order-fulfillment/README.md).
 
 ## File Model
 
