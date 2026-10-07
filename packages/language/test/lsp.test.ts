@@ -1016,6 +1016,41 @@ describe('LSP services', () => {
         expect(nextLineLabels).toContain('in');
     });
 
+    test('keeps required keyword continuations available on the same line', async () => {
+        const cases = [
+            { name: 'bounded context', source: 'bounded ', expected: ['context'] },
+            { name: 'in bounded context', source: 'in bounded ', expected: ['context'] },
+            { name: 'context map', source: 'context ', expected: ['map'] },
+            { name: 'shared kernel', source: 'shared ', expected: ['kernel'] },
+            { name: 'application service', source: 'bounded context X in bounded context X { application ', expected: ['service'] },
+            { name: 'domain service', source: 'bounded context X in bounded context X { domain ', expected: ['service'] },
+            { name: 'read model', source: 'bounded context X in bounded context X { read ', expected: ['model'] },
+            { name: 'data object', source: 'bounded context X in bounded context X { data ', expected: ['object'] },
+            { name: 'value object', source: 'bounded context X in bounded context X { aggregate A { value ', expected: ['object'] },
+            { name: 'root entity', source: 'bounded context X in bounded context X { aggregate A { root ', expected: ['entity'] },
+            { name: 'query service and repository', source: 'bounded context X in bounded context X { query ', expected: ['repository', 'service'] },
+            { name: 'integration event', source: 'bounded context X in bounded context X { integration ', expected: ['event'] },
+            { name: 'module depends on', source: 'bounded context X in bounded context X { module M depends ', expected: ['on'] },
+            { name: 'repository manages', source: 'bounded context X in bounded context X { repository R ', expected: ['manages'] },
+            { name: 'import from', source: 'import { Foo } ', expected: ['from'] }
+        ];
+
+        for (const [index, completionCase] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/keyword-continuation-${index}.tni`), completionCase.source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(completionCase.source.length)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const expected of completionCase.expected) {
+                expect(labels, completionCase.name).toContain(expected);
+            }
+        }
+    });
+
     test('offers the allowed declaration and method-body keywords in each block', async () => {
         const marker = '__completion_position__';
         const cases = [

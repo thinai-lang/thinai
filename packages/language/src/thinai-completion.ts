@@ -212,12 +212,49 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const allowed = new Set([
             ...this.getSameLineContinuationKeywords(sibling, document, position),
+            ...this.getInProgressKeywordContinuations(document, position),
             ...extraAllowedKeywords
         ]);
         return {
             ...completion,
             items: completion.items.filter(item => item.kind !== CompletionItemKind.Keyword || allowed.has(item.label))
         };
+    }
+
+    private getInProgressKeywordContinuations(document: LangiumDocument, position: Position): string[] {
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefix = text.slice(lineStart, offset);
+        const words = prefix.trimEnd().split(/\s+/);
+        if (words.at(-1)?.toLowerCase() === 'context' && words.at(-2)?.toLowerCase() !== 'bounded') {
+            return ['map'];
+        }
+        const continuations: ReadonlyArray<readonly [RegExp, string[]]> = [
+            [/\bin\s+bounded\s*$/i, ['context']],
+            [/\bbounded\s*$/i, ['context']],
+            [/\bshared\s*$/i, ['kernel']],
+            [/\bapplication\s*$/i, ['service']],
+            [/\broot\s*$/i, ['entity']],
+            [/\bvalue\s*$/i, ['object']],
+            [/\bread\s*$/i, ['model']],
+            [/\bdata\s*$/i, ['object']],
+            [/\bdomain\s*$/i, ['service']],
+            [/\bquery\s*$/i, ['repository', 'service']],
+            [/\bintegration\s*$/i, ['event']],
+            [/\bdepends\s*$/i, ['on']],
+            [/\bimport\s+\{[^}]*\}\s*$/i, ['from']],
+            [/\brepository\s+[_a-zA-Z][\w_]*\s*$/i, ['manages']],
+            [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s*$/i, ['serves']],
+            [/\btransition\s+[_a-zA-Z][\w_]*\s*$/i, ['from']],
+            [/\btransition\s+[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s*$/i, ['to']],
+            [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*$/i, ['participants']],
+            [/\bcustomer\s+[^\n]*?->\s*$/i, ['supplier']],
+            [/\bpartner\s+[^\n]*?<->\s*$/i, ['partner']],
+            [/\b(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*$/i, ['integrationPatterns']]
+        ];
+
+        return continuations.find(([pattern]) => pattern.test(prefix))?.[1] ?? [];
     }
 
     private getSameLineSiblingAt(document: LangiumDocument, position: Position): AstNode | undefined {
