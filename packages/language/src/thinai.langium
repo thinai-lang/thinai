@@ -15,7 +15,7 @@ TopLevelDeclaration:
 Import:
     'import'
     ('{' components+=ImportComponent (',' components+=ImportComponent)* '}' 'from' path=StringLiteral
-    | path=StringLiteral ('as' alias=ID)?);
+    | path=StringLiteral);
 
 ImportComponent:
     component=[ImportableComponent:ID] ('as' alias=[ImportableComponent:ID])?;
@@ -129,7 +129,7 @@ AggregateMember:
     | EnumType;
 
 Entity:
-    (root?='root')? 'entity' name=ID ('extends' (basePath+=[NamedDeclaration:ID] '.')* base=[Entity:ID])?
+    (root?='root')? 'entity' name=ID
     '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ;
 
 ValueObject:

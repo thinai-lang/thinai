@@ -433,27 +433,6 @@ describe('Validating', () => {
         ))).toBe(true);
     });
 
-    test('keeps entity inheritance within an aggregate', async () => {
-        const document = await parse(`
-            bounded context Ordering in bounded context Ordering {
-                aggregate Customer {
-                    root entity Customer { identifier id: CustomerId }
-                    value object CustomerId { raw: string }
-                }
-                aggregate Order {
-                    root entity Order { identifier id: OrderId }
-                    value object OrderId { raw: string }
-                    entity SpecialOrder extends Customer { identifier id: SpecialOrderId }
-                    value object SpecialOrderId { raw: string }
-                }
-            }
-        `);
-
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'Entity inheritance must stay within the same aggregate.'
-        ))).toBe(true);
-    });
-
     test('requires an entity transition to target a field on that entity', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
@@ -1431,23 +1410,6 @@ describe('Validating', () => {
         expect(directImport.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
-    test('requires a component selector for file aliases that contain multiple bounded contexts', async () => {
-        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/catalog.tni'),
-            'bounded context Ordering bounded context Shipping'
-        );
-        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/consumer.tni'),
-            'import "./catalog.tni" as Contexts bounded context Billing'
-        );
-        documents = [catalog, consumer];
-
-        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
-
-        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'A file-level alias requires exactly one bounded context, context map, or shared kernel'
-        ))).toBe(true);
-    });
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

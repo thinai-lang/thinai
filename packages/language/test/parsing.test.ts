@@ -25,6 +25,16 @@ describe('Parsing tests', () => {
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 
+    test('rejects aliases on file-level imports', async () => {
+        const document = await parse('import "./contexts.tni" as Contexts');
+        expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
+    });
+
+    test('rejects entity inheritance syntax', async () => {
+        const document = await parse('bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order {} entity SpecialOrder extends Order {} } }');
+        expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
+    });
+
     test('parses strategic, tactical, and behavior elements', async () => {
         const document = await parse(s`
             subdomain OrderManagement kind core
@@ -88,6 +98,27 @@ describe('Parsing tests', () => {
         expect(document.parseResult.value && isBoundedContextPart(document.parseResult.value.declarations[3])).toBe(true);
     });
 
+    test('parses all context-map relationship operators together without terminators', async () => {
+        const document = await parse(s`
+            subdomain Commerce kind core
+            subdomain Fulfillment kind supporting
+            bounded context Ordering realizes Commerce
+            bounded context Shipping realizes Fulfillment
+            bounded context Returns realizes Fulfillment
+            shared kernel CommonTypes { value object CorrelationId { raw: string } }
+
+            context map CommerceMap {
+                customer Ordering { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Shipping { integrationPatterns: ["PublishedLanguage"] }
+                partner Ordering <-> partner Returns
+                separateWays Shipping -x- Returns
+                sharedKernel CommonTypes { participants: [Ordering, Shipping] }
+            }
+        `);
+
+        expect(document.parseResult.lexerErrors).toEqual([]);
+        expect(document.parseResult.parserErrors).toEqual([]);
+    });
+
     test('parses bounded-context contribution blocks and imports', async () => {
         const document = await parse(s`
             import "./ordering.tni"
@@ -101,7 +132,7 @@ describe('Parsing tests', () => {
         expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
     });
 
-    test('rejects braced canonical contexts and the former part-of syntax', async () => {
+    test('rejects braced canonical contexts and part-of contributions', async () => {
         const braced = await parse('bounded context Ordering {}');
         const partOf = await parse('part of bounded context Ordering {}');
 
@@ -286,8 +317,8 @@ describe('Parsing tests', () => {
         expect(parts[0].target).toBeUndefined();
     });
 
-    test('rejects the former dollar-prefixed reference syntax', async () => {
-        const document = await parse('bounded context Legacy in bounded context Legacy { aggregate Order { invariant $"Old ${Order.method}" } }');
+    test('rejects dollar-prefixed reference syntax', async () => {
+        const document = await parse('bounded context Sample in bounded context Sample { aggregate Order { invariant $"Old ${Order.method}" } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 });

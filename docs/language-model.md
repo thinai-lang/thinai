@@ -151,14 +151,8 @@ alias applies to the selected component:
 import { Ordering as Orders, Shipping } from "./contexts.tni";
 ```
 
-The older file-level form `import "./file.tni" as Alias;` remains supported only
-when that file contains exactly one bounded context, context map, or shared
-kernel. Prefer named component imports. Cross-context IntegrationEvent use
-requires an imported context map with an authorized relationship; DomainEvents
-remain private to their context.
-
-The former postfix selector form (`import "./contexts.tni" { Ordering };`) is
-replaced by the named-import form above.
+Cross-context IntegrationEvent use requires an imported context map with an
+authorized relationship; DomainEvents remain private to their context.
 
 ## Language Tooling
 

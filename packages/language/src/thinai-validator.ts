@@ -56,7 +56,6 @@ import {
     isEnumValue,
     isField,
     isIntegrationEvent,
-    isImportableComponent,
     isContextMap,
     isCustomerSupplierRelationship,
     isEnumType,
@@ -80,13 +79,7 @@ import {
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
-
-const INTEGRATION_PATTERNS = new Set([
-    'Conformist',
-    'AntiCorruptionLayer',
-    'OpenHostService',
-    'PublishedLanguage'
-]);
+import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -205,19 +198,6 @@ export class ThinaiValidator {
             });
         }
 
-        if (importDeclaration.alias) {
-            const importedModel = this.services.shared.workspace.LangiumDocuments.getDocument(uri)?.parseResult.value;
-            const components = isModel(importedModel)
-                ? importedModel.declarations.filter(isImportableComponent)
-                : [];
-            if (components.length !== 1) {
-                accept('error', 'A file-level alias requires exactly one bounded context, context map, or shared kernel; select components explicitly when importing a file with multiple components.', {
-                    node: importDeclaration,
-                    property: 'alias'
-                });
-            }
-        }
-
         if (this.reachesImportCycle(uri, new Set([document.uri.toString()]))) {
             accept('error', 'Import cycle detected.', {
                 node: importDeclaration,
@@ -229,10 +209,7 @@ export class ThinaiValidator {
     checkModelImports(model: Model, accept: ValidationAcceptor): void {
         const names = new Map<string, Import | ImportComponent>();
         for (const importDeclaration of model.imports) {
-            const declarations: Array<{ name: string; node: Import | ImportComponent; property: string }> = [];
-            if (importDeclaration.alias) {
-                declarations.push({ name: importDeclaration.alias, node: importDeclaration, property: 'alias' });
-            }
+            const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
             for (const component of importDeclaration.components) {
                 declarations.push({
                     name: component.alias?.$refText ?? component.component.$refText,
@@ -243,14 +220,10 @@ export class ThinaiValidator {
             for (const declaration of declarations) {
                 if (names.has(declaration.name)) {
                     const message = `Import component name '${declaration.name}' is declared more than once.`;
-                    if (declaration.node.$type === 'Import') {
-                        accept('error', message, { node: declaration.node, property: 'alias' });
-                    } else {
-                        accept('error', message, {
-                            node: declaration.node,
-                            property: declaration.property === 'alias' ? 'alias' : 'component'
-                        });
-                    }
+                    accept('error', message, {
+                        node: declaration.node,
+                        property: declaration.property === 'alias' ? 'alias' : 'component'
+                    });
                 } else {
                     names.set(declaration.name, declaration.node);
                 }
@@ -302,26 +275,6 @@ export class ThinaiValidator {
                 node: identifierFields[0],
                 property: 'type'
             });
-        }
-        const ancestors = new Set<Entity>([entity]);
-        let base = entity.base?.ref;
-        while (base) {
-            if (this.getOwningAggregate(base) !== aggregate) {
-                accept('error', 'Entity inheritance must stay within the same aggregate.', {
-                    node: entity,
-                    property: 'base'
-                });
-                break;
-            }
-            if (ancestors.has(base)) {
-                accept('error', 'Entity inheritance cannot contain a cycle.', {
-                    node: entity,
-                    property: 'base'
-                });
-                break;
-            }
-            ancestors.add(base);
-            base = base.base?.ref;
         }
         if (entity.root) {
             if (!isAggregate(entity.$container)) {
@@ -1345,7 +1298,7 @@ export class ThinaiValidator {
 
     checkQueryRepository(repository: QueryRepository, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(repository, accept);
-        if (repository.readModel.ref && getOwningContextName(repository.readModel.ref) !== getOwningContextName(repository)) {
+        if (repository.readModel?.ref && getOwningContextName(repository.readModel.ref) !== getOwningContextName(repository)) {
             accept('error', 'A query repository and its read model must belong to the same bounded context.', {
                 node: repository,
                 property: 'readModel'

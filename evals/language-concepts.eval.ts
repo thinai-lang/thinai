@@ -30,7 +30,7 @@ describe('Thinai language concept evaluations', () => {
 
     evaluation('models strategic context and shared-kernel structures', async (context: EvalContext) => {
         const generated = await generateAndValidate(
-            'Generate a valid single-file Thinai model. Write subdomain declarations exactly as `subdomain Commerce kind core;` and `subdomain Fulfillment kind supporting;`—do not omit the `kind` keyword. Declare bounded contexts without braces, then put each context’s members in a separate `in bounded context Name { ... }` block: Ordering realizes Commerce, Shipping realizes Fulfillment, and Returns realizes Fulfillment. Add shared kernel CommonTypes with value object CorrelationId { raw: string; }, enum Priority { Normal, Urgent }, and an empty module SharedContracts { }. In Ordering, add module CoreTypes { exposes OrderReference; value object OrderReference { raw: string; } } and sibling module ApiTypes depends on CoreTypes { data object OrderRequest { reference: OrderReference; priority: Priority; } }. Add context map CommerceMap containing all four relationship forms: customer Ordering { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Shipping { integrationPatterns: ["PublishedLanguage"] }; partner Ordering <-> partner Returns; separateWays Shipping -x- Returns; and sharedKernel CommonTypes { participants: [Ordering, Shipping] }. Use exactly these module braces and in-module exposure syntax, and keep every reference valid.',
+            'Generate a valid single-file Thinai model. Declare subdomains exactly as `subdomain Commerce kind core` and `subdomain Fulfillment kind supporting`; include the `kind` keyword and do not terminate declarations with semicolons. Declare bounded contexts without braces, then put each context’s members in a separate `in bounded context Name { ... }` block: Ordering realizes Commerce, Shipping realizes Fulfillment, and Returns realizes Fulfillment. Add shared kernel CommonTypes with value object CorrelationId { raw: string }, enum Priority { Normal, Urgent }, and an empty module SharedContracts. In Ordering, add module CoreTypes { exposes OrderReference value object OrderReference { raw: string } } and sibling module ApiTypes depends on CoreTypes { data object OrderRequest { reference: OrderReference priority: Priority } }. Add context map CommerceMap containing all four relationship forms: customer Ordering { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Shipping { integrationPatterns: ["PublishedLanguage"] }, partner Ordering <-> partner Returns, separateWays Shipping -x- Returns, and sharedKernel CommonTypes { participants: [Ordering, Shipping] }. Use exactly these module braces and in-module exposure syntax, and keep every reference valid.',
             context
         );
         const features = featureScore(generated.code, [
@@ -51,13 +51,13 @@ describe('Thinai language concept evaluations', () => {
         };
     });
 
-    evaluation('models aggregate identity, state, inheritance, mirroring, and creation', async (context: EvalContext) => {
+    evaluation('models aggregate identity, state, mirroring, and creation', async (context: EvalContext) => {
         const generated = await generateAndValidate(
-            'Generate a valid single-file Thinai model. Declare each bounded context without braces, then put its members in a separate `in bounded context Name { ... }` block. Declare subdomain Commerce kind core and context Catalog realizing Commerce with aggregate Product whose root entity Product has identifier id: ProductId; declare sibling value object ProductId { raw: string; }. Declare bounded context Ordering realizing Commerce. Inside aggregate Order, declare root entity Order with method place() whose body emits OrderPlaced and transitions status from Draft to Placed; then declare identifier id: OrderId and status: OrderStatus initial Draft as fields after the method. Declare entity OrderLine with method ship() that transitions status from Open to Shipped; then declare identifier id: OrderLineId and field status: LineStatus initial Open. Declare OrderLineId and OrderId value objects in Order. Add entity SpecialOrderLine extends OrderLine with its own identifier specialId: SpecialOrderLineId, and declare that ID value object. Do not write a `child` keyword before entity declarations. Add enum types OrderStatus { Draft, Placed } and LineStatus { Open, Shipped }. Declare the mirror using the exact syntax `value object CatalogProductId mirrors Catalog.Product.ProductId { raw: string; }`, then use CatalogProductId as OrderLine.productId. Outside the aggregate, declare repository OrderRepository manages Order.Order and factory OrderFactory with method createOrder() returns Order.Order. Add application service OrderCommands with method createOrder() { invokes OrderFactory.createOrder; }. Include aggregate invariant text and keep references valid.',
+            'Generate a valid single-file Thinai model. Declare each bounded context without braces, then put its members in a separate `in bounded context Name { ... }` block. Declare subdomain Commerce kind core and context Catalog realizing Commerce with aggregate Product whose root entity Product has identifier id: ProductId; declare sibling value object ProductId { raw: string; }. Declare bounded context Ordering realizing Commerce. Inside aggregate Order, declare root entity Order with method place() whose body emits OrderPlaced and transitions status from Draft to Placed; then declare identifier id: OrderId and status: OrderStatus initial Draft as fields after the method. Declare entity OrderLine with method ship() that transitions status from Open to Shipped; then declare identifier id: OrderLineId and field status: LineStatus initial Open. Declare entity SpecialOrderLine with its own identifier specialId: SpecialOrderLineId and declare that ID value object in Order. Declare OrderLineId and OrderId value objects in Order. Do not write a `child` keyword before entity declarations. Add enum types OrderStatus { Draft, Placed } and LineStatus { Open, Shipped }. Declare the mirror using the exact syntax `value object CatalogProductId mirrors Catalog.Product.ProductId { raw: string; }`, then use CatalogProductId as OrderLine.productId. Outside the aggregate, declare repository OrderRepository manages Order.Order and factory OrderFactory with method createOrder() returns Order.Order. Add application service OrderCommands with method createOrder() { invokes OrderFactory.createOrder; }. Include aggregate invariant text and keep references valid.',
             context
         );
         const features = featureScore(generated.code, [
-            'aggregate Order', 'root entity Order', 'entity SpecialOrderLine extends OrderLine',
+            'aggregate Order', 'root entity Order', 'entity SpecialOrderLine',
             'mirrors Catalog.Product.ProductId', 'initial Draft', 'transition status from Draft to Placed',
             'invariant', 'factory OrderFactory', 'returns Order.Order', 'invokes OrderFactory.createOrder',
             'method createOrder()'
@@ -152,23 +152,29 @@ describe('Thinai language concept evaluations', () => {
 
     evaluation('models event publication, projections, and query repository prose', async (context: EvalContext) => {
         const generated = await generateAndValidate(
-            'Generate a valid single-file Thinai Ordering bounded context. Declare aggregate Order with root entity Order { method place() { emits OrderPlaced; } identifier id: OrderId; }, and sibling value object OrderId { raw: string; }. Declare repository OrderRepository manages Order.Order outside the aggregate. Declare event OrderPlaced { orderId: string; status: string; }. Declare module Contracts { exposes OrderPlacedV1; integration event OrderPlacedV1 { orderId: string; status: string; } }. Declare read model OrderSummary { orderId: string; status: string; }, query repository OrderSummaryRepository serves OrderSummary, and projector OrderSummaryProjector with method onOrderPlaced(source: OrderPlaced) whose body declares `projects OrderSummary;` and behavior links OrderPlaced.orderId and OrderSummary.orderId and may mention [[OrderSummaryRepository]]. Add application service OrderApplication with method placeOrder(id: OrderId) { invokes Order.Order.place; } and method publish(source: OrderPlaced) { emits Contracts.OrderPlacedV1; behavior "Map the internal event to the contract."; }. Add query service OrderQueries with method search() returns List<OrderSummary> whose behavior specification links [[OrderSummaryRepository]]. Ensure all references resolve.',
+            'Generate a valid single-file Thinai Ordering bounded context. Do not use semicolon terminators. Declare aggregate Order with root entity Order { method place() { emits OrderPlaced } identifier id: OrderId }, and sibling value object OrderId { raw: string }. Declare repository OrderRepository manages Order.Order outside the aggregate. Declare event OrderPlaced { orderId: string status: string }. Declare module Contracts { exposes OrderPlacedV1 integration event OrderPlacedV1 { orderId: string status: string } }. Declare read model OrderSummary { orderId: string status: string }, query repository OrderSummaryRepository serves OrderSummary, and projector OrderSummaryProjector with method onOrderPlaced(source: OrderPlaced) whose body declares `projects OrderSummary` and behavior links OrderPlaced.orderId and OrderSummary.orderId and may mention [[OrderSummaryRepository]]. Add application service OrderApplication with method placeOrder(id: OrderId) { invokes Order.Order.place } and method publish(source: OrderPlaced) { emits Contracts.OrderPlacedV1 behavior "Map the internal event to the contract." }. Both `place` and `publish` must contain their specified `emits` clause; do not omit either emission. Add query service OrderQueries with method search() returns List<OrderSummary> whose behavior specification links [[OrderSummaryRepository]]. Ensure all references resolve.',
             context
         );
         const features = featureScore(generated.code, [
             'event OrderPlaced {', 'integration event OrderPlacedV1 {', 'exposes OrderPlacedV1',
-            'emits OrderPlaced;', 'source: OrderPlaced',
-            'emits Contracts.OrderPlacedV1;', 'returns List<OrderSummary>',
-            '[[OrderSummaryRepository]]'
+            'source: OrderPlaced', 'returns List<OrderSummary>', '[[OrderSummaryRepository]]'
         ]);
+        const normalized = generated.code.toLowerCase().replace(/\s+/g, ' ');
+        const hasDomainEventEmission = /\bemits\s+orderplaced(?:\s|,|\})/.test(normalized);
+        const hasIntegrationEventEmission = /\bemits\s+contracts\.orderplacedv1(?:\s|,|\})/.test(normalized);
+        const missingEmissions = [
+            ...(!hasDomainEventEmission ? ['emits OrderPlaced'] : []),
+            ...(!hasIntegrationEventEmission ? ['emits Contracts.OrderPlacedV1'] : [])
+        ];
+        const completeFeatureScore = (features.score * 6 + Number(hasDomainEventEmission) + Number(hasIntegrationEventEmission)) / 8;
         const hasReadsClause = /\breads\s+[A-Z_]/.test(generated.code);
-        const score = generated.valid && !hasReadsClause ? features.score : 0;
+        const score = generated.valid && !hasReadsClause ? completeFeatureScore : 0;
         return {
             ...generated.result.data,
             score,
             valid: generated.valid,
-            featureScore: features.score,
-            missingFeatures: features.missing,
+            featureScore: completeFeatureScore,
+            missingFeatures: [...features.missing, ...missingEmissions],
             hasReadsClause,
             diagnostics: generated.errors.map(error => error.message),
             generatedCode: generated.valid ? undefined : generated.code

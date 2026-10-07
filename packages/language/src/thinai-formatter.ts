@@ -107,7 +107,7 @@ export class ThinaiFormatter extends AbstractFormatter {
         }
         formatter.keywords(...keywordValueSeparators).append(Formatting.oneSpace());
         formatter.keywords(
-            'depends', 'extends', 'from', 'initial', 'kind', 'manages', 'mirrors', 'on', 'realizes', 'returns', 'serves', 'to'
+            'depends', 'from', 'initial', 'kind', 'manages', 'mirrors', 'on', 'realizes', 'returns', 'serves', 'to'
         ).prepend(Formatting.oneSpace());
         formatter.keyword('initial').surround(Formatting.oneSpace());
         if (commaSeparatedTypes.has(node.$type)) {

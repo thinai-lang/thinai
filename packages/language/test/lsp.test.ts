@@ -931,13 +931,32 @@ describe('LSP services', () => {
         });
     });
 
+    test('inserts optional clauses with required spacing at a completed path', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            application service OrderApplication { method validate() {} method placeOrder() { invokes validate } }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/optional-clause-spacing.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const offset = text.indexOf('invokes validate') + 'invokes validate'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(item => item.label === 'when')?.textEdit).toMatchObject({
+            newText: ' when',
+            range: { start: document.textDocument.positionAt(offset), end: document.textDocument.positionAt(offset) }
+        });
+    });
+
     test('suggests optional keywords at their grammar positions', async () => {
         const marker = '__completion_position__';
         const cases = [
             { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker}` },
             { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
             { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering in bounded context Ordering { module Api ${marker} {} }` },
-            { name: 'entity inheritance', keyword: 'extends', source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Base { identifier id: Id } entity Child ${marker} {} value object Id { raw: string } } }` },
             { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering in bounded context Ordering { aggregate Order { value object Base { raw: string } value object Mirror ${marker} { raw: string } } }` },
             { name: 'method return type', keyword: 'returns', source: `bounded context Ordering in bounded context Ordering { application service Queries { method find() ${marker} } }` },
             { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id: Id status: Status ${marker} } value object Id { raw: string } enum Status { Draft, Placed } } }` }
@@ -1016,6 +1035,154 @@ describe('LSP services', () => {
                 expect(labels, completionCase.name).toContain(keyword);
             }
         }
+    });
+
+    test('offers only subdomains, not arbitrary declarations, for bounded-context realization', async () => {
+        const marker = '__completion_position__';
+        const markedText = `subdomain Commerce
+            bounded context Ordering realizes ${marker}
+            in bounded context Ordering {
+                aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
+                application service Pricing {}
+            }`;
+        const offset = markedText.indexOf(marker);
+        const text = markedText.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/realizes-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('Commerce');
+        expect(labels).not.toContain('Order');
+        expect(labels).not.toContain('Pricing');
+    });
+
+    test('completes valid module dependencies and excludes self, foreign, and cyclic modules', async () => {
+        const marker = '__completion_position__';
+        const markedText = `bounded context Ordering in bounded context Ordering {
+            module A depends on ${marker} {}
+            module B {}
+            module C depends on A {}
+        }
+        bounded context Shipping in bounded context Shipping { module Foreign {} }`;
+        const offset = markedText.indexOf(marker);
+        const text = markedText.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/module-dependency-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('B');
+        expect(labels).not.toContain('A');
+        expect(labels).not.toContain('C');
+        expect(labels).not.toContain('Foreign');
+    });
+
+    test('filters mirrors to foreign identifier value objects and query repositories to local read models', async () => {
+        const producer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reference-producer.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
+                value object NotAnIdentifier { raw: string }
+                read model ShipmentSummaryForeign {}
+            }`
+        );
+        const marker = '__completion_position__';
+        const markedText = `import "./reference-producer.tni"
+            bounded context Shipping in bounded context Shipping {
+                aggregate Shipment {
+                    root entity Shipment { identifier id: ShipmentId }
+                    value object ShipmentId { raw: string }
+                    value object LocalMirror mirrors ${marker} {}
+                }
+                read model ShipmentSummary {}
+                query repository ShipmentQueries serves ShipmentSummary${marker}
+            }`;
+        const text = markedText.replace(marker, '').replace(marker, '');
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reference-consumer.tni'), text
+        );
+        documents = [producer, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const mirrorOffset = markedText.indexOf(marker);
+        const mirrorCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(mirrorOffset)
+        });
+        const mirrorLabels = mirrorCompletion?.items.map(item => item.label) ?? [];
+        expect(mirrorLabels).toContain('OrderId');
+        expect(mirrorLabels).not.toContain('NotAnIdentifier');
+        expect(mirrorLabels).not.toContain('ShipmentId');
+
+        const readModelOffset = text.indexOf('ShipmentSummary', text.indexOf('serves')) + 'ShipmentSummary'.length;
+        const readModelCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(readModelOffset)
+        });
+        expect(readModelCompletion?.items.some(item => item.label === 'ShipmentSummaryForeign')).toBe(false);
+        expect(readModelCompletion?.items.map(item => item.label)).toContain('ShipmentSummary');
+    });
+
+    test('filters invalid entity, read-model, and data-object method parameter types', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
+            read model OrderSummary {}
+            data object Request {}
+            application service OrderApplication { method submit(input: ) {} }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/method-parameter-type-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const offset = text.indexOf('input:') + 'input: '.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('Request');
+        expect(labels).not.toContain('Order');
+        expect(labels).not.toContain('OrderSummary');
+    });
+
+    test('offers enum states for initial values and allowed context-map integration patterns', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate Order { root entity Order { identifier id: OrderId status: Status initial Dr } value object OrderId { raw: string } enum Status { Draft, Placed } }
+        }
+        bounded context Shipping
+        context map Fulfillment { customer Shipping { integrationPatterns: ["Anti"] } -> supplier Ordering }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/constrained-value-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const initialOffset = text.indexOf('initial Dr') + 'initial Dr'.length;
+        const initialCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(initialOffset)
+        });
+        expect(initialCompletion?.items.some(item => item.label === 'Draft' && item.kind === CompletionItemKind.EnumMember)).toBe(true);
+
+        const patternOffset = text.indexOf('"Anti') + '"Anti'.length;
+        const patternCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(patternOffset)
+        });
+        expect(patternCompletion?.items.some(item => item.label === 'AntiCorruptionLayer')).toBe(true);
+        expect(patternCompletion?.items.some(item => item.label === 'Conformist')).toBe(false);
     });
 
     test('hides declarations in sibling modules unless exposed through a dependency', async () => {

@@ -1317,43 +1317,6 @@ describe('Linking tests', () => {
         );
     });
 
-    test('uses a file alias when the imported file contains one context', async () => {
-        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/single-context.tni'),
-            `bounded context Ordering in bounded context Ordering {
-                aggregate Order {
-                    root entity Order {
-                        method place()
-                        identifier id: OrderId
-                    }
-                    value object OrderId { raw: string }
-                }
-            }`
-        );
-        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/aliased-consumer.tni'),
-            `import "./single-context.tni" as Orders
-             in bounded context Orders {
-                 application service Handler {
-                     method handle() { invokes Orders.Order.Order.place }
-                 }
-             }`
-        );
-        documents = [catalog, consumer];
-
-        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
-
-        expect(consumer.parseResult.parserErrors).toHaveLength(0);
-        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
-        const consumerModel = consumer.parseResult.value as Model;
-        const boundedContext = consumerModel.declarations[0] as Model['declarations'][number] & {
-            members: Array<{ methods?: Array<{ invocations?: Array<{ targets: Array<{ ref?: AstNode }> }> }> }>;
-        };
-        const target = boundedContext.members[0].methods?.[0].invocations?.[0].targets.at(-1)?.ref;
-        expect(target?.$type).toBe('Method');
-        expect((target as AstNode & { name: string }).name).toBe('place');
-    });
-
     test('keeps ambiguous imported suffixes unresolved but permits qualified names', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-money.tni'),

@@ -20,9 +20,11 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
+    isEnumType,
     isDomainEvent,
     isEventEmission,
     isEnumValue,
+    isEntity,
     isField,
     isIntegrationEvent,
     isJourneyStep,
@@ -33,6 +35,7 @@ import {
     isTransition
 } from './generated/ast.js';
 import { getExportedName, ThinaiScopeProvider } from './thinai-scope.js';
+import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
@@ -48,6 +51,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     protected override getReferenceCandidates(refInfo: ReferenceInfo, context: CompletionContext) {
         const { container, property } = refInfo;
+        const pathCandidates = (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
+            .getPathCompletionCandidates(refInfo);
+        if (pathCandidates !== undefined) {
+            return stream(pathCandidates);
+        }
         if ((isJourneyStep(container) || isMethodInvocation(container)) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < context.offset
@@ -162,15 +170,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 items
             };
         }
+        const constrainedValueCompletions = [
+            ...this.getInitialStateCompletions(document, params.position),
+            ...this.getIntegrationPatternCompletions(document, params.position)
+        ];
         const importContext = this.getImportPathContext(document, params.position);
         if (!importContext) {
-            return defaultCompletion;
+            if (constrainedValueCompletions.length === 0) {
+                return defaultCompletion;
+            }
+            return {
+                isIncomplete: defaultCompletion?.isIncomplete ?? false,
+                items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions]
+            };
         }
 
         const importItems = await this.getImportPathCompletions(document, importContext.path, importContext.pathStart);
         return {
             isIncomplete: defaultCompletion?.isIncomplete ?? false,
-            items: [...(defaultCompletion?.items ?? []), ...importItems]
+            items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions, ...importItems]
         };
     }
 
@@ -182,7 +200,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        let best: { end: number; prefix: string; keywords: string[] } | undefined;
+        let best: { end: number; prefix: string; keywords: string[]; needsLeadingSpace: boolean } | undefined;
         for (const node of AstUtils.streamAst(model)) {
             const keywords = isJourneyStep(node)
                 ? [
@@ -211,7 +229,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 continue;
             }
             if (!best || end > best.end) {
-                best = { end, prefix: match[2], keywords };
+                best = { end, prefix: match[2], keywords, needsLeadingSpace: match[1].length === 0 };
             }
         }
         if (!best) {
@@ -231,7 +249,108 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                         start: document.textDocument.positionAt(prefixStart),
                         end: position
                     },
-                    newText: keyword
+                    newText: `${best!.needsLeadingSpace ? ' ' : ''}${keyword}`
+                }
+            }));
+    }
+
+    private getInitialStateCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const model = document.parseResult.value;
+        if (!model) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        let match: RegExpExecArray | null = null;
+        let selected: import('./generated/ast.js').Field | undefined;
+        let selectedStart = -1;
+        for (const node of AstUtils.streamAst(model)) {
+            if (!isField(node) || !node.$cstNode) {
+                continue;
+            }
+            const start = document.textDocument.offsetAt(node.$cstNode.range.start);
+            if (start < selectedStart || start > offset) {
+                continue;
+            }
+            const fieldPrefix = text.slice(start, offset);
+            const candidateMatch = /\binitial\s+([\p{L}_]*)$/u.exec(fieldPrefix);
+            if (candidateMatch) {
+                selected = node;
+                selectedStart = start;
+                match = candidateMatch;
+            }
+        }
+        if (!selected || !match || !isEntity(selected.$container) || selected.optional || !isEnumType(selected.type?.ref)) {
+            return [];
+        }
+        const prefix = match[1];
+        const start = offset - prefix.length;
+        return selected.type.ref.values
+            .filter(value => value.name.startsWith(prefix))
+            .map(value => ({
+                label: value.name,
+                kind: CompletionItemKind.EnumMember,
+                detail: `Initial state of ${selected!.name}`,
+                sortText: '0',
+                textEdit: {
+                    range: { start: document.textDocument.positionAt(start), end: position },
+                    newText: value.name
+                }
+            }));
+    }
+
+    private getIntegrationPatternCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const values = [...INTEGRATION_PATTERNS];
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const propertyStart = text.lastIndexOf('integrationPatterns', offset);
+        if (propertyStart < 0) {
+            return [];
+        }
+        const propertyMatch = /^integrationPatterns\s*:\s*\[/.exec(text.slice(propertyStart));
+        if (!propertyMatch) {
+            return [];
+        }
+
+        let quote: string | undefined;
+        let valueStart = -1;
+        let escaped = false;
+        const usedValues = new Set<string>();
+        const arrayStart = propertyStart + propertyMatch[0].length;
+        for (let index = arrayStart; index < offset; index++) {
+            const character = text[index];
+            if (quote) {
+                if (escaped) {
+                    escaped = false;
+                } else if (character === '\\') {
+                    escaped = true;
+                } else if (character === quote) {
+                    usedValues.add(text.slice(valueStart, index));
+                    quote = undefined;
+                    valueStart = -1;
+                }
+            } else if (character === ']' || character === '\n' && text.slice(index, offset).trim().length === 0) {
+                return [];
+            } else if (character === '"' || character === "'") {
+                quote = character;
+                valueStart = index + 1;
+            }
+        }
+        if (!quote || valueStart < 0) {
+            return [];
+        }
+
+        const prefix = text.slice(valueStart, offset);
+        return values
+            .filter(value => value.startsWith(prefix) && !usedValues.has(value))
+            .map(value => ({
+                label: value,
+                kind: CompletionItemKind.EnumMember,
+                detail: 'Context-map integration pattern',
+                sortText: '0',
+                textEdit: {
+                    range: { start: document.textDocument.positionAt(valueStart), end: position },
+                    newText: value
                 }
             }));
     }
