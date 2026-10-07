@@ -25,7 +25,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('generates a valid single-file ordering model', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai model for an Ordering bounded context. Declare root entity Order and value object OrderId as sibling members inside aggregate Order; never nest the value object in the entity. Give Order the field identifier id: OrderId; and OrderId the field raw: string;. Declare event OrderPlaced. Give Order a place method whose body emits OrderPlaced. Declare repository OrderRepository manages Order.Order. Add application service OrderApplication with method placeOrder(id: OrderId) whose body optionally invokes Order.Order.place. Keep all declarations in the same file and make all references resolve.',
+            'Generate a valid, single-file Thinai model for an Ordering bounded context. Use no semicolon terminators. Put every sibling declaration and statement on its own line, including inside braces. Declare aggregate Order with root entity Order and sibling value object OrderId. Give Order the identifier field id: OrderId and give OrderId the field raw: string. Declare event OrderPlaced. Give Order a place method whose body emits OrderPlaced. Declare repository OrderRepository manages Order.Order. Add application service OrderApplication with method placeOrder(id: OrderId) whose body optionally invokes Order.Order.place. Keep all declarations in the same file and make all references resolve.',
             context
         );
         return {
@@ -38,7 +38,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('uses linked behavior specifications for command logic', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid, single-file Thinai Ordering model. Use the structure root entity Order { constructor(id: OrderId) { invariant "A valid order has an identifier."; } method ensureOwner() { invariant "A valid order has an owner."; } method place() { emits OrderPlaced; } identifier id: OrderId; } followed by sibling declaration value object OrderId { raw: string; }. Do not put the value object inside the entity. Declare repository OrderRepository manages Order.Order. Define application service OrderApplication with method placeOrder(id: OrderId) { precondition "The order can be placed."; invokes Order.Order.place when "The order is ready to be placed."; behavior "Check [[Order.Order.ensureOwner]] before placing."; postcondition "The order is placed."; }. Define event OrderPlaced;. Keep all references valid and describe the invocation guard as prose, not executable logic.',
+            'Generate a valid, single-file Thinai Ordering model. Use no semicolon terminators and put each sibling declaration or body statement on its own line. Declare root entity Order inside aggregate Order. Its constructor takes id: OrderId and has invariant "A valid order has an identifier.". Add method ensureOwner() with invariant "A valid order has an owner." and method place() that emits OrderPlaced. Give Order the identifier field id: OrderId. Declare value object OrderId as a sibling with raw: string, event OrderPlaced, and repository OrderRepository manages Order.Order. Define application service OrderApplication with method placeOrder(id: OrderId) containing precondition "The order can be placed.", invokes Order.Order.place when "The order is ready to be placed.", behavior "Check [[Order.Order.ensureOwner]] before placing.", and postcondition "The order is placed.". Keep all references valid and describe the invocation guard as prose, not executable logic.',
             context
         );
         const lowerCode = generated.code.toLowerCase();
@@ -59,7 +59,7 @@ describe('Thinai generation evaluations', () => {
 
     evaluation('models DataObject inputs and results with descriptive Journey references', async (context: EvalContext) => {
         const generated = await evaluateGeneratedCode(
-            'Generate a valid single-file Thinai Ordering model. Declare aggregate Order with root entity Order (identifier id: OrderId; method place();), value object OrderId { raw: string; }, and enum OrderStatus { Draft, Placed }. Declare repository OrderRepository manages Order.Order outside the aggregate. Declare nested identity-free data objects OrderLineInput { sku: string; quantity: number; }, PlaceOrderInput { orderId: OrderId; lines: List<OrderLineInput>; }, PlaceOrderResult { orderId: OrderId; status: OrderStatus; }, and EligibilityResult { eligible: boolean; }. Declare read model OrderSummary { orderId: OrderId; }, query repository OrderSummaryRepository serves OrderSummary, and query service OrderQueries with method checkEligibility(orderId: OrderId) returns EligibilityResult; its behavior specification may describe reading [[OrderSummaryRepository]] and returning [[result.eligible]]. Declare application service OrderCommands with method place(input: PlaceOrderInput) returns PlaceOrderResult { invokes Order.Order.place; behavior "Place [[input.orderId]] and return [[result.status]]."; }. Declare actor Customer. Add top-level journey PlaceOrder with `by Customer { ... }` and one user-invoked command step `invoke Ordering.OrderCommands.place`. Put the descriptive `with` mapping and `when` guard on that same command step, with one semicolon; link [[input.orderId]], [[Ordering.OrderSummary.orderId]], and the query result [[Ordering.OrderQueries.checkEligibility.result.eligible]]. Do not invoke the query or add event handoff steps to the journey. The query result may be linked descriptively without a query step or ordering requirement. Do not use a reads clause, and ensure all references resolve.',
+            'Generate a valid single-file Thinai Ordering model. Use no semicolon terminators and put each sibling declaration and body statement on its own line. Declare aggregate Order with root entity Order containing identifier id: OrderId and method place(), followed by sibling value object OrderId { raw: string } and enum OrderStatus { Draft, Placed }. Declare repository OrderRepository manages Order.Order outside the aggregate. Declare identity-free data objects OrderLineInput with sku and quantity fields, PlaceOrderInput with orderId: OrderId and lines: List<OrderLineInput>, PlaceOrderResult with orderId: OrderId and status: OrderStatus, and EligibilityResult with eligible: boolean. Declare read model OrderSummary with orderId: OrderId, query repository OrderSummaryRepository serves OrderSummary, and query service OrderQueries with method checkEligibility(orderId: OrderId) returns EligibilityResult; its behavior may describe reading [[OrderSummaryRepository]] and returning [[result.eligible]]. Declare application service OrderCommands with method place(input: PlaceOrderInput) returns PlaceOrderResult. Its body invokes Order.Order.place and describes placing [[input.orderId]] and returning [[result.status]]. Declare actor Customer on its own line. Add top-level journey PlaceOrder with `by Customer { ... }` and one user-invoked command step `invoke Ordering.OrderCommands.place`. Put descriptive `with` mapping and `when` guard on that same command step, link [[input.orderId]], [[Ordering.OrderSummary.orderId]], and [[Ordering.OrderQueries.checkEligibility.result.eligible]], and do not invoke the query or add event handoff steps to the journey. A query result may be linked descriptively without requiring a query step or ordering requirement. Do not use a reads clause, and ensure all references resolve.',
             context
         );
         const lowerCode = generated.code.toLowerCase();
@@ -108,12 +108,12 @@ describe('Thinai understanding evaluations', () => {
             aggregate Order {
                 root entity Order {
                     method ensureOwner() {
-                        invariant "An order must have an owner; check [[Order.Order.ensureOwner]]";
+                        invariant "An order must have an owner; check [[Order.Order.ensureOwner]]"
                     }
-                    identifier id: OrderId;
+                    identifier id: OrderId
                 }
                 value object OrderId {
-                    raw: string;
+                    raw: string
                 }
             }
         }`;

@@ -104,13 +104,16 @@ services or change aggregates:
 ```thinai
 bounded context Ordering
 in bounded context Ordering {
-    event OrderPlaced { orderId: string; }
-    read model OrderSummary { orderId: string; status: string; }
-    query repository OrderSummaryRepository serves OrderSummary;
+    event OrderPlaced { orderId: string }
+    read model OrderSummary {
+        orderId: string
+        status: string
+    }
+    query repository OrderSummaryRepository serves OrderSummary
     projector OrderSummaryProjector {
         method onOrderPlaced(source: OrderPlaced) {
-            projects OrderSummary;
-            behavior "Copy [[OrderPlaced.orderId]] into [[OrderSummary.orderId]] via [[OrderSummaryRepository]].";
+            projects OrderSummary
+            behavior "Copy [[OrderPlaced.orderId]] into [[OrderSummary.orderId]] via [[OrderSummaryRepository]]."
         }
     }
 }
@@ -120,20 +123,20 @@ in bounded context Ordering {
 bounded context Ordering
 in bounded context Ordering {
     event OrderPlaced {
-        orderId: OrderId;
+        orderId: OrderId
     }
 
     module Contracts {
-        exposes OrderPlacedV1;
+        exposes OrderPlacedV1
         integration event OrderPlacedV1 {
-            orderId: string;
+            orderId: string
         }
     }
 
     application service OrderApplication {
         method publishOrderPlaced(source: OrderPlaced) {
-            emits Contracts.OrderPlacedV1;
-            behavior "Map the internal event to the public contract.";
+            emits Contracts.OrderPlacedV1
+            behavior "Map the internal event to the public contract."
         }
     }
 }
@@ -146,12 +149,12 @@ and invoke a local command method:
 ```thinai
 application service ShipmentApplication {
     method createShipment(shipmentId: ShipmentId) {
-        invokes Shipment.Shipment.start;
+        invokes Shipment.Shipment.start
     }
 
     method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {
-        invokes createShipment;
-        behavior "Map the incoming event to the local command input.";
+        invokes createShipment
+        behavior "Map the incoming event to the local command input."
     }
 }
 ```
@@ -184,13 +187,13 @@ guards are linked prose, not executable data flow or conditions; each command
 must still enforce its own invariant:
 
 ```thinai
-actor Customer;
+actor Customer
 
 journey PlaceOrder {
     by Customer {
         invoke Ordering.OrderApplication.placeOrder
             with "orderId from [[Ordering.OrderSummary.orderId]] and items from the selected order lines"
-            when "The eligibility result [[Ordering.OrderQueries.canPlaceOrder.result.eligible]] allows this order.";
+            when "The eligibility result [[Ordering.OrderQueries.canPlaceOrder.result.eligible]] allows this order."
     }
 }
 ```

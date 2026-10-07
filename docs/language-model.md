@@ -3,36 +3,40 @@
 Thinai models strategic DDD concepts and lets you compose a bounded context
 across multiple `.tni` files.
 
+Separate sibling declarations and statements with line breaks, both at model
+scope and inside brace-delimited bodies. A single declaration or comma-separated
+list may wrap across lines, but the next sibling starts on a new line.
+
 ## A Small Model
 
 This example declares a subdomain, bounded context, aggregate, application-service command method, and domain event:
 
 ```thinai
-subdomain OrderManagement kind core;
+subdomain OrderManagement kind core
 
 bounded context Ordering realizes OrderManagement
 in bounded context Ordering {
     aggregate Order {
         root entity Order {
             method place() {
-                emits OrderPlaced;
-                transition status from Draft to Placed;
+                emits OrderPlaced
+                transition status from Draft to Placed
             }
-            identifier id: OrderId;
-            status: OrderStatus;
+            identifier id: OrderId
+            status: OrderStatus
         }
         value object OrderId {
-            raw: string;
+            raw: string
         }
         enum OrderStatus { Draft, Placed }
     }
-    repository OrderRepository manages Order.Order;
+    repository OrderRepository manages Order.Order
 
-    event OrderPlaced;
+    event OrderPlaced
 
     application service OrderApplication {
         method placeOrder(id: OrderId) {
-            invokes Order.Order.place;
+            invokes Order.Order.place
         }
     }
 }
@@ -48,7 +52,7 @@ Subdomains can be classified as `core`, `supporting`, or `generic`. A bounded
 context can realize one or more subdomains:
 
 ```thinai
-subdomain Fulfillment kind supporting;
+subdomain Fulfillment kind supporting
 
 bounded context Shipping realizes Fulfillment
 in bounded context Shipping {
@@ -71,16 +75,16 @@ shared kernel CommonTypes {}
 
 context map FulfillmentMap {
     customer Shipping {
-        integrationPatterns: ["AntiCorruptionLayer"];
+        integrationPatterns: ["AntiCorruptionLayer"]
     } -> supplier Ordering {
-        integrationPatterns: ["OpenHostService", "PublishedLanguage"];
+        integrationPatterns: ["OpenHostService", "PublishedLanguage"]
     }
 
-    partner Ordering <-> partner Shipping;
-    separateWays Ordering -x- Shipping;
+    partner Ordering <-> partner Shipping
+    separateWays Ordering -x- Shipping
 
     sharedKernel CommonTypes {
-        participants: [Ordering, Shipping];
+        participants: [Ordering, Shipping]
     }
 }
 ```
@@ -115,7 +119,7 @@ shared value objects for shared domain concepts.
 ```thinai
 shared kernel Common {
     value object Currency {
-        code: string;
+        code: string
     }
 }
 ```
@@ -129,16 +133,16 @@ declares it and using an `in bounded context` block:
 
 ```thinai
 // ordering-events.tni
-import "./context-catalog.tni";
-import "./ordering.tni";
+import "./context-catalog.tni"
+import "./ordering.tni"
 
 in bounded context Ordering {
     application service OrderApplication {
         method placeOrder(id: OrderId) {
-            invokes Order.Order.place;
+            invokes Order.Order.place
         }
     }
-    event OrderPlaced;
+    event OrderPlaced
 }
 ```
 
@@ -148,7 +152,7 @@ selected and imported when a cross-context IntegrationEvent is consumed. An
 alias applies to the selected component:
 
 ```thinai
-import { Ordering as Orders, Shipping } from "./contexts.tni";
+import { Ordering as Orders, Shipping } from "./contexts.tni"
 ```
 
 Cross-context IntegrationEvent use requires an imported context map with an

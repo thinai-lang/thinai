@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI } from 'langium';
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
+import type { Diagnostic } from 'vscode-languageserver-types';
 import type { Model } from 'thinai-language';
 import { ThinaiDocumentBuilder } from '../src/thinai-document-builder.js';
 import {
@@ -88,7 +89,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.parseResult.parserErrors).toHaveLength(0);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
         const model = document.parseResult.value as Model;
         type GuardedInvocation = {
             targets: Array<{ ref?: AstNode }>;
@@ -188,7 +189,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(checkDocumentValid(context) || checkDocumentValid(part) || checkDocumentValid(consumer)).toBeUndefined();
-        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const contextModel = context.parseResult.value as Model;
         const partModel = part.parseResult.value as Model;
         const consumerModel = consumer.parseResult.value as Model;
@@ -504,7 +505,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(shipping).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         type TestNode = {
             $type: string;
             name: string;
@@ -542,7 +543,7 @@ describe('Linking tests', () => {
         documents = [document];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
         const text = document.textDocument.getText();
         const pathOffset = text.indexOf('Order.Order', text.indexOf('repository'));
         const expected = [
@@ -582,7 +583,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.parseResult.parserErrors).toHaveLength(0);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
         const text = document.textDocument.getText();
         const paths = [
             {
@@ -642,7 +643,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(shipping.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(shipping).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const mirror = AstUtils.streamAst(shipping.parseResult.value).toArray()
             .find(node => node.$type === 'ValueObject' && 'name' in node && node.name === 'OrderId');
         expect(mirror && isValueObject(mirror)).toBe(true);
@@ -692,7 +693,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
         const text = document.textDocument.getText();
         for (const name of ['OrderSummary', 'CustomerSummary']) {
             const source = text.indexOf(name, text.indexOf('projects '));
@@ -729,7 +730,7 @@ describe('Linking tests', () => {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const text = document.textDocument.getText();
         const transition = text.indexOf('transition status');
         const targets = [
@@ -826,7 +827,7 @@ describe('Linking tests', () => {
 
         expect(method).toBeDefined();
         expect(finalTarget).toBe(method);
-        expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(ordering).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
 
         const methodOffset = ordering.textDocument.getText().indexOf('Order.Order.ensureOwner') + 'Order.Order.'.length;
         const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(ordering, {
@@ -864,7 +865,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(ordering.parseResult.parserErrors).toHaveLength(0);
-        expect(ordering.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(ordering).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
         const model = ordering.parseResult.value;
         expect(model && isModel(model)).toBe(true);
         if (!model || !isModel(model)) {
@@ -915,7 +916,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(document.parseResult.parserErrors).toHaveLength(0);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const model = document.parseResult.value;
         expect(model && isModel(model)).toBe(true);
         if (!model || !isModel(model)) {
@@ -1088,7 +1089,7 @@ describe('Linking tests', () => {
             'BoundedContext', 'Aggregate', 'EnumType', 'EnumValue',
             'BoundedContext', 'Repository'
         ]);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
 
         const text = document.textDocument.getText();
         const getDefinitionLinks = async (referenceOffset: number) => services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
@@ -1228,7 +1229,7 @@ describe('Linking tests', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(applicationPart.parseResult.parserErrors).toHaveLength(0);
-        expect(applicationPart.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(applicationPart).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         const text = applicationPart.textDocument.getText();
         const pathOffset = text.indexOf('Order.Order.place');
         const getDefinition = async (offset: number) => {
@@ -1386,4 +1387,9 @@ function checkDocumentValid(document: LangiumDocument): string | undefined {
         || document.parseResult.value === undefined && `ParseResult is 'undefined'.`
         || !isModel(document.parseResult.value) && `Root AST object is a ${document.parseResult.value.$type}, expected a 'Model'.`
         || undefined;
+}
+
+function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
+    // These fixtures focus on linking; line-break policy is covered separately.
+    return (document.diagnostics ?? []).filter(diagnostic => diagnostic.code !== 'line-break-required');
 }

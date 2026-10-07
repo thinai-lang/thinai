@@ -21,6 +21,7 @@ import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
     isEnumType,
+    isBoundedContext,
     isDomainEvent,
     isEventEmission,
     isEnumValue,
@@ -30,12 +31,16 @@ import {
     isJourneyStep,
     isMethod,
     isMethodInvocation,
+    isModule,
     isParameter,
     isSpecificationTextPart,
-    isTransition
+    isTransition,
+    isSubdomain,
+    isValueObject
 } from './generated/ast.js';
 import { getExportedName, ThinaiScopeProvider } from './thinai-scope.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
+import { isLineSeparatedSibling } from './thinai-layout.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
@@ -165,10 +170,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 typeof item.label !== 'string' || !optionalLabels.has(item.label)
             );
             items.push(...optionalClauseCompletions);
-            return {
+            return this.filterSameLineSiblingCompletions(document, params.position, {
                 isIncomplete: defaultCompletion?.isIncomplete ?? false,
                 items
-            };
+            }, optionalClauseCompletions.map(item => item.label));
         }
         const constrainedValueCompletions = [
             ...this.getInitialStateCompletions(document, params.position),
@@ -177,19 +182,97 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const importContext = this.getImportPathContext(document, params.position);
         if (!importContext) {
             if (constrainedValueCompletions.length === 0) {
-                return defaultCompletion;
+                return this.filterSameLineSiblingCompletions(document, params.position, defaultCompletion);
             }
-            return {
+            return this.filterSameLineSiblingCompletions(document, params.position, {
                 isIncomplete: defaultCompletion?.isIncomplete ?? false,
                 items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions]
-            };
+            });
         }
 
         const importItems = await this.getImportPathCompletions(document, importContext.path, importContext.pathStart);
-        return {
+        return this.filterSameLineSiblingCompletions(document, params.position, {
             isIncomplete: defaultCompletion?.isIncomplete ?? false,
             items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions, ...importItems]
+        });
+    }
+
+    private filterSameLineSiblingCompletions(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined,
+        extraAllowedKeywords: string[] = []
+    ): CompletionList | undefined {
+        if (!completion) {
+            return undefined;
+        }
+        const sibling = this.getSameLineSiblingAt(document, position);
+        if (!sibling) {
+            return completion;
+        }
+        const allowed = new Set([
+            ...this.getSameLineContinuationKeywords(sibling, document, position),
+            ...extraAllowedKeywords
+        ]);
+        return {
+            ...completion,
+            items: completion.items.filter(item => item.kind !== CompletionItemKind.Keyword || allowed.has(item.label))
         };
+    }
+
+    private getSameLineSiblingAt(document: LangiumDocument, position: Position): AstNode | undefined {
+        const model = document.parseResult.value;
+        if (!model) {
+            return undefined;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const currentLine = position.line;
+        const text = document.textDocument.getText();
+        let best: AstNode | undefined;
+        let bestEnd = -1;
+        for (const node of AstUtils.streamAst(model)) {
+            const cstNode = node.$cstNode;
+            if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset || cstNode.range.end.line !== currentLine) {
+                continue;
+            }
+            if (/[\r\n]/.test(text.slice(cstNode.end, offset))) {
+                continue;
+            }
+            if (cstNode.end > bestEnd) {
+                best = node;
+                bestEnd = cstNode.end;
+            }
+        }
+        return best;
+    }
+
+    private getSameLineContinuationKeywords(node: AstNode, document: LangiumDocument, position: Position): string[] {
+        if (isBoundedContext(node)) {
+            return node.subdomains.length === 0 ? ['realizes'] : [];
+        }
+        if (isSubdomain(node)) {
+            return node.kind === undefined ? ['kind'] : [];
+        }
+        if (isModule(node)) {
+            return node.dependencies.length === 0 ? ['depends'] : [];
+        }
+        if (isValueObject(node)) {
+            return node.mirrors === undefined ? ['mirrors'] : [];
+        }
+        if (isField(node) && isEntity(node.$container) && !node.optional && node.initialState === undefined && isEnumType(node.type?.ref)) {
+            return ['initial'];
+        }
+        if (isMethod(node) && !node.returnPrimitive && !node.returnType && !node.returnCollection) {
+            const start = node.$cstNode?.offset;
+            if (start === undefined) {
+                return [];
+            }
+            const source = document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
+            if (source.trimEnd().endsWith(')')) {
+                return ['returns'];
+            }
+        }
+        return [];
     }
 
     private getOptionalClauseCompletions(document: LangiumDocument, position: Position): CompletionItem[] {

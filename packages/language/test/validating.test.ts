@@ -21,6 +21,33 @@ afterEach(async () => {
 });
 
 describe('Validating', () => {
+    test('requires line breaks between sibling declarations and body statements', async () => {
+        const compact = await parse(`bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { method place() { invariant "An order exists" behavior "Place it" } identifier id: OrderId status: Status } value object OrderId { raw: string } enum Status { Draft, Placed } }}`);
+        const compactLayoutErrors = compact.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required') ?? [];
+        expect(compactLayoutErrors.length).toBeGreaterThanOrEqual(3);
+
+        const multiline = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            invariant "An order exists"
+                            behavior "Place it"
+                        }
+                        identifier id: OrderId
+                        status: Status
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    enum Status { Draft, Placed }
+                }
+            }
+        `);
+        expect(multiline.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required')).toEqual([]);
+    });
+
     test('accepts aggregate effects and an application-service command', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
@@ -48,7 +75,7 @@ describe('Validating', () => {
                 event OrderAudited
             }
         `);
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('requires identifier fields to reference value objects', async () => {
@@ -107,7 +134,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows the aggregate root to coordinate a child-entity transition', async () => {
@@ -138,7 +165,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('validates a state graph from its declared initial state', async () => {
@@ -157,7 +184,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows the same transition in different methods', async () => {
@@ -231,7 +258,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('rejects unreachable states from the declared initial state', async () => {
@@ -301,7 +328,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('rejects DataObject inputs to entity and value-object constructors', async () => {
@@ -506,7 +533,7 @@ describe('Validating', () => {
         `);
 
         expect(document.parseResult.parserErrors).toHaveLength(0);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
     });
 
     test('prevents child entities from crossing into application-service signatures', async () => {
@@ -677,7 +704,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
     });
 
     test('prevents domain services from returning aggregate entities', async () => {
@@ -708,7 +735,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
     });
 
     test('prevents a context-level domain service from invoking a child entity directly', async () => {
@@ -760,7 +787,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('does not require repository choreography in application-service methods', async () => {
@@ -779,7 +806,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows application services to orchestrate commands and cross-aggregate query reads', async () => {
@@ -830,7 +857,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('supports read models, projectors, command journeys, and descriptive guards', async () => {
@@ -887,7 +914,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows nested data objects but rejects entity and read-model fields', async () => {
@@ -928,7 +955,7 @@ describe('Validating', () => {
             }
         `);
 
-        const errors = document.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => String(diagnostic.message)) ?? [];
+        const errors = semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => String(diagnostic.message));
         expect(errors).toContain('A projector method must declare at least one read model with projects.');
         expect(errors).toContain('The projects clause is allowed only in projector methods.');
     });
@@ -987,7 +1014,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows a factory to create different aggregate roots with different methods', async () => {
@@ -1009,7 +1036,7 @@ describe('Validating', () => {
         `);
 
         expect(document.parseResult.parserErrors).toHaveLength(0);
-        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
     });
 
     test('allows read queries and descriptive delete commands without repository choreography', async () => {
@@ -1039,7 +1066,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows query services to read aggregate repositories without query projections', async () => {
@@ -1061,7 +1088,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('allows integration-event handlers without an after-commit clause', async () => {
@@ -1078,7 +1105,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('rejects an integration-event payload that exposes an entity', async () => {
@@ -1119,7 +1146,7 @@ describe('Validating', () => {
             }
         `);
 
-        expect(checkDocumentValid(document) || document.diagnostics?.map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
     test('requires module-nested integration events to be exposed before cross-context use', async () => {
@@ -1193,7 +1220,7 @@ describe('Validating', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(
-            checkDocumentValid(shipping) || shipping.diagnostics?.map(diagnosticToString).join('\n')
+            checkDocumentValid(shipping) || semanticDiagnostics(shipping).map(diagnosticToString).join('\n')
         ).toEqual(expect.stringContaining('A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.'));
     });
 
@@ -1239,7 +1266,7 @@ describe('Validating', () => {
                 }
             }
         `);
-        expect(valid.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(valid).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
 
         const invalid = await parse(`
             shared kernel Common {
@@ -1266,7 +1293,7 @@ describe('Validating', () => {
                 sharedKernel Common { participants: [Ordering, Shipping] }
             }
         `);
-        expect(coLocated.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(coLocated).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
     });
 
     test('allows application services to invoke an imported shared-kernel service for participating contexts', async () => {
@@ -1307,7 +1334,7 @@ describe('Validating', () => {
         documents = [shared, contexts, map, consumer, nonParticipant];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
         expect(nonParticipant.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.'
         ))).toBe(true);
@@ -1407,7 +1434,7 @@ describe('Validating', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(canonical.parseResult.parserErrors).toHaveLength(0);
-        expect(directImport.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        expect(semanticDiagnostics(directImport).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
 });
@@ -1421,4 +1448,9 @@ function checkDocumentValid(document: LangiumDocument): string | undefined {
 
 function diagnosticToString(diagnostic: Diagnostic): string {
     return `[${diagnostic.range.start.line}:${diagnostic.range.start.character}..${diagnostic.range.end.line}:${diagnostic.range.end.character}]: ${diagnostic.message}`;
+}
+
+function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
+    // Most semantic-validation fixtures are compact; line-break policy has dedicated coverage.
+    return (document.diagnostics ?? []).filter(diagnostic => diagnostic.code !== 'line-break-required');
 }

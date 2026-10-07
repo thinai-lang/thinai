@@ -7,6 +7,7 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
 ## Core syntax
 
 - Thinai declarations and method-body clauses do not use semicolon terminators. Never add `;` after a declaration, field, or clause.
+- Start every sibling declaration and statement on its own line at model scope and inside brace-delimited bodies, including method and constructor bodies. Line breaks may wrap one declaration or a comma-separated list; they do not replace commas between list items.
 - The entry model can contain relative imports and top-level subdomains, bounded-context declarations and contributions, shared kernels, and context maps.
 - Declare subdomains with the exact form `subdomain Commerce kind core`; valid kinds are `core`, `supporting`, and `generic`. A bounded context can `realize` one or more declared subdomains. Keep strategic declarations at model scope. Imports are relative and explicit: select components when importing a multi-component file, and use an alias on the selected component when needed.
 - Declare a bounded context without braces, for example `bounded context Ordering realizes OrderManagement`. Put its members in one or more `in bounded context Ordering { ... }` blocks. Each contribution in another file must directly import the canonical declaration.

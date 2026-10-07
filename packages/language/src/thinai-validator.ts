@@ -80,6 +80,7 @@ import {
 import type { ThinaiServices } from './thinai-module.js';
 import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
+import { isLineSeparatedSibling } from './thinai-layout.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -107,7 +108,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         ApplicationService: validator.checkApplicationService,
         Method: validator.checkMethod,
         Transition: validator.checkTransition,
-        Model: validator.checkModelImports,
+        Model: [validator.checkModelImports, validator.checkModelLineBreaks],
         Module: validator.checkModule,
         Parameter: validator.checkParameter,
         QueryRepository: validator.checkQueryRepository,
@@ -227,6 +228,42 @@ export class ThinaiValidator {
                 } else {
                     names.set(declaration.name, declaration.node);
                 }
+            }
+        }
+    }
+
+    checkModelLineBreaks(model: Model, accept: ValidationAcceptor): void {
+        const siblings = new Map<AstNode, AstNode[]>();
+        for (const node of AstUtils.streamAst(model)) {
+            if (!node.$cstNode || !isLineSeparatedSibling(node) || !node.$container) {
+                continue;
+            }
+            const children = siblings.get(node.$container) ?? [];
+            children.push(node);
+            siblings.set(node.$container, children);
+        }
+
+        const textDocument = AstUtils.getDocument(model).textDocument;
+        const text = textDocument.getText();
+        for (const children of siblings.values()) {
+            children.sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
+            for (let index = 1; index < children.length; index++) {
+                const previous = children[index - 1]!;
+                const current = children[index]!;
+                const previousCst = previous.$cstNode!;
+                const currentCst = current.$cstNode!;
+                if (previous.$containerProperty === 'projects' && current.$containerProperty === 'projects' &&
+                    text.slice(previousCst.end, currentCst.offset).includes(',')) {
+                    continue;
+                }
+                if (previousCst.range.end.line < currentCst.range.start.line) {
+                    continue;
+                }
+                accept('error', 'Start each sibling declaration or statement on a new line.', {
+                    node: current,
+                    range: currentCst.range,
+                    code: 'line-break-required'
+                });
             }
         }
     }

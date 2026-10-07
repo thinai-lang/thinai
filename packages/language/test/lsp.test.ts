@@ -932,8 +932,14 @@ describe('LSP services', () => {
     });
 
     test('inserts optional clauses with required spacing at a completed path', async () => {
-        const text = `bounded context Ordering in bounded context Ordering {
-            application service OrderApplication { method validate() {} method placeOrder() { invokes validate } }
+        const text = `bounded context Ordering
+        in bounded context Ordering {
+            application service OrderApplication {
+                method validate()
+                method placeOrder() {
+                    invokes validate
+                }
+            }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/optional-clause-spacing.tni'), text
@@ -945,6 +951,10 @@ describe('LSP services', () => {
             textDocument: { uri: document.uri.toString() },
             position: document.textDocument.positionAt(offset)
         });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('when');
+        expect(labels).not.toContain('invokes');
+        expect(labels).not.toContain('emits');
         expect(completion?.items.find(item => item.label === 'when')?.textEdit).toMatchObject({
             newText: ' when',
             range: { start: document.textDocument.positionAt(offset), end: document.textDocument.positionAt(offset) }
@@ -956,10 +966,10 @@ describe('LSP services', () => {
         const cases = [
             { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker}` },
             { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
-            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering in bounded context Ordering { module Api ${marker} {} }` },
-            { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering in bounded context Ordering { aggregate Order { value object Base { raw: string } value object Mirror ${marker} { raw: string } } }` },
-            { name: 'method return type', keyword: 'returns', source: `bounded context Ordering in bounded context Ordering { application service Queries { method find() ${marker} } }` },
-            { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id: Id status: Status ${marker} } value object Id { raw: string } enum Status { Draft, Placed } } }` }
+            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering\nin bounded context Ordering { module Api ${marker} {} }` },
+            { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { value object Base { raw: string }\nvalue object Mirror ${marker} { raw: string } } }` },
+            { name: 'method return type', keyword: 'returns', source: `bounded context Ordering\nin bounded context Ordering { application service Queries { method find() ${marker} } }` },
+            { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { identifier id: Id\nstatus: Status ${marker} }\nvalue object Id { raw: string }\nenum Status { Draft, Placed } } }` }
         ];
 
         for (const [index, completionCase] of cases.entries()) {
@@ -969,6 +979,7 @@ describe('LSP services', () => {
                 URI.file(`/workspace/optional-keyword-${index}.tni`), text
             );
             documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
@@ -978,38 +989,65 @@ describe('LSP services', () => {
         }
     });
 
+    test('offers only realizes before a newline after a bounded-context declaration', async () => {
+        const sameLineText = 'bounded context Ordering ';
+        const sameLine = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/realizes-same-line-completion.tni'), sameLineText
+        );
+        documents.push(sameLine);
+        const sameLineCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(sameLine, {
+            textDocument: { uri: sameLine.uri.toString() },
+            position: sameLine.textDocument.positionAt(sameLineText.length)
+        });
+        expect(sameLineCompletion?.items.map(item => item.label)).toEqual(['realizes']);
+
+        const nextLineText = 'bounded context Ordering\n';
+        const nextLine = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/realizes-next-line-completion.tni'), nextLineText
+        );
+        documents.push(nextLine);
+        const nextLineCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(nextLine, {
+            textDocument: { uri: nextLine.uri.toString() },
+            position: nextLine.textDocument.positionAt(nextLineText.length)
+        });
+        const nextLineLabels = nextLineCompletion?.items.map(item => item.label) ?? [];
+        expect(nextLineLabels).toContain('realizes');
+        expect(nextLineLabels).toContain('bounded');
+        expect(nextLineLabels).toContain('in');
+    });
+
     test('offers the allowed declaration and method-body keywords in each block', async () => {
         const marker = '__completion_position__';
         const cases = [
             {
                 name: 'method body',
                 expected: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits', 'projects'],
-                source: `bounded context Ordering in bounded context Ordering { application service App { method execute() { ${marker} } } }`
+                source: `bounded context Ordering\nin bounded context Ordering { application service App { method execute() { ${marker} } } }`
             },
             {
                 name: 'constructor body',
                 expected: ['invariant', 'precondition', 'postcondition', 'behavior'],
-                source: `bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { constructor() { ${marker} } identifier id: OrderId } value object OrderId { raw: string } } }`
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { constructor() { ${marker} }\nidentifier id: OrderId }\nvalue object OrderId { raw: string } } }`
             },
             {
                 name: 'aggregate body',
                 expected: ['entity', 'value', 'enum', 'invariant'],
-                source: `bounded context Ordering in bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId } value object OrderId { raw: string } } }`
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId }\nvalue object OrderId { raw: string } } }`
             },
             {
                 name: 'module body',
                 expected: ['exposes', 'aggregate', 'application', 'domain', 'query'],
-                source: `bounded context Ordering in bounded context Ordering { module Api { ${marker} } }`
+                source: `bounded context Ordering\nin bounded context Ordering { module Api { ${marker} } }`
             },
             {
                 name: 'journey body',
                 expected: ['by'],
-                source: `actor Customer journey PlaceOrder { ${marker} }`
+                source: `actor Customer\njourney PlaceOrder { ${marker} }`
             },
             {
                 name: 'journey actor body',
                 expected: ['invoke'],
-                source: `actor Customer journey PlaceOrder { by Customer { ${marker} } }`
+                source: `actor Customer\njourney PlaceOrder { by Customer { ${marker} } }`
             },
             {
                 name: 'context map body',
