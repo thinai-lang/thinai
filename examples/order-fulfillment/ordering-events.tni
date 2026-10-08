@@ -2,6 +2,7 @@ import "./context-catalog.tni"
 import "./ordering.tni"
 
 actor Customer
+actor OrderManager
 
 in bounded context Ordering {
   application service OrderApplication {
@@ -14,7 +15,7 @@ in bounded context Ordering {
     }
 
     method publishOrderPlaced(source: OrderPlaced) {
-      emits Contracts.OrderPlacedV1
+      emits Contracts.OrderPlacedV1, Contracts.OrderPlacedAuditV1
       behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract."
     }
   }
@@ -35,7 +36,19 @@ in bounded context Ordering {
 
   data object PlaceOrderInput {
     orderId: OrderId
-    items: List<OrderLine>
+    items: List<OrderLineDetails>
+    deliveryAddress: DeliveryAddress
+    submittedAt: date
+  }
+
+  data object OrderLineDetails {
+    sku: string
+    quantities: Map<string, List<Set<number>>>
+  }
+
+  data object DeliveryAddress {
+    city: string
+    postalCode: string
   }
 
   data object PlaceOrderResult {
@@ -60,12 +73,18 @@ in bounded context Ordering {
     name: string
   }
 
+  read model OrderAuditSummary {
+    orderId: OrderId
+    status: OrderStatus
+  }
+
   query repository CustomerSummaryRepository serves CustomerSummary
+  query repository OrderAuditSummaryRepository serves OrderAuditSummary
 
   projector OrderSummaryProjector {
     method onOrderPlaced(source: OrderPlaced) {
-      projects OrderSummary
-      behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]] in [[OrderSummaryRepository]]."
+      projects OrderSummary, OrderAuditSummary
+      behavior "Project [[OrderPlaced.orderId]], [[OrderPlaced.customerId]], and [[OrderPlaced.status]] into [[OrderSummary.orderId]], [[OrderSummary.customerId]], and [[OrderSummary.status]] in [[OrderSummaryRepository]], then record [[OrderAuditSummary.status]]."
     }
   }
 
@@ -87,12 +106,17 @@ in bounded context Ordering {
   }
 
   module Contracts {
-    exposes OrderPlacedV1
+    exposes OrderPlacedV1, OrderPlacedAuditV1
 
     integration event OrderPlacedV1 {
       orderId: string
       customerId: string
       status: string
+    }
+
+    integration event OrderPlacedAuditV1 {
+      orderId: string
+      audit: string
     }
   }
 }
@@ -110,6 +134,12 @@ journey RegisterCustomerAndPlaceOrder {
     invoke Ordering.CustomerRegistration.registerCustomer
       with "id from the customer identifier and name from the registration form"
     invoke Ordering.OrderApplication.placeOrder
-      with "orderId from the selected order and items from the requested order lines"
+      with 'orderId from the selected order and items from the requested order lines'
+  }
+
+  by OrderManager {
+    invoke Ordering.OrderMaintenance.deleteDraftOrder
+      with "The draft order selected for removal"
+      when "The root confirms that the order is still a draft."
   }
 }

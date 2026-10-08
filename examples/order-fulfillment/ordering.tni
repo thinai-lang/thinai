@@ -1,4 +1,4 @@
-import "./context-catalog.tni"
+import './context-catalog.tni'
 import { CommonTypes as Common } from "./common-types.tni"
 import { FulfillmentMap } from "./context-map.tni"
 
@@ -37,7 +37,7 @@ in bounded context Ordering {
       }
 
       method addLine(line: OrderLine) {
-        behavior "Add the line quantity to the order's lines."
+        behavior 'Add the line quantity to the order\'s lines. The initial state is [[Ordering.Order.OrderStatus.Draft]], and \[[ is literal text.'
       }
 
       identifier id: OrderId
@@ -50,6 +50,8 @@ in bounded context Ordering {
       items: List<OrderItem>
       labels: Set<string>
       quantities: Map<string, number>
+      characteristics: Map<string, List<Set<string>>>
+      createdAt: date
       externalReference?: string
     }
 

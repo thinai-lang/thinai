@@ -1,18 +1,36 @@
 # Order Fulfillment Example
 
-This example demonstrates the complete Thinai model across multiple files.
+This single example folder demonstrates Thinai's language concepts through one
+coherent, multi-file Order Fulfillment model. The coverage index below points to
+the syntax variants so readers can review the language without switching
+examples.
 
 ## Files
 
-- `strategic.tni` defines core, supporting, and generic subdomains.
-- `context-catalog.tni` declares both canonical bounded contexts and imports their subdomains.
-- `ordering.tni` extends Ordering with tactical DDD types, an authorization domain service, a child entity with its own identity/state, behavior specifications, guarded event emissions, and a grouped transition that changes two status fields under one shared guard.
-- `ordering-events.tni` contributes separate command services for Order, data-object inputs and results, bounded-context query services whose repository prose is linked, read models, event projectors, an exposed integration contract, guarded method invocations, and user-started journeys with descriptive `with`/`when` text. `ordering.tni` declares the internal domain events.
-- `shipping.tni` extends Shipping with a local mirrored identifier, an integration-event handler method, and a same-context module dependency.
-- `context-map.tni` selectively imports Ordering and Shipping, maps their customer-supplier integration patterns, and connects them through the named `CommonTypes` shared kernel.
-- `common-types.tni` defines a shared-kernel value object and the `Role` enum used by both contexts.
+- `strategic.tni` defines all subdomain kinds and an unclassified subdomain.
+- `context-catalog.tni` declares canonical bounded contexts, including multiple and omitted realizations.
+- `ordering.tni` demonstrates aggregates, entities, value objects, enums, primitive and nested collection fields, constructors, all specification clauses, escaped specification markers, and grouped guarded transitions.
+- `ordering-events.tni` demonstrates nested data objects, services, repositories, factories, read models, projectors with multiple targets, multiple emitted contracts, and multi-actor journeys.
+- `shipping.tni` demonstrates a mirrored identifier, an integration-event handler, module exposures, and multiple module dependencies.
+- `context-map.tni` demonstrates every relationship form and every integration-pattern label.
+- `common-types.tni` defines shared-kernel values, services, and nested modules.
 
 The model demonstrates root and child entity identities and transitions, constructors that accept domain values, DataObjects kept at the application-service boundary, a grouped transition across two status fields with one shared descriptive guard, guarded method invocations, conditional emissions, application-service calls to aggregate-root and factory methods, multiple command services per aggregate, query projections reused across aggregates, event-driven projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive cross-context journeys. Application-service behavior specifications describe authorization as each method's first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, and module dependencies.
+
+## Language coverage index
+
+| Language feature | Example location |
+| --- | --- |
+| All subdomain kinds, an unkinded subdomain, and contexts with zero or multiple realizations | `strategic.tni`, `context-catalog.tni` |
+| Simple and component-selective imports, aliases, and qualified references | `ordering.tni`, `context-map.tni`, `ordering-events.tni`, `shipping.tni` |
+| Customer-supplier, partnership, separate-ways, and shared-kernel relationships; all integration-pattern labels | `context-map.tni` |
+| Shared-kernel value objects, enum, domain services, nested modules, and multiple exposures | `common-types.tni` |
+| `string`, `number`, `boolean`, and `date`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
+| Nested data objects, optional fields/parameters, identifiers, initial states, constructors, and mirrored value objects | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
+| Application/domain/query services, repositories, factories, projectors, read models, events, and exposed integration contracts | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
+| All behavior clauses, multiple emits/projects targets, guarded and grouped transitions, enum-value links | `ordering.tni`, `ordering-events.tni` |
+| Single- and double-quoted strings, line/block comments, and escaped `\[[` markers | `strategic.tni`, `common-types.tni`, `ordering.tni`, `context-map.tni` |
+| Multiple journey actors/steps with `with` and `when` descriptions | `ordering-events.tni` |
 
 ## Try It
 

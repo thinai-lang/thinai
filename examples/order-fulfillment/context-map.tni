@@ -1,4 +1,4 @@
-import { Ordering as Orders, Shipping } from "./context-catalog.tni"
+import { Ordering as Orders, Shipping, Billing as Finance } from "./context-catalog.tni"
 import { CommonTypes } from "./common-types.tni"
 
 context map FulfillmentMap {
@@ -7,6 +7,9 @@ context map FulfillmentMap {
   } -> supplier Orders {
     integrationPatterns: ["OpenHostService", "PublishedLanguage"]
   }
+
+  partner Orders { integrationPatterns: ["Conformist"] } <-> partner Finance { integrationPatterns: ["AntiCorruptionLayer"] }
+  separateWays Shipping -x- Finance
 
   sharedKernel CommonTypes {
     participants: [Orders, Shipping]

@@ -8,4 +8,32 @@ shared kernel CommonTypes {
     FulfillmentOperator,
     System
   }
+
+  /* Domain policies can live in the shared kernel alongside value types. */
+  domain service CurrencyConversion {
+    method convert(amount: number, rate: number) returns number
+  }
+
+  // A domain service may be declared without a method body.
+  domain service UnspecifiedPolicy
+
+  module SharedContracts {
+    exposes CorrelationId, TenantId
+
+    value object CorrelationId {
+      raw: string
+    }
+
+    value object TenantId {
+      raw: string
+    }
+
+    module Identifiers {
+      exposes ExternalId
+
+      value object ExternalId {
+        raw: string
+      }
+    }
+  }
 }

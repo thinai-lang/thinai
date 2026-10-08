@@ -62,14 +62,26 @@ in bounded context Shipping {
   }
 
   module Operations {
-    exposes TrackingCode
+    exposes TrackingCode, RoutingCode
 
     value object TrackingCode {
       raw: string
     }
+
+    value object RoutingCode {
+      raw: string
+    }
   }
 
-  module Fulfillment depends on Operations {
+  module AuditOperations {
+    exposes AuditCode
+
+    value object AuditCode {
+      raw: string
+    }
+  }
+
+  module Fulfillment depends on Operations, AuditOperations {
     value object ShipmentMetadata {
       trackingCode: TrackingCode
     }

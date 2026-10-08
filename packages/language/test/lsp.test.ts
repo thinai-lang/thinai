@@ -298,7 +298,7 @@ describe('LSP services', () => {
             }, misformattedSource);
 
         expect(edits.length).toBeGreaterThan(0);
-        expect(formatted).toContain('actor Customer\n\nin bounded context Ordering {');
+        expect(formatted).toContain('actor Customer\n\nactor OrderManager\n\nin bounded context Ordering {');
         expect(formatted).toContain('  application service OrderApplication {');
         expect(formatted).toContain('      emits Contracts.OrderPlacedV1');
         expect(formatted).toContain('      projects OrderSummary');
