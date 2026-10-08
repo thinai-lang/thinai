@@ -11,6 +11,15 @@ identifies a model element; it does not evaluate an expression or invoke the met
 quoted specifications remain unlinked text. Multiline quoted specifications
 dedent their content when a newline follows the opening quote.
 
+Use `invariant` for a domain rule that should hold for the relevant model
+element, `precondition` for what must hold before an operation, and
+`postcondition` for what the operation guarantees when it succeeds. Use
+`behavior` for a general human-readable description that does not frame the
+statement as a condition or guarantee. These clauses are optional and
+descriptive: Thinai does not execute them or verify that their text is true.
+Prefer not to repeat relationships already expressed by structured clauses such
+as `invokes`, `emits`, or `transition`.
+
 ## Aggregate Effects and Application Services
 
 An ordinary application-service method is a command operation. It coordinates
