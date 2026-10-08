@@ -7,7 +7,7 @@ relationships, and behavioral intent in a shared, navigable model. It models
 strategic and tactical DDD, aggregates, application services, events, and journeys.
 Thinai uses braces for blocks and does not use semicolon terminators.
 
-For topic-based introductions, see the [Thinai language guides](../../docs/README.md)
+For topic-based introductions, see the [Thinai language guides](https://thinai-lang.github.io/)
 and the [complete Order Fulfillment example](../../examples/order-fulfillment/README.md).
 
 ## File Model

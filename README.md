@@ -11,8 +11,8 @@ formatting, and import quick fixes for `.tni` files.
 
 ## Get started
 
-- Explore the [language guides](./docs/README.md) for strategic and tactical
-  modeling, events, and behavior.
+- Explore the [language guides](https://thinai-lang.github.io/) for strategic and
+  tactical modeling, events, and behavior.
 - Browse the [Order Fulfillment example](./examples/order-fulfillment/README.md)
   for a complete multi-file model.
 - See the [Thinai language package](./packages/language/README.md),
