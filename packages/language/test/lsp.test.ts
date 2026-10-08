@@ -1532,6 +1532,7 @@ bounded context Billing realizes Payments`;
             module Consumer {
                 data object Request { code: PrivateC }
             }
+            value object RootRequest { code: PrivateC }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/module-private-completion.tni'), text
@@ -1545,15 +1546,26 @@ bounded context Billing realizes Payments`;
             position: document.textDocument.positionAt(offset)
         });
         expect(completion?.items.some(item => item.label === 'PrivateCode')).toBe(false);
+        const rootOffset = text.lastIndexOf('PrivateC') + 'PrivateC'.length;
+        const rootCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(rootOffset)
+        });
+        expect(rootCompletion?.items.some(item => item.label === 'PrivateCode')).toBe(false);
 
         const allowedText = `bounded context Shipping in bounded context Shipping {
+            value object RootCode { raw: string }
             module Producer {
                 exposes ExposedCode
                 value object ExposedCode { raw: string }
             }
             module Consumer depends on Producer {
-                data object Request { code: ExposedC }
+                data object Request {
+                    code: ExposedC
+                    rootCode: RootC
+                }
             }
+            value object RootRequest { code: ExposedC }
         }`;
         const allowedDocument = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/module-exposed-completion.tni'), allowedText
@@ -1566,6 +1578,18 @@ bounded context Billing realizes Payments`;
             position: allowedDocument.textDocument.positionAt(allowedOffset)
         });
         expect(allowedCompletion?.items.some(item => item.label === 'ExposedCode')).toBe(true);
+        const rootTypeOffset = allowedText.indexOf('rootCode: RootC') + 'rootCode: RootC'.length;
+        const moduleRootTypeCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(allowedDocument, {
+            textDocument: { uri: allowedDocument.uri.toString() },
+            position: allowedDocument.textDocument.positionAt(rootTypeOffset)
+        });
+        expect(moduleRootTypeCompletion?.items.some(item => item.label === 'RootCode')).toBe(true);
+        const exposedRootOffset = allowedText.lastIndexOf('ExposedC') + 'ExposedC'.length;
+        const exposedRootCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(allowedDocument, {
+            textDocument: { uri: allowedDocument.uri.toString() },
+            position: allowedDocument.textDocument.positionAt(exposedRootOffset)
+        });
+        expect(exposedRootCompletion?.items.some(item => item.label === 'ExposedCode')).toBe(true);
     });
 
     test('filters private cross-context types and domain events from completion', async () => {

@@ -220,7 +220,10 @@ that routing matters.
 
 Modules organize declarations within one bounded context or shared kernel.
 Use `exposes` to list declarations available to other modules, and `depends on`
-to declare a module dependency:
+to declare a module dependency. Declarations outside modules are visible to
+modules by default. In the other direction, a context-level declaration may
+reference a module declaration only when its module exposes it. A reference
+between two different modules requires both an exposure and a dependency.
 
 ```thinai
 bounded context Shipping
@@ -231,6 +234,10 @@ in bounded context Shipping {
         value object TrackingCode {
             raw: string
         }
+    }
+
+    value object ShipmentRouting {
+        trackingCode: TrackingCode
     }
 
     module Fulfillment depends on Operations {

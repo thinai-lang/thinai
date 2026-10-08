@@ -1409,6 +1409,42 @@ describe('Validating', () => {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Map type requires both a key and a value type'))).toBe(true);
     });
 
+    test('requires context-level references to module declarations to use exposed members', async () => {
+        const document = await parse(`
+            bounded context Example in bounded context Example {
+                module Private {
+                    value object PrivateCode {
+                        raw: string
+                    }
+                }
+                module Public {
+                    exposes PublicCode
+                    value object PublicCode {
+                        raw: string
+                    }
+                }
+                value object RootCode {
+                    raw: string
+                }
+                module Consumer {
+                    data object ModuleUse {
+                        code: RootCode
+                    }
+                }
+                value object RootUsePrivate {
+                    code: PrivateCode
+                }
+                value object RootUsePublic {
+                    code: PublicCode
+                }
+            }
+        `);
+        const visibilityErrors = document.diagnostics?.filter(diagnostic =>
+            String(diagnostic.message).includes('A declaration outside a module may reference a module declaration only when its module exposes it.')
+        ) ?? [];
+        expect(visibilityErrors).toHaveLength(1);
+    });
+
     test('rejects circular module dependencies', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

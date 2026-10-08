@@ -1277,6 +1277,22 @@ export class ThinaiValidator {
                 });
                 return;
             }
+            if (!sourceModule && targetModule && !isModule(target) &&
+                getOwningContextName(referenceInfo.container) === getOwningContextName(targetModule)) {
+                const exposureTarget = isField(target) || isParameter(target) || isEnumValue(target)
+                    ? target.$container
+                    : target;
+                const exposed = targetModule.exposures.some(exposure =>
+                    exposure.declarations.some(declaration => declaration.target.ref === exposureTarget)
+                );
+                if (!exposed) {
+                    accept('error', 'A declaration outside a module may reference a module declaration only when its module exposes it.', {
+                        node: referenceInfo.container,
+                        property: referenceInfo.property
+                    });
+                    return;
+                }
+            }
             if (!sourceModule || !targetModule || sourceModule === targetModule || isModule(target)) {
                 return;
             }

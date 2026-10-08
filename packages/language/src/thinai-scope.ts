@@ -945,6 +945,18 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 getOwningContextName(dependencySource) === getOwningContextName(target) &&
                 !this.moduleDependsTransitivelyOn(target, dependencySource);
         }
+        if (!sourceModule && targetModule && !isModule(target) &&
+            getOwningContextName(context.container) === getOwningContextName(targetModule)) {
+            const exposedTarget = isField(target) || isParameter(target) || isEnumValue(target)
+                ? target.$container
+                : target;
+            const exposed = targetModule.exposures.some(exposure =>
+                exposure.declarations.some(declaration => declaration.target.ref === exposedTarget)
+            );
+            if (!exposed) {
+                return false;
+            }
+        }
         if (sourceModule && targetModule && sourceModule !== targetModule && !isModule(target) &&
             getOwningContextName(sourceModule) === getOwningContextName(targetModule)) {
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);

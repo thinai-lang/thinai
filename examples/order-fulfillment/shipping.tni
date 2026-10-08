@@ -73,6 +73,10 @@ in bounded context Shipping {
     }
   }
 
+  value object ShipmentRouting {
+    routingCode: RoutingCode
+  }
+
   module AuditOperations {
     exposes AuditCode
 

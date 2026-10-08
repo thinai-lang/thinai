@@ -567,7 +567,10 @@ describe('Linking tests', () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/qualified-list-paths.tni'),
             `bounded context Ordering in bounded context Ordering {
-                module Contracts { event OrderPlaced }
+                module Contracts {
+                    exposes OrderPlaced
+                    event OrderPlaced
+                }
                 module Api depends on Ordering.Contracts { value object ApiCode { raw: string } }
                 aggregate Order {
                     root entity Order {
