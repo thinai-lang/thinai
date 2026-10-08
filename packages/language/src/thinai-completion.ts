@@ -29,6 +29,7 @@ import {
     isField,
     isIntegrationEvent,
     isJourneyStep,
+    isModel,
     isMethod,
     isMethodInvocation,
     isModule,
@@ -38,13 +39,13 @@ import {
     isSubdomain,
     isValueObject
 } from './generated/ast.js';
-import { getExportedName, ThinaiScopeProvider } from './thinai-scope.js';
+import { getExportedName, isInSharedKernel, ThinaiScopeProvider } from './thinai-scope.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { isLineSeparatedSibling } from './thinai-layout.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: ['"', '/', '.', '[', 'w']
+        triggerCharacters: [...'abcdefghijklmnopqrstuvwxyz', ' ', '"', '/', '.', '[']
     };
 
     private readonly thinaiServices: ThinaiServices;
@@ -179,22 +180,244 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ...this.getInitialStateCompletions(document, params.position),
             ...this.getIntegrationPatternCompletions(document, params.position)
         ];
+        const inProgressKeywordCompletions = this.getInProgressKeywordCompletions(document, params.position);
+        const blockKeywords = this.getEnclosingBlockKeywordCompletions(document, params.position);
+        const modelGapKeywords = this.getModelGapKeywordCompletions(document, params.position);
+        const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
+        const completionWithBlockKeywords = this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords);
+        const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
+        const completionWithKeywords = this.withCompoundKeywordCompletions(completionWithModelGapKeywords, inProgressKeywordCompletions);
         const importContext = this.getImportPathContext(document, params.position);
         if (!importContext) {
-            if (constrainedValueCompletions.length === 0) {
-                return this.filterSameLineSiblingCompletions(document, params.position, defaultCompletion);
+            if (constrainedValueCompletions.length === 0 && inProgressKeywordCompletions.length === 0) {
+                return this.filterSameLineSiblingCompletions(document, params.position, completionWithKeywords);
             }
             return this.filterSameLineSiblingCompletions(document, params.position, {
-                isIncomplete: defaultCompletion?.isIncomplete ?? false,
-                items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions]
-            });
+                isIncomplete: completionWithKeywords?.isIncomplete ?? false,
+                items: [...(completionWithKeywords?.items ?? []), ...constrainedValueCompletions]
+            }, inProgressKeywordCompletions.map(item => item.label));
         }
 
         const importItems = await this.getImportPathCompletions(document, importContext.path, importContext.pathStart);
         return this.filterSameLineSiblingCompletions(document, params.position, {
-            isIncomplete: defaultCompletion?.isIncomplete ?? false,
-            items: [...(defaultCompletion?.items ?? []), ...constrainedValueCompletions, ...importItems]
+            isIncomplete: completionWithKeywords?.isIncomplete ?? false,
+            items: [...(completionWithKeywords?.items ?? []), ...constrainedValueCompletions, ...importItems]
+        }, inProgressKeywordCompletions.map(item => item.label));
+    }
+
+    private withCompoundKeywordCompletions(
+        completion: CompletionList | undefined,
+        continuations: CompletionItem[]
+    ): CompletionList | undefined {
+        if (!completion) {
+            return continuations.length > 0 ? { isIncomplete: false, items: continuations } : undefined;
+        }
+
+        if (continuations.length > 0) {
+            const items = completion.items.filter(item => item.kind !== CompletionItemKind.Keyword);
+            const seen = new Set(items.map(item => item.label));
+            items.push(...continuations.filter(item => !seen.has(item.label)));
+            return { ...completion, items };
+        }
+
+        const phrases: Record<string, string[]> = {
+            in: ['in bounded context'],
+            bounded: ['bounded context'],
+            context: ['context map'],
+            shared: ['shared kernel'],
+            application: ['application service'],
+            domain: ['domain service'],
+            query: ['query repository', 'query service'],
+            read: ['read model'],
+            data: ['data object'],
+            value: ['value object'],
+            root: ['root entity'],
+            integration: ['integration event'],
+            depends: ['depends on']
+        };
+        const items = completion.items.flatMap(item => {
+            if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string' ||
+                !Object.prototype.hasOwnProperty.call(phrases, item.label)) {
+                return [item];
+            }
+            return phrases[item.label].map(phrase => ({
+                ...item,
+                label: phrase,
+                insertText: phrase,
+                textEdit: item.textEdit ? { ...item.textEdit, newText: phrase } : item.textEdit
+            }));
         });
+        const seen = new Set(items.map(item => item.label));
+        items.push(...continuations.filter(item => !seen.has(item.label)));
+        return { ...completion, items };
+    }
+
+    private addFallbackKeywords(
+        completion: CompletionList | undefined,
+        fallbacks: CompletionItem[]
+    ): CompletionList | undefined {
+        if (fallbacks.length === 0) {
+            return completion;
+        }
+        const hasKeyword = completion?.items.some(item => item.kind === CompletionItemKind.Keyword) === true;
+        if (hasKeyword) {
+            return completion;
+        }
+        const items = completion?.items ?? [];
+        return { isIncomplete: completion?.isIncomplete ?? false, items: [...items, ...fallbacks] };
+    }
+
+    private addSupplementaryKeywords(
+        completion: CompletionList | undefined,
+        additions: CompletionItem[]
+    ): CompletionList | undefined {
+        if (additions.length === 0) {
+            return completion;
+        }
+        const items = completion?.items ?? [];
+        const labels = new Set(items.map(item => item.label));
+        return {
+            isIncomplete: completion?.isIncomplete ?? false,
+            items: [...items, ...additions.filter(item => !labels.has(item.label))]
+        };
+    }
+
+    private getModelGapKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const children = [...model.imports, ...model.declarations]
+            .map(node => node.$cstNode)
+            .filter((node): node is NonNullable<typeof node> => node !== undefined)
+            .sort((left, right) => left.offset - right.offset);
+        if (children.some(node => node.offset <= offset && offset < node.end)) {
+            return [];
+        }
+        const previousEnd = children
+            .filter(node => node.end <= offset)
+            .reduce((end, node) => Math.max(end, node.end), 0);
+        const nextStart = children
+            .filter(node => node.offset >= offset)
+            .reduce((start, node) => Math.min(start, node.offset), text.length);
+        const before = text.slice(previousEnd, offset);
+        const after = text.slice(offset, nextStart);
+        const gap = text.slice(previousEnd, nextStart);
+        if (!/^\s*$/.test(before) || !/^\s*$/.test(after) || !/[\r\n]/.test(gap)) {
+            return [];
+        }
+        return this.getTopLevelKeywordCompletions(document, position);
+    }
+
+    private getEnclosingBlockKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const labelsByType: Record<string, string[]> = {
+            BoundedContextPart: [
+                'application service', 'query service', 'projector', 'aggregate', 'domain service', 'repository',
+                'query repository', 'factory', 'event', 'integration event', 'module', 'root entity', 'entity',
+                'value object', 'enum', 'read model', 'data object'
+            ],
+            SharedKernel: ['value object', 'enum', 'domain service', 'module'],
+            SharedKernelModule: ['exposes', 'domain service', 'module', 'value object', 'enum'],
+            Module: [
+                'exposes', 'application service', 'query service', 'projector', 'aggregate', 'domain service',
+                'repository', 'query repository', 'factory', 'event', 'integration event', 'module',
+                'root entity', 'entity', 'value object', 'enum', 'read model', 'data object'
+            ],
+            ContextMap: ['customer', 'partner', 'separateWays', 'sharedKernel'],
+            Aggregate: ['entity', 'root entity', 'value object', 'enum', 'invariant'],
+            Entity: ['constructor', 'method'],
+            ValueObject: ['constructor', 'method'],
+            ApplicationService: ['method'],
+            DomainService: ['method'],
+            QueryService: ['method'],
+            Projector: ['method'],
+            Factory: ['method'],
+            Method: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits', 'projects'],
+            Constructor: ['invariant', 'precondition', 'postcondition', 'behavior'],
+            Journey: ['by'],
+            JourneyActor: ['invoke']
+        };
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const container = AstUtils.streamAst(root)
+            .filter(candidate => labelsByType[candidate.$type] !== undefined)
+            .filter(candidate => {
+                const cstNode = candidate.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+            })
+            .toArray()
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))
+            .find(candidate => {
+                const cstNode = candidate.$cstNode!;
+                const beforeCursor = text.slice(cstNode.offset, offset);
+                if (!beforeCursor.includes('{')) {
+                    return false;
+                }
+                return !AstUtils.streamAst(candidate).toArray().some(child => {
+                    if (child.$container !== candidate) {
+                        return false;
+                    }
+                    const childCst = child.$cstNode;
+                    return childCst !== undefined && childCst.offset <= offset && offset < childCst.end;
+                });
+            });
+        if (!container) {
+            return [];
+        }
+        const labels = isModule(container) && isInSharedKernel(container)
+            ? labelsByType.SharedKernelModule
+            : labelsByType[container.$type];
+        return this.createKeywordCompletions(labels);
+    }
+
+    private filterSharedKernelModuleKeywords(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        const root = document.parseResult.value;
+        if (!root || !completion) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const module = AstUtils.streamAst(root)
+            .filter(isModule)
+            .filter(isInSharedKernel)
+            .filter(candidate => {
+                const cstNode = candidate.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+            })
+            .toArray()
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))[0];
+        if (!module) {
+            return completion;
+        }
+        const allowed = new Set(['exposes', 'domain', 'domain service', 'depends', 'depends on', 'on', 'module', 'value', 'value object', 'enum']);
+        return {
+            ...completion,
+            items: completion.items.filter(item => {
+                if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string') {
+                    return true;
+                }
+                const firstWord = item.label.split(/\s+/)[0];
+                return allowed.has(item.label) || allowed.has(firstWord);
+            })
+        };
+    }
+
+    private createKeywordCompletions(labels: string[]): CompletionItem[] {
+        return labels.map(label => ({
+            label,
+            kind: CompletionItemKind.Keyword,
+            detail: 'Language keyword',
+            sortText: '0'
+        }));
     }
 
     private filterSameLineSiblingCompletions(
@@ -203,58 +426,112 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         completion: CompletionList | undefined,
         extraAllowedKeywords: string[] = []
     ): CompletionList | undefined {
-        if (!completion) {
-            return undefined;
-        }
         const sibling = this.getSameLineSiblingAt(document, position);
         if (!sibling) {
             return completion;
         }
-        const allowed = new Set([
-            ...this.getSameLineContinuationKeywords(sibling, document, position),
-            ...this.getInProgressKeywordContinuations(document, position),
-            ...extraAllowedKeywords
-        ]);
+        const continuations = this.getSameLineContinuationKeywords(sibling, document, position);
+        const allowed = new Set([...continuations, ...extraAllowedKeywords]);
+        if (allowed.size === 0) {
+            if (sibling.$container?.$type !== 'Model') {
+                return completion;
+            }
+            const topLevelItems = this.getTopLevelKeywordCompletions(document, position);
+            const items = completion?.items ?? [];
+            const labels = new Set(items.map(item => item.label));
+            return {
+                isIncomplete: completion?.isIncomplete ?? false,
+                items: [...items, ...topLevelItems.filter(item => !labels.has(item.label))]
+            };
+        }
+        if (!completion) {
+            return undefined;
+        }
         return {
             ...completion,
-            items: completion.items.filter(item => item.kind !== CompletionItemKind.Keyword || allowed.has(item.label))
+            items: completion.items.filter(item => {
+                if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string') {
+                    return true;
+                }
+                const firstWord = item.label.split(/\s+/)[0];
+                return allowed.has(item.label) || allowed.has(firstWord);
+            })
         };
     }
 
-    private getInProgressKeywordContinuations(document: LangiumDocument, position: Position): string[] {
+    private getTopLevelKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const needsLeadingSpace = offset > 0 && !/\s/.test(text[offset - 1]);
+        return [
+            'import', 'shared kernel', 'subdomain', 'bounded context', 'in bounded context',
+            'context map', 'actor', 'journey'
+        ].map(label => ({
+            label,
+            kind: CompletionItemKind.Keyword,
+            detail: 'Top-level declaration',
+            sortText: '0',
+            textEdit: {
+                range: { start: position, end: position },
+                newText: `${needsLeadingSpace ? ' ' : ''}${label}`
+            }
+        }));
+    }
+
+    private getInProgressKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
         const prefix = text.slice(lineStart, offset);
-        const words = prefix.trimEnd().split(/\s+/);
-        if (words.at(-1)?.toLowerCase() === 'context' && words.at(-2)?.toLowerCase() !== 'bounded') {
-            return ['map'];
-        }
         const continuations: ReadonlyArray<readonly [RegExp, string[]]> = [
-            [/\bin\s+bounded\s*$/i, ['context']],
-            [/\bbounded\s*$/i, ['context']],
-            [/\bshared\s*$/i, ['kernel']],
-            [/\bapplication\s*$/i, ['service']],
-            [/\broot\s*$/i, ['entity']],
-            [/\bvalue\s*$/i, ['object']],
-            [/\bread\s*$/i, ['model']],
-            [/\bdata\s*$/i, ['object']],
-            [/\bdomain\s*$/i, ['service']],
-            [/\bquery\s*$/i, ['repository', 'service']],
-            [/\bintegration\s*$/i, ['event']],
-            [/\bdepends\s*$/i, ['on']],
-            [/\bimport\s+\{[^}]*\}\s*$/i, ['from']],
-            [/\brepository\s+[_a-zA-Z][\w_]*\s*$/i, ['manages']],
-            [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s*$/i, ['serves']],
-            [/\btransition\s+[_a-zA-Z][\w_]*\s*$/i, ['from']],
-            [/\btransition\s+[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s*$/i, ['to']],
-            [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*$/i, ['participants']],
-            [/\bcustomer\s+[^\n]*?->\s*$/i, ['supplier']],
-            [/\bpartner\s+[^\n]*?<->\s*$/i, ['partner']],
-            [/\b(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*$/i, ['integrationPatterns']]
+            [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context']],
+            [/\bbounded\s+([\p{L}_]*)$/iu, ['context']],
+            [/\bshared\s+([\p{L}_]*)$/iu, ['kernel']],
+            [/\bapplication\s+([\p{L}_]*)$/iu, ['service']],
+            [/\broot\s+([\p{L}_]*)$/iu, ['entity']],
+            [/\bvalue\s+([\p{L}_]*)$/iu, ['object']],
+            [/\bread\s+([\p{L}_]*)$/iu, ['model']],
+            [/\bdata\s+([\p{L}_]*)$/iu, ['object']],
+            [/\bdomain\s+([\p{L}_]*)$/iu, ['service']],
+            [/\bquery\s+([\p{L}_]*)$/iu, ['repository', 'service']],
+            [/\bintegration\s+([\p{L}_]*)$/iu, ['event']],
+            [/\bdepends\s+([\p{L}_]*)$/iu, ['on']],
+            [/\bcontext\s+([\p{L}_]*)$/iu, ['map']],
+            [/\bsubdomain\s+[_a-zA-Z][\w_]*\s+kind\s+([\p{L}_]*)$/iu, ['core', 'supporting', 'generic']],
+            [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from']],
+            [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['serves']],
+            [/\brepository\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['manages']],
+            [/\btransition\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['from']],
+            [/\btransition\s+[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['to']],
+            [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*([\p{L}_]*)$/iu, ['participants']],
+            [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
+            [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner']],
+            [/\b(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*([\p{L}_]*)$/iu, ['integrationPatterns']]
         ];
 
-        return continuations.find(([pattern]) => pattern.test(prefix))?.[1] ?? [];
+        const match = continuations
+            .map(([pattern, keywords]) => ({ match: pattern.exec(prefix), keywords }))
+            .find(candidate => candidate.match !== null);
+        if (!match?.match) {
+            return [];
+        }
+        if (match.keywords[0] === 'map' && /\bbounded\s+context\s+[\p{L}_]*$/iu.test(prefix)) {
+            return [];
+        }
+        const typedPrefix = match.match[1];
+        const start = offset - typedPrefix.length;
+        return match.keywords
+            .filter(keyword => keyword.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .map(keyword => ({
+                label: keyword,
+                kind: CompletionItemKind.Keyword,
+                detail: 'Keyword continuation',
+                sortText: '0',
+                textEdit: {
+                    range: { start: document.textDocument.positionAt(start), end: position },
+                    newText: keyword
+                }
+            }));
     }
 
     private getSameLineSiblingAt(document: LangiumDocument, position: Position): AstNode | undefined {
@@ -270,6 +547,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         for (const node of AstUtils.streamAst(model)) {
             const cstNode = node.$cstNode;
             if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset || cstNode.range.end.line !== currentLine) {
+                continue;
+            }
+            if (isModule(node) && text.slice(cstNode.offset, cstNode.end).trimEnd().endsWith('{')) {
                 continue;
             }
             if (/[\r\n]/.test(text.slice(cstNode.end, offset))) {
@@ -291,10 +571,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return node.kind === undefined ? ['kind'] : [];
         }
         if (isModule(node)) {
-            return node.dependencies.length === 0 ? ['depends'] : [];
+            const start = node.$cstNode?.offset;
+            const source = start === undefined
+                ? ''
+                : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
+            return node.dependencies.length === 0 && !source.includes('{') ? ['depends'] : [];
         }
         if (isValueObject(node)) {
-            return node.mirrors === undefined ? ['mirrors'] : [];
+            const start = node.$cstNode?.offset;
+            const source = start === undefined
+                ? ''
+                : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
+            return node.mirrors === undefined && !source.includes('{') ? ['mirrors'] : [];
         }
         if (isField(node) && isEntity(node.$container) && !node.optional && node.initialState === undefined && isEnumType(node.type?.ref)) {
             return ['initial'];

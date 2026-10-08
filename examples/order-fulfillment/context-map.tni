@@ -8,7 +8,12 @@ context map FulfillmentMap {
     integrationPatterns: ["OpenHostService", "PublishedLanguage"]
   }
 
-  partner Orders { integrationPatterns: ["Conformist"] } <-> partner Finance { integrationPatterns: ["AntiCorruptionLayer"] }
+  partner Orders {
+    integrationPatterns: ["Conformist"]
+  } <-> partner Finance {
+    integrationPatterns: ["AntiCorruptionLayer"]
+  }
+
   separateWays Shipping -x- Finance
 
   sharedKernel CommonTypes {

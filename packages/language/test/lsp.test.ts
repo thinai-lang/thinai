@@ -6,7 +6,7 @@ import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
-import { CompletionItemKind, SymbolKind } from 'vscode-languageserver';
+import { CompletionItemKind, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -381,7 +381,8 @@ describe('LSP services', () => {
         });
         const labels = completion?.items.map(item => item.label) ?? [];
         expect(labels).toEqual(expect.arrayContaining([
-            'aggregate', 'application', 'domain', 'repository', 'factory', 'projector', 'query', 'module'
+            'aggregate', 'application service', 'domain service', 'repository', 'factory', 'projector',
+            'query service', 'query repository', 'module', 'value object', 'read model', 'data object'
         ]));
         expect(labels).not.toContain('capability');
     });
@@ -966,7 +967,7 @@ describe('LSP services', () => {
         const cases = [
             { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker}` },
             { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
-            { name: 'module dependencies', keyword: 'depends', source: `bounded context Ordering\nin bounded context Ordering { module Api ${marker} {} }` },
+            { name: 'module dependencies', keyword: 'depends on', source: `bounded context Ordering\nin bounded context Ordering { module Api ${marker} {} }` },
             { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { value object Base { raw: string }\nvalue object Mirror ${marker} { raw: string } } }` },
             { name: 'method return type', keyword: 'returns', source: `bounded context Ordering\nin bounded context Ordering { application service Queries { method find() ${marker} } }` },
             { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { identifier id: Id\nstatus: Status ${marker} }\nvalue object Id { raw: string }\nenum Status { Draft, Placed } } }` }
@@ -1012,8 +1013,8 @@ describe('LSP services', () => {
         });
         const nextLineLabels = nextLineCompletion?.items.map(item => item.label) ?? [];
         expect(nextLineLabels).toContain('realizes');
-        expect(nextLineLabels).toContain('bounded');
-        expect(nextLineLabels).toContain('in');
+        expect(nextLineLabels).toContain('bounded context');
+        expect(nextLineLabels).toContain('in bounded context');
     });
 
     test('keeps required keyword continuations available on the same line', async () => {
@@ -1051,6 +1052,264 @@ describe('LSP services', () => {
         }
     });
 
+    test('completes subdomain kind values and partial values', async () => {
+        const cases = [
+            { source: 'subdomain Commerce kind ', expected: ['core', 'supporting', 'generic'] },
+            { source: 'subdomain Commerce kind s', expected: ['supporting'] }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/subdomain-kind-completion-${index}.tni`), completionCase.source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(completionCase.source.length)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const expected of completionCase.expected) {
+                expect(labels, completionCase.source).toContain(expected);
+                expect(labels.filter(label => label === expected), `${completionCase.source}: ${expected}`).toHaveLength(1);
+            }
+            if (completionCase.source.endsWith('kind s')) {
+                expect(completion?.items.find(item => item.label === 'supporting')?.textEdit).toMatchObject({
+                    newText: 'supporting',
+                    range: {
+                        start: document.textDocument.positionAt(completionCase.source.length - 1),
+                        end: document.textDocument.positionAt(completionCase.source.length)
+                    }
+                });
+            }
+        }
+    });
+
+    test('completes partial multiword keywords and replaces only their typed prefix', async () => {
+        const cases = [
+            ['bounded c', 'context'],
+            ['in bounded c', 'context'],
+            ['shared k', 'kernel'],
+            ['application s', 'service'],
+            ['domain s', 'service'],
+            ['query r', 'repository'],
+            ['query s', 'service'],
+            ['read m', 'model'],
+            ['data o', 'object'],
+            ['value o', 'object'],
+            ['root e', 'entity'],
+            ['integration e', 'event'],
+            ['depends o', 'on'],
+            ['context m', 'map'],
+            ['import { Foo } f', 'from'],
+            ['repository Orders m', 'manages'],
+            ['query repository Orders s', 'serves'],
+            ['transition status f', 'from'],
+            ['transition status from Draft t', 'to'],
+            ['sharedKernel Common { p', 'participants'],
+            ['customer Ordering -> s', 'supplier'],
+            ['partner Ordering <-> p', 'partner'],
+            ['customer Ordering { i', 'integrationPatterns']
+        ] as const;
+
+        for (const [index, [source, expected]] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/partial-keyword-${index}.tni`), source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(source.length)
+            });
+            const item = completion?.items.find(candidate => candidate.label === expected);
+            expect(item, source).toBeDefined();
+            expect(completion?.items.filter(candidate => candidate.label === expected), source).toHaveLength(1);
+            expect(item?.textEdit).toMatchObject({
+                newText: expected,
+                range: {
+                    start: document.textDocument.positionAt(source.length - 1),
+                    end: document.textDocument.positionAt(source.length)
+                }
+            });
+        }
+    });
+
+    test('inserts multiword keywords as complete phrases', async () => {
+        const cases = [
+            { source: '', label: 'shared kernel' },
+            { source: '', label: 'bounded context' },
+            { source: 'bounded context X\nin bounded context X { aggregate A { ', label: 'value object' }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/compound-keyword-${index}.tni`), completionCase.source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(completionCase.source.length)
+            });
+            const item = completion?.items.find(candidate => candidate.label === completionCase.label);
+            expect(item, completionCase.source).toBeDefined();
+            expect(item?.textEdit).toMatchObject({ newText: completionCase.label });
+        }
+    });
+
+    test('keeps top-level keywords available after a completed bounded-context declaration', async () => {
+        const text = 'bounded context Ordering realizes OrderManagement ';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/top-level-after-context-completion.tni'), text
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(text.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('bounded context');
+        expect(labels).toContain('subdomain');
+        expect(labels).toContain('context map');
+    });
+
+    test('offers top-level keywords in a gap before a later declaration', async () => {
+        const marker = '__completion_position__';
+        const source = `import "./strategic.tni"
+
+bounded context Ordering realizes OrderManagement, SharedCapabilities
+
+${marker}
+bounded context Shipping realizes Fulfillment
+
+bounded context Billing realizes Payments`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-catalog-gap-completion.tni'), text
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('bounded context');
+        expect(labels).toContain('subdomain');
+        expect(labels).toContain('shared kernel');
+        expect(labels).toContain('context map');
+    });
+
+    test('completes module members after exposure declarations without throwing', async () => {
+        const marker = '__completion_position__';
+        const source = `shared kernel Common {
+            value object CorrelationId { raw: string }
+            value object TenantId { constructor(raw: string) {} raw: string }
+            module Identity {
+                exposes CorrelationId, TenantId
+                ${marker}
+            }
+        }`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/module-exposure-completion.tni'), text
+        );
+        documents.push(document);
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('value object');
+        expect(labels).toContain('domain service');
+        expect(labels).not.toContain('aggregate');
+        expect(labels).not.toContain('application service');
+    });
+
+    test('restricts module keyword suggestions inside shared kernels', async () => {
+        const marker = '__completion_position__';
+        const source = `shared kernel Common {
+            value object CorrelationId { raw: string }
+            module Types { ${marker} }
+        }`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-kernel-module-completion.tni'), text
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toEqual(expect.arrayContaining([
+            'exposes', 'domain service', 'module', 'value object', 'enum'
+        ]));
+        for (const unsupported of ['aggregate', 'application service', 'data object', 'entity', 'repository']) {
+            expect(labels).not.toContain(unsupported);
+        }
+    });
+
+    test('does not treat inherited object properties as compound keywords', () => {
+        const provider = new ThinaiCompletionProvider(services.Thinai) as unknown as {
+            withCompoundKeywordCompletions: (
+                completion: CompletionList,
+                continuations: CompletionItem[]
+            ) => CompletionList | undefined
+        };
+        const completion: CompletionList = {
+            isIncomplete: false,
+            items: [{ label: 'constructor', kind: CompletionItemKind.Keyword }]
+        };
+        expect(provider.withCompoundKeywordCompletions(completion, []).items).toEqual(completion.items);
+    });
+
+    test('offers valid sibling elements after closing braces on the same or next line', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'module in bounded context, same line',
+                prefix: 'bounded context Ordering\nin bounded context Ordering {\n    module Api {}',
+                suffix: '\n}',
+                expected: ['aggregate', 'application service']
+            },
+            {
+                name: 'module in bounded context, next line',
+                prefix: 'bounded context Ordering\nin bounded context Ordering {\n    module Api {}\n    ',
+                suffix: '\n}',
+                expected: ['aggregate', 'application service']
+            },
+            {
+                name: 'module in shared kernel',
+                prefix: 'shared kernel Common {\n    module Api {}',
+                suffix: '\n}',
+                expected: ['value object', 'domain service']
+            },
+            {
+                name: 'value object in aggregate',
+                prefix: 'bounded context Ordering\nin bounded context Ordering { aggregate A { value object V { raw: string }',
+                suffix: ' } }',
+                expected: ['entity', 'enum']
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const source = `${completionCase.prefix}${marker}${completionCase.suffix}`;
+            const offset = source.indexOf(marker);
+            const text = source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/closing-brace-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const expected of completionCase.expected) {
+                expect(labels, completionCase.name).toContain(expected);
+            }
+        }
+    });
+
     test('offers the allowed declaration and method-body keywords in each block', async () => {
         const marker = '__completion_position__';
         const cases = [
@@ -1066,13 +1325,18 @@ describe('LSP services', () => {
             },
             {
                 name: 'aggregate body',
-                expected: ['entity', 'value', 'enum', 'invariant'],
+                expected: ['entity', 'value object', 'enum', 'invariant'],
                 source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId }\nvalue object OrderId { raw: string } } }`
             },
             {
                 name: 'module body',
-                expected: ['exposes', 'aggregate', 'application', 'domain', 'query'],
+                expected: ['exposes', 'aggregate', 'application service', 'domain service', 'query service'],
                 source: `bounded context Ordering\nin bounded context Ordering { module Api { ${marker} } }`
+            },
+            {
+                name: 'unfinished module body on opening-brace line',
+                expected: ['aggregate', 'application service', 'domain service', 'query service'],
+                source: `bounded context Ordering\nin bounded context Ordering { module Api { ${marker}`
             },
             {
                 name: 'journey body',
@@ -1098,7 +1362,9 @@ describe('LSP services', () => {
                 URI.file(`/workspace/block-completion-${index}.tni`), text
             );
             documents.push(document);
-            expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
+            if (!completionCase.name.startsWith('unfinished')) {
+                expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
+            }
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(offset)

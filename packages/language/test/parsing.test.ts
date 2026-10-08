@@ -295,6 +295,24 @@ describe('Parsing tests', () => {
         expect(singleAggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join('')).toBe('\n\t');
     });
 
+    test('parses a single-quoted behavior with an escaped apostrophe and literal reference marker', async () => {
+        const document = await parse(String.raw`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method addLine(line: OrderLine) {
+                        behavior 'Add the line quantity to the order\'s lines. The initial state is [[Ordering.Order.OrderStatus.Draft]], and \[[ is literal text.'
+                    }
+                    identifier id: OrderId
+                }
+                value object OrderLine { quantity: number }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft }
+            }
+        }`);
+        expect(document.parseResult.lexerErrors).toEqual([]);
+        expect(document.parseResult.parserErrors).toEqual([]);
+    });
+
     test('allows escaping a literal reference marker in a behavior specification', async () => {
         const document = await parse(
             'bounded context Escape in bounded context Escape { application service Runner { method execute() { behavior "Literal \\[[NotAReference.method]] stays text" } } aggregate Run { root entity Run { identifier id: RunId } value object RunId { raw: string } } }'

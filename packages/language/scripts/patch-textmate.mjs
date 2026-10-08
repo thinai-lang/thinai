@@ -12,6 +12,7 @@ grammar.patterns = grammar.patterns.filter(pattern => !pattern.name?.startsWith(
 const strings = [
     {
         name: 'string.quoted.double.thinai',
+        applyEndPatternLast: true,
         begin: '"',
         beginCaptures: { '0': { name: 'punctuation.definition.string.begin.thinai' } },
         end: '"',
@@ -23,6 +24,7 @@ const strings = [
     },
     {
         name: 'string.quoted.single.thinai',
+        applyEndPatternLast: true,
         begin: "'",
         beginCaptures: { '0': { name: 'punctuation.definition.string.begin.thinai' } },
         end: "'",
@@ -51,6 +53,11 @@ grammar.repository['linked-reference'] = {
             match: '[_a-zA-Z][\\w_]*(?:\\.[_a-zA-Z][\\w_]*)*'
         }
     ]
+};
+
+grammar.repository['string-character-escape'] = {
+    name: 'constant.character.escape.thinai',
+    match: '\\\\.'
 };
 
 const output = `${JSON.stringify(grammar, null, 2)}\n`;

@@ -56,4 +56,23 @@ describe('TextMate highlighting', () => {
         expect(scopes(results[2])).not.toContain('variable.other.reference.thinai');
         expect(scopes(results[2])).toContain('string.quoted.double.thinai');
     });
+
+    test('keeps a single-quoted behavior open across escaped quotes and markers', () => {
+        const line = String.raw`behavior 'Add the line quantity to the order\'s lines. The initial state is [[Ordering.Order.OrderStatus.Draft]], and \[[ is literal text.'`;
+        const tokens = grammar!.tokenizeLine(line, INITIAL).tokens;
+        const scopesAt = (needle: string) => {
+            const index = line.indexOf(needle);
+            return tokens.find(token => token.startIndex <= index && index < token.endIndex)?.scopes ?? [];
+        };
+        const escapedQuoteIndex = line.indexOf("\\'", line.indexOf('order'));
+        const escapedQuoteScopes = tokens.find(token =>
+            token.startIndex <= escapedQuoteIndex && escapedQuoteIndex < token.endIndex
+        )?.scopes ?? [];
+
+        expect(scopesAt('s lines')).toContain('string.quoted.single.thinai');
+        expect(escapedQuoteScopes).toContain('constant.character.escape.thinai');
+        expect(scopesAt('OrderStatus')).toContain('variable.other.reference.thinai');
+        expect(scopesAt('is literal')).toContain('string.quoted.single.thinai');
+        expect(scopesAt('is literal')).not.toContain('variable.other.reference.thinai');
+    });
 });
