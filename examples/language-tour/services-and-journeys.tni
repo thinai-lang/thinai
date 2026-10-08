@@ -1,0 +1,85 @@
+import "./foundations.tni"
+import "./context-map.tni"
+import "./types-and-behavior.tni"
+
+in bounded context Ordering {
+  application service PurchaseCommands {
+    method submit(input: Api.PurchaseInput) returns PurchaseResult {
+      precondition "The input contains at least one line."
+      invokes Purchase.Purchase.submit
+        when 'The purchase is ready.'
+      behavior "Submit [[Ordering.Api.Address.city]] and inspect [[Ordering.Purchase.PurchaseState.Submitted]]."
+      postcondition "The purchase is submitted."
+    }
+
+    method publish(source: PurchaseSubmitted) {
+      emits Contracts.PurchasePublished
+      behavior "Publish the submitted state [[Ordering.PurchaseSubmitted.state]]."
+    }
+  }
+
+  domain service Pricing {
+    method total(amount: number, adjusted?: boolean) returns number {
+      invariant "Prices cannot be negative."
+      behavior "Calculate a total for [[amount]]."
+    }
+  }
+
+  factory PurchaseFactory {
+    method create(id: PurchaseId, createdOn: date) returns Purchase.Purchase
+  }
+
+  repository PurchaseRepository manages Purchase.Purchase
+
+  data object PurchaseResult {
+    id: PurchaseId
+    submitted: boolean
+  }
+
+  read model PurchaseSummary {
+    id: PurchaseId
+    state: Purchase.PurchaseState
+  }
+
+  read model PurchaseAudit {
+    id: PurchaseId
+    state: Purchase.PurchaseState
+  }
+
+  query repository PurchaseSummaryRepository serves PurchaseSummary
+
+  query service PurchaseQueries {
+    method find(id: PurchaseId) returns List<PurchaseSummary> {
+      behavior "Read [[PurchaseSummaryRepository]] for [[id]]."
+    }
+  }
+
+  projector PurchaseProjector {
+    method onPurchaseSubmitted(source: PurchaseSubmitted) {
+      projects PurchaseSummary, PurchaseAudit
+      behavior "Project [[Ordering.PurchaseSubmitted.state]] into [[PurchaseSummary.state]] and [[PurchaseAudit.state]]."
+    }
+  }
+
+  module Contracts {
+    exposes PurchasePublished
+
+    integration event PurchasePublished {
+      purchaseId: string
+      state: string
+    }
+  }
+}
+
+journey SubmitPurchase {
+  by Customer {
+    invoke Ordering.PurchaseCommands.submit
+      with 'Address from [[Ordering.Api.Address.city]]'
+      when "The customer is authorized."
+  }
+
+  by Operator {
+    invoke Ordering.PurchaseCommands.submit
+      with "The purchase details from the review queue"
+  }
+}

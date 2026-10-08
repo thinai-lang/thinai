@@ -1,0 +1,8 @@
+import { Ordering as Orders, Shipping, Billing as Finance, CommonTypes as Common } from './foundations.tni'
+
+context map LanguageTourMap {
+  customer Orders { integrationPatterns: ["Conformist", "AntiCorruptionLayer"] } -> supplier Finance { integrationPatterns: ["OpenHostService", "PublishedLanguage"] }
+  partner Orders { integrationPatterns: ["Conformist"] } <-> partner Shipping { integrationPatterns: ["AntiCorruptionLayer"] }
+  separateWays Shipping -x- Finance
+  sharedKernel Common { participants: [Orders, Shipping] }
+}

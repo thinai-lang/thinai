@@ -1,0 +1,107 @@
+import './foundations.tni'
+
+/* Multi-line comments are hidden from the parser as well. */
+
+in bounded context Ordering {
+  module Types {
+    exposes Currency
+
+    value object Currency {
+      amount: number
+      code: string
+    }
+
+    module NestedTypes {
+      exposes LabelSet
+
+      data object LabelSet {
+        values: Set<string>
+      }
+    }
+  }
+
+  module ExtraTypes {
+    value object Marker {
+      raw: string
+    }
+  }
+
+  module Api depends on Types, ExtraTypes {
+    exposes PurchaseInput
+
+    data object LineInput {
+      sku: string
+      quantities: Map<string, List<Set<number>>>
+      currency: Currency
+    }
+
+    data object Address {
+      city: string
+      createdOn: date
+    }
+
+    data object PurchaseInput {
+      address: Address
+      lines: List<LineInput>
+      labels: List<Set<string>>
+      note?: string
+    }
+  }
+
+  aggregate Purchase {
+    root entity Purchase {
+      constructor(id: PurchaseId, createdOn: date, note?: string) {
+        invariant 'A purchase has an identifier.'
+        precondition "The identifier is present."
+        behavior 'A literal marker \[[not a link]] stays text; the initial state is [[Purchase.PurchaseState.Draft]].'
+        postcondition "The purchase is ready for submission."
+      }
+
+      method submit(retries?: number) returns string {
+        emits PurchaseSubmitted, PurchaseAudited
+          when "The purchase passes validation."
+        transition state from Draft to Submitted,
+                   lifecycle from Open to Complete
+          when "All required details are present."
+        behavior 'Record the state [[Purchase.PurchaseState.Submitted]].'
+      }
+
+      identifier id: PurchaseId
+      createdOn: date
+      currency: Currency
+      state: PurchaseState initial Draft
+      lifecycle: PurchaseLifecycle initial Open
+      quantities: Map<string, List<Set<number>>>
+      active?: boolean
+    }
+
+    value object PurchaseId {
+      constructor(raw: string)
+      raw: string
+    }
+
+    value object MirroredPurchaseId mirrors Shipping.Shipment.ShipmentId {
+      raw: string
+    }
+
+    enum PurchaseState {
+      Draft,
+      Submitted
+    }
+
+    enum PurchaseLifecycle {
+      Open,
+      Complete
+    }
+
+    invariant "Every purchase has a recorded lifecycle."
+
+  }
+
+  event PurchaseSubmitted {
+    purchaseId: PurchaseId
+    state: PurchaseState
+  }
+
+  event PurchaseAudited
+}
