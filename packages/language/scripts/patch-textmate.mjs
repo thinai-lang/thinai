@@ -60,6 +60,77 @@ grammar.repository['string-character-escape'] = {
     match: '\\\\.'
 };
 
+const scopedDeclarations = [
+    { words: ['bounded', 'context'], scope: 'entity.name.namespace.thinai' },
+    { words: ['shared', 'kernel'], scope: 'entity.name.namespace.thinai' },
+    { words: ['context', 'map'], scope: 'entity.name.namespace.thinai' },
+    { words: ['subdomain'], scope: 'entity.name.namespace.thinai' },
+    { words: ['module'], scope: 'entity.name.namespace.thinai' },
+    { words: ['application', 'service'], scope: 'entity.name.class.thinai' },
+    { words: ['domain', 'service'], scope: 'entity.name.class.thinai' },
+    { words: ['query', 'service'], scope: 'entity.name.class.thinai' },
+    { words: ['query', 'repository'], scope: 'entity.name.interface.thinai' },
+    { words: ['root', 'entity'], scope: 'entity.name.class.thinai' },
+    { words: ['value', 'object'], scope: 'entity.name.type.thinai' },
+    { words: ['data', 'object'], scope: 'entity.name.type.thinai' },
+    { words: ['read', 'model'], scope: 'entity.name.type.thinai' },
+    { words: ['integration', 'event'], scope: 'entity.name.type.thinai' },
+    { words: ['aggregate'], scope: 'entity.name.class.thinai' },
+    { words: ['entity'], scope: 'entity.name.class.thinai' },
+    { words: ['event'], scope: 'entity.name.type.thinai' },
+    { words: ['repository'], scope: 'entity.name.interface.thinai' },
+    { words: ['projector'], scope: 'entity.name.class.thinai' },
+    { words: ['factory'], scope: 'entity.name.class.thinai' },
+    { words: ['method'], scope: 'entity.name.function.thinai' },
+    { words: ['journey'], scope: 'entity.name.function.thinai' },
+    { words: ['actor'], scope: 'entity.name.variable.thinai' }
+];
+
+const scopedNamePatterns = scopedDeclarations.map(({ words, scope }) => {
+    const captures = Object.fromEntries(words.map((_, index) => [
+        String(index + 1), { name: 'keyword.control.thinai' }
+    ]));
+    captures[String(words.length + 1)] = { name: scope };
+    const phrase = words.map(word => `(${word})`).join('\\s+');
+    return {
+        name: 'meta.declaration.thinai',
+        match: `\\b${phrase}\\s+([_a-zA-Z][\\w_]*)\\b`,
+        captures
+    };
+});
+
+const enumDeclaration = {
+    name: 'meta.enum.thinai',
+    begin: '\\b(enum)\\s+([_a-zA-Z][\\w_]*)\\s*(\\{)',
+    beginCaptures: {
+        '1': { name: 'keyword.control.thinai' },
+        '2': { name: 'entity.name.type.thinai' },
+        '3': { name: 'punctuation.section.block.begin.thinai' }
+    },
+    end: '\\}',
+    endCaptures: { '0': { name: 'punctuation.section.block.end.thinai' } },
+    patterns: [
+        { include: '#comments' },
+        { name: 'constant.other.enum-member.thinai', match: '\\b[_a-zA-Z][\\w_]*\\b' },
+        { name: 'punctuation.separator.comma.thinai', match: ',' }
+    ]
+};
+
+const additionalScopes = [
+    enumDeclaration,
+    { name: 'storage.type.thinai', match: '\\b(?:string|number|boolean|date|List|Set|Map)\\b' },
+    { name: 'constant.language.thinai', match: '\\b(?:core|supporting|generic)\\b' },
+    { name: 'keyword.operator.relationship.thinai', match: '<->|->|-x-' },
+    { name: 'variable.other.property.thinai', match: '\\b[_a-zA-Z][\\w_]*\\??(?=\\s*:)' }
+];
+
+grammar.patterns = grammar.patterns.filter(pattern => pattern.name !== 'meta.declaration.thinai');
+const keywordPatternIndex = grammar.patterns.findIndex(pattern => pattern.name === 'keyword.control.thinai');
+if (keywordPatternIndex < 0) {
+    throw new Error('Generated Thinai TextMate grammar is missing its keyword pattern.');
+}
+grammar.patterns.splice(keywordPatternIndex, 0, ...scopedNamePatterns, ...additionalScopes);
+
 const output = `${JSON.stringify(grammar, null, 2)}\n`;
 if (output !== original) {
     await writeFile(grammarPath, output);

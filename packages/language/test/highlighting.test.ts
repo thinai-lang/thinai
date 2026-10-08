@@ -41,6 +41,41 @@ describe('TextMate highlighting', () => {
         expect(referenceStart.test('\\\\[[Order.Order.place]]')).toBe(true);
     });
 
+    test('scopes Thinai declaration names by their domain role', () => {
+        const examples = [
+            ['bounded context Ordering', 'Ordering', 'entity.name.namespace.thinai'],
+            ['aggregate Order', 'Order', 'entity.name.class.thinai'],
+            ['root entity OrderLine', 'OrderLine', 'entity.name.class.thinai'],
+            ['value object OrderId', 'OrderId', 'entity.name.type.thinai'],
+            ['event OrderPlaced', 'OrderPlaced', 'entity.name.type.thinai'],
+            ['repository OrderRepository', 'OrderRepository', 'entity.name.interface.thinai'],
+            ['method placeOrder', 'placeOrder', 'entity.name.function.thinai'],
+            ['actor Customer', 'Customer', 'entity.name.variable.thinai']
+        ] as const;
+
+        for (const [line, identifier, expectedScope] of examples) {
+            const tokens = grammar!.tokenizeLine(line, INITIAL).tokens;
+            const index = line.indexOf(identifier);
+            const scopes = tokens.find(token => token.startIndex <= index && index < token.endIndex)?.scopes ?? [];
+            expect(scopes, `${line} should scope ${identifier} as ${expectedScope}`).toContain(expectedScope);
+        }
+    });
+
+    test('scopes built-in types, fields, enum values, and relationship operators', () => {
+        const scopesOn = (line: string, identifier: string) => {
+            const tokens = grammar!.tokenizeLine(line, INITIAL).tokens;
+            const index = line.indexOf(identifier);
+            return tokens.find(token => token.startIndex <= index && index < token.endIndex)?.scopes ?? [];
+        };
+
+        expect(scopesOn('method placeOrder(id: OrderId)', 'id')).toContain('variable.other.property.thinai');
+        expect(scopesOn('enum OrderStatus { Draft, Placed }', 'OrderStatus')).toContain('entity.name.type.thinai');
+        expect(scopesOn('raw: string', 'string')).toContain('storage.type.thinai');
+        expect(scopesOn('items: List<OrderLine>', 'List')).toContain('storage.type.thinai');
+        expect(scopesOn('enum OrderStatus { Draft, Placed }', 'Draft')).toContain('constant.other.enum-member.thinai');
+        expect(scopesOn('customer Shipping -> supplier Ordering', '->')).toContain('keyword.operator.relationship.thinai');
+    });
+
     test('tokenizes linked references in both quote styles and ignores escaped markers', () => {
         expect(grammar).toBeDefined();
         const lines = [
