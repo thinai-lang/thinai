@@ -15,8 +15,10 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import {
     type Import,
+    type ContextMap,
     type Constructor,
     type DataObject,
+    type Exposure,
     type JourneyStep,
     type Method,
     type ReadModel,
@@ -267,6 +269,25 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return stream(candidates).filter(description =>
             this.isSupportedCandidate(context, this.getDescriptionNode(description))
         );
+    }
+
+    getContextMapBoundedContextCandidates(contextMap: ContextMap): AstNodeDescription[] {
+        const context = {
+            container: contextMap,
+            property: 'context',
+            reference: { $refText: '' } as unknown as ReferenceInfo['reference']
+        } as ReferenceInfo;
+        return this.getUnsegmentedScope(context, 'BoundedContext').getAllElements().toArray();
+    }
+
+    getExposureDeclarationCandidates(exposure: Exposure): AstNodeDescription[] {
+        const context = {
+            container: exposure,
+            property: 'declarations',
+            reference: { $refText: '' } as unknown as ReferenceInfo['reference']
+        } as ReferenceInfo;
+        const candidates = this.getUnsegmentedScope(context, 'NamedDeclaration').getAllElements();
+        return this.filterCompletionCandidates(context, candidates).toArray();
     }
 
     getPathCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] | undefined {

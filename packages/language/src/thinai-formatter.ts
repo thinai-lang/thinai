@@ -264,15 +264,20 @@ export class ThinaiFormatter extends AbstractFormatter {
             const model = node as AstNode & { imports?: AstNode[]; declarations?: AstNode[] };
             const declarations = model.declarations ?? [];
             const firstToSeparate = model.imports?.length ? 0 : 1;
-            if (declarations.length > firstToSeparate) {
-                formatter.nodes(...declarations.slice(firstToSeparate)).prepend(Formatting.newLines(2));
+            for (let index = firstToSeparate; index < declarations.length; index++) {
+                const previous = index > 0
+                    ? declarations[index - 1]
+                    : model.imports?.at(-1);
+                this.prependSiblingSpacing(formatter, previous, declarations[index]!, Formatting.newLines(2));
             }
         }
     }
 
     private separateSiblings(formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>, nodes?: AstNode[]): void {
         if (nodes && nodes.length > 1) {
-            formatter.nodes(...nodes.slice(1)).prepend(this.blankLineIndent());
+            for (let index = 1; index < nodes.length; index++) {
+                this.prependSiblingSpacing(formatter, nodes[index - 1], nodes[index]!, this.blankLineIndent());
+            }
         }
     }
 
@@ -282,7 +287,38 @@ export class ThinaiFormatter extends AbstractFormatter {
         next?: AstNode[]
     ): void {
         if (previous?.length && next?.length) {
-            formatter.node(next[0]).prepend(this.blankLineIndent());
+            this.prependSiblingSpacing(formatter, previous.at(-1), next[0]!, this.blankLineIndent());
+        }
+    }
+
+    private prependSiblingSpacing(
+        formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>,
+        previous: AstNode | undefined,
+        next: AstNode,
+        spacing: ReturnType<typeof Formatting.newLine>
+    ): void {
+        const parentCst = next.$container?.$cstNode;
+        const previousCst = previous?.$cstNode;
+        const nextCst = next.$cstNode;
+        if (!parentCst || !nextCst) {
+            formatter.node(next).prepend(spacing);
+            return;
+        }
+        const gapStart = previousCst?.end ?? parentCst.offset;
+        const leadingComments = this.getLeafNodes(parentCst).filter(comment =>
+            isLeafCstNode(comment) &&
+            (comment.tokenType.name === 'SL_COMMENT' || comment.tokenType.name === 'ML_COMMENT') &&
+            comment.offset >= gapStart && comment.end <= nextCst.offset &&
+            (!previousCst || comment.range.start.line > previousCst.range.end.line)
+        );
+        const firstLeadingComment = leadingComments[0];
+        if (firstLeadingComment) {
+            formatter.cst([firstLeadingComment]).prepend({
+                ...spacing,
+                options: { ...spacing.options, priority: (spacing.options.priority ?? 0) + 1 }
+            });
+        } else {
+            formatter.node(next).prepend(spacing);
         }
     }
 

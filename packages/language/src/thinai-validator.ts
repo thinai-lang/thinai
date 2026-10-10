@@ -93,7 +93,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         CollectionType: validator.checkCollectionType,
         Constructor: validator.checkConstructor,
         ContextRelationship: validator.checkContextRelationship,
-        ContextMap: validator.checkNamedDeclaration,
+        ContextMap: [validator.checkNamedDeclaration, validator.checkContextMapRelationships],
         DataObject: validator.checkDataObject,
         DomainEvent: validator.checkDomainEvent,
         DomainService: validator.checkNamedDeclaration,
@@ -121,6 +121,16 @@ export function registerValidationChecks(services: ThinaiServices): void {
         ValueObject: validator.checkValueObject
     };
     registry.register(checks, validator);
+}
+
+type ContextRelationshipPairKind = 'customerSupplier' | 'partnership' | 'separateWays' | 'sharedKernel';
+
+interface ContextRelationshipPairSemantics {
+    key: string;
+    identity: string;
+    signature: string;
+    kind: ContextRelationshipPairKind;
+    name: string;
 }
 
 export class ThinaiValidator {
@@ -227,6 +237,57 @@ export class ThinaiValidator {
                     });
                 } else {
                     names.set(declaration.name, declaration.node);
+                }
+            }
+        }
+        this.checkImportedContextMapConsistency(model, accept);
+    }
+
+    checkContextMapRelationships(contextMap: ContextMap, accept: ValidationAcceptor): void {
+        const relationshipsByPair = new Map<string, ContextRelationshipPairSemantics[]>();
+        const reported = new Set<ContextRelationship>();
+        for (const relationship of contextMap.relationships) {
+            for (const pair of this.getRelationshipPairSemantics(relationship)) {
+                const existing = relationshipsByPair.get(pair.key) ?? [];
+                const duplicate = existing.some(previous => previous.identity === pair.identity);
+                const conflict = existing.some(previous => !this.areRelationshipPairDefinitionsCompatible(previous, pair));
+                if ((duplicate || conflict) && !reported.has(relationship)) {
+                    const message = duplicate
+                        ? `A relationship between ${pair.name} may only be declared once in context map '${contextMap.name}'.`
+                        : `Conflicting relationships between ${pair.name} in context map '${contextMap.name}'.`;
+                    accept('error', message, { node: relationship, property: 'relationships' });
+                    reported.add(relationship);
+                }
+                relationshipsByPair.set(pair.key, [...existing, pair]);
+            }
+        }
+    }
+
+    private checkImportedContextMapConsistency(model: Model, accept: ValidationAcceptor): void {
+        const relationshipsByPair = new Map<string, Array<{
+            map: ContextMap;
+            pair: ContextRelationshipPairSemantics;
+        }>>();
+        const reported = new Set<ContextRelationship>();
+
+        for (const contextMap of this.getImportedContextMaps(model)) {
+            for (const relationship of contextMap.relationships) {
+                for (const pair of this.getRelationshipPairSemantics(relationship)) {
+                    const existing = relationshipsByPair.get(pair.key) ?? [];
+                    for (const previous of existing) {
+                        if (previous.map === contextMap || this.areRelationshipPairDefinitionsCompatible(previous.pair, pair)) {
+                            continue;
+                        }
+                        if (!reported.has(relationship)) {
+                            accept('error', `Imported context maps '${previous.map.name}' and '${contextMap.name}' define conflicting relationships between ${pair.name}.`, {
+                                node: relationship,
+                                property: 'relationships'
+                            });
+                            reported.add(relationship);
+                        }
+                        break;
+                    }
+                    relationshipsByPair.set(pair.key, [...existing, { map: contextMap, pair }]);
                 }
             }
         }
@@ -1516,24 +1577,142 @@ export class ThinaiValidator {
             return false;
         }
 
+        const contextMaps = this.getImportedContextMaps(model);
+        const pairKey = JSON.stringify([consumer, producer].sort());
+        const relationships = contextMaps.flatMap(contextMap =>
+            contextMap.relationships.flatMap(relationship =>
+                this.getRelationshipPairSemantics(relationship)
+                    .filter(pair => pair.key === pairKey)
+                    .map(pair => pair)
+            )
+        );
+        const teamRelationships = relationships.filter(pair => pair.kind !== 'sharedKernel');
+        const teamSignatures = new Set(teamRelationships.map(pair => pair.signature));
+        const conflictsWithSeparateWays = teamRelationships.some(pair => pair.kind === 'separateWays') &&
+            relationships.some(pair => pair.kind === 'sharedKernel');
+        if (teamSignatures.size > 1 || conflictsWithSeparateWays) {
+            return false;
+        }
+        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
+            this.authorizesEventRelationship(relationship, consumer, producer)
+        ));
+    }
+
+    private getImportedContextMaps(model: Model): ContextMap[] {
+        const document = AstUtils.getDocument(model);
+        const contextMaps = new Set<ContextMap>();
         for (const declaration of model.imports) {
-            const mapDocument = this.services.shared.workspace.LangiumDocuments.getDocument(resolveImportUri(document, declaration));
+            const mapDocument = this.services.shared.workspace.LangiumDocuments.getDocument(
+                resolveImportUri(document, declaration)
+            );
             const importedModel = mapDocument?.parseResult.value;
             if (!mapDocument || !isModel(importedModel)) {
                 continue;
             }
             for (const contextMap of importedModel.declarations.filter(isContextMap)) {
-                if (declaration.components.length > 0 && !declaration.components.some(component => component.component.ref === contextMap)) {
-                    continue;
-                }
-                for (const relationship of contextMap.relationships) {
-                    if (this.authorizesEventRelationship(relationship, consumer, producer)) {
-                        return true;
-                    }
+                if (declaration.components.length === 0 ||
+                    declaration.components.some(component => component.component.ref === contextMap)) {
+                    contextMaps.add(contextMap);
                 }
             }
         }
-        return false;
+        return [...contextMaps];
+    }
+
+    private areRelationshipPairDefinitionsCompatible(
+        left: ContextRelationshipPairSemantics,
+        right: ContextRelationshipPairSemantics
+    ): boolean {
+        if (left.kind === 'sharedKernel' && right.kind === 'sharedKernel') {
+            return true;
+        }
+        if (left.kind === 'sharedKernel' || right.kind === 'sharedKernel') {
+            return left.kind !== 'separateWays' && right.kind !== 'separateWays';
+        }
+        return left.signature === right.signature;
+    }
+
+    private getRelationshipPairSemantics(relationship: ContextRelationship): ContextRelationshipPairSemantics[] {
+        const createPair = (
+            left: BoundedContext,
+            right: BoundedContext,
+            kind: ContextRelationshipPairKind,
+            identity: unknown,
+            signature: unknown
+        ): ContextRelationshipPairSemantics | undefined => {
+            if (left === right) {
+                return undefined;
+            }
+            const contexts = [left.name, right.name].sort();
+            return {
+                key: JSON.stringify(contexts),
+                identity: JSON.stringify(identity),
+                signature: JSON.stringify(signature),
+                kind,
+                name: contexts.map(name => `'${name}'`).join(' and ')
+            };
+        };
+        const patterns = (endpoint: ContextMapEndpoint) => [...endpoint.integrationPatterns].sort();
+
+        if (isCustomerSupplierRelationship(relationship)) {
+            const customer = relationship.customer.context.ref;
+            const supplier = relationship.supplier.context.ref;
+            if (!customer || !supplier) {
+                return [];
+            }
+            const identity = ['customerSupplier', customer.name, supplier.name];
+            const pair = createPair(customer, supplier, 'customerSupplier', identity, [
+                'customerSupplier', customer.name, patterns(relationship.customer), supplier.name, patterns(relationship.supplier)
+            ]);
+            return pair ? [pair] : [];
+        }
+        if (isPartnershipRelationship(relationship)) {
+            const left = relationship.left.context.ref;
+            const right = relationship.right.context.ref;
+            if (!left || !right) {
+                return [];
+            }
+            const sides = [
+                { context: left, patterns: patterns(relationship.left) },
+                { context: right, patterns: patterns(relationship.right) }
+            ].sort((a, b) => a.context.name.localeCompare(b.context.name));
+            const identity = ['partnership', ...[left.name, right.name].sort()];
+            const pair = createPair(left, right, 'partnership', identity, [
+                'partnership', ...sides.map(side => [side.context.name, side.patterns])
+            ]);
+            return pair ? [pair] : [];
+        }
+        if (isSeparateWaysRelationship(relationship)) {
+            const left = relationship.left.ref;
+            const right = relationship.right.ref;
+            if (!left || !right) {
+                return [];
+            }
+            const identity = ['separateWays', ...[left.name, right.name].sort()];
+            const pair = createPair(left, right, 'separateWays', identity, identity);
+            return pair ? [pair] : [];
+        }
+
+        const sharedKernel = relationship.sharedKernel.ref;
+        const participants = [...new Set(relationship.participants
+            .map(participant => participant.target.ref)
+            .filter((context): context is BoundedContext => context !== undefined))];
+        if (!sharedKernel) {
+            return [];
+        }
+        const pairs = [];
+        for (let leftIndex = 0; leftIndex < participants.length; leftIndex++) {
+            for (let rightIndex = leftIndex + 1; rightIndex < participants.length; rightIndex++) {
+                const left = participants[leftIndex]!;
+                const right = participants[rightIndex]!;
+                const identity = ['sharedKernel', sharedKernel.name, ...[left.name, right.name].sort()];
+                const pair = createPair(left, right, 'sharedKernel', identity, ['sharedKernel', sharedKernel.name]);
+                if (pair) {
+                    pairs.push(pair);
+                }
+            }
+        }
+        return pairs;
     }
 
     private isIntegrationEventExposed(event: IntegrationEvent): boolean {

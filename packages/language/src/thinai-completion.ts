@@ -19,6 +19,7 @@ import {
 } from 'vscode-languageserver';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
+import type { ContextMap } from './generated/ast.js';
 import {
     isEnumType,
     isBoundedContext,
@@ -45,7 +46,7 @@ import { isLineSeparatedSibling } from './thinai-layout.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: [...'abcdefghijklmnopqrstuvwxyz', ' ', '"', '/', '.', '[']
+        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-']
     };
 
     private readonly thinaiServices: ThinaiServices;
@@ -176,33 +177,64 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 items
             }, optionalClauseCompletions.map(item => item.label));
         }
+        const relationshipContinuations = this.getContextMapRelationshipContinuations(document, params.position);
+        const hasBoundedContextCandidates = defaultCompletion?.items.some(item =>
+            item.detail?.startsWith('BoundedContext ')
+        ) === true;
         const constrainedValueCompletions = [
             ...this.getInitialStateCompletions(document, params.position),
-            ...this.getIntegrationPatternCompletions(document, params.position)
+            ...this.getPartialInitialKeywordCompletions(document, params.position),
+            ...this.getIntegrationPatternCompletions(document, params.position),
+            ...relationshipContinuations,
+            ...this.getExposureDeclarationCompletions(document, params.position, defaultCompletion),
+            ...(hasBoundedContextCandidates ? [] : this.getContextMapRightContextCompletions(document, params.position))
         ];
-        const inProgressKeywordCompletions = this.getInProgressKeywordCompletions(document, params.position);
+        const inProgressKeywordCompletions = [
+            ...this.getInProgressKeywordCompletions(document, params.position),
+            ...this.getPartialSameLineContinuations(document, params.position)
+        ];
         const blockKeywords = this.getEnclosingBlockKeywordCompletions(document, params.position);
-        const modelGapKeywords = this.getModelGapKeywordCompletions(document, params.position);
+        const modelGapKeywords = this.getModelGapKeywordCompletions(
+            document,
+            params.position,
+            defaultCompletion,
+            inProgressKeywordCompletions
+        );
         const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
-        const completionWithBlockKeywords = this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords);
+        const completionWithBlockKeywords = this.filterContextMapKeywordsForRelationshipCompletion(
+            document,
+            params.position,
+            this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords)
+        );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
         const completionWithKeywords = this.withCompoundKeywordCompletions(completionWithModelGapKeywords, inProgressKeywordCompletions);
+        const relationshipContinuationLabels = new Set(relationshipContinuations.map(item => item.label));
+        const completionItems = (completionWithKeywords?.items ?? []).filter(item =>
+            !relationshipContinuationLabels.has(item.label)
+        );
+        const sameLineKeywordContinuations = [
+            ...inProgressKeywordCompletions.map(item => item.label),
+            ...constrainedValueCompletions.filter(item => item.kind === CompletionItemKind.Keyword).map(item => String(item.label)),
+            ...relationshipContinuations.map(item => item.label),
+            ...modelGapKeywords.map(item => String(item.label))
+        ];
         const importContext = this.getImportPathContext(document, params.position);
         if (!importContext) {
-            if (constrainedValueCompletions.length === 0 && inProgressKeywordCompletions.length === 0) {
+            if (constrainedValueCompletions.length === 0 && inProgressKeywordCompletions.length === 0 &&
+                modelGapKeywords.length === 0) {
                 return this.filterSameLineSiblingCompletions(document, params.position, completionWithKeywords);
             }
             return this.filterSameLineSiblingCompletions(document, params.position, {
                 isIncomplete: completionWithKeywords?.isIncomplete ?? false,
-                items: [...(completionWithKeywords?.items ?? []), ...constrainedValueCompletions]
-            }, inProgressKeywordCompletions.map(item => item.label));
+                items: [...completionItems, ...constrainedValueCompletions]
+            }, sameLineKeywordContinuations);
         }
 
         const importItems = await this.getImportPathCompletions(document, importContext.path, importContext.pathStart);
         return this.filterSameLineSiblingCompletions(document, params.position, {
             isIncomplete: completionWithKeywords?.isIncomplete ?? false,
-            items: [...(completionWithKeywords?.items ?? []), ...constrainedValueCompletions, ...importItems]
-        }, inProgressKeywordCompletions.map(item => item.label));
+            items: [...completionItems, ...constrainedValueCompletions, ...importItems]
+        }, sameLineKeywordContinuations);
     }
 
     private withCompoundKeywordCompletions(
@@ -267,6 +299,258 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return { isIncomplete: completion?.isIncomplete ?? false, items: [...items, ...fallbacks] };
     }
 
+    private filterContextMapKeywordsForRelationshipCompletion(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const root = document.parseResult.value;
+        if (!root) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const inContextMap = AstUtils.streamAst(root).some(node => {
+            if (node.$type !== 'ContextMap') {
+                return false;
+            }
+            const cstNode = node.$cstNode;
+            return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+        });
+        const hasBoundedContextCandidates = completion.items.some(item =>
+            item.detail?.startsWith('BoundedContext ')
+        );
+        const relationshipLineState = this.getContextMapRelationshipLineState(document, position);
+        const shouldFilterKeywords = relationshipLineState === 'incomplete' ||
+            hasBoundedContextCandidates && relationshipLineState !== 'complete';
+        if (!inContextMap || !shouldFilterKeywords) {
+            return completion;
+        }
+        return {
+            ...completion,
+            items: completion.items.filter(item =>
+                item.kind !== CompletionItemKind.Keyword ||
+                !['customer', 'partner', 'separateWays', 'sharedKernel'].includes(String(item.label))
+            )
+        };
+    }
+
+    private getContextMapRelationshipLineState(
+        document: LangiumDocument,
+        position: Position
+    ): 'incomplete' | 'complete' | undefined {
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const rawPrefix = text.slice(lineStart, offset);
+        const relationshipPrefix = rawPrefix.trim();
+        if (!/^(?:customer|partner|separateWays)\b/i.test(relationshipPrefix)) {
+            return undefined;
+        }
+
+        const completed = this.isCompleteContextMapRelationship(relationshipPrefix);
+        const endedAtRelationshipBoundary = /\s$/.test(rawPrefix) || relationshipPrefix.endsWith('}');
+        if (completed && endedAtRelationshipBoundary) {
+            return 'complete';
+        }
+        return 'incomplete';
+    }
+
+    private isCompleteContextMapRelationship(source: string): boolean {
+        const relationship = source.trim();
+        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+        const completedRelationships = [
+            new RegExp(String.raw`^customer\s+${endpoint}(?:\s*${integrationPatterns})?\s*->\s*supplier\s+${endpoint}(?:\s*${integrationPatterns})?$`),
+            new RegExp(String.raw`^partner\s+${endpoint}(?:\s*${integrationPatterns})?\s*<->\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?$`),
+            new RegExp(String.raw`^separateWays\s+${endpoint}\s*-x-\s*${endpoint}$`)
+        ];
+        return completedRelationships.some(pattern => pattern.test(relationship));
+    }
+
+    private getContextMapRelationshipContinuations(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const contextMap = AstUtils.streamAst(root)
+            .filter(node => node.$type === 'ContextMap')
+            .find(node => {
+                const cstNode = node.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+            });
+        if (!contextMap) {
+            return [];
+        }
+
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefixes = AstUtils.streamAst(contextMap)
+            .filter(node => node.$type === 'CustomerSupplierRelationship' ||
+                node.$type === 'PartnershipRelationship' || node.$type === 'SeparateWaysRelationship')
+            .map(node => node.$cstNode)
+            .filter((cstNode): cstNode is NonNullable<typeof cstNode> => cstNode !== undefined && cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.offset - left.offset)
+            .map(cstNode => text.slice(cstNode.offset, offset));
+        prefixes.push(text.slice(lineStart, offset));
+        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+        const continuations: ReadonlyArray<readonly [RegExp, string]> = [
+            [new RegExp(String.raw`^\s*customer\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '-> supplier'],
+            [new RegExp(String.raw`^\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '<-> partner'],
+            [new RegExp(String.raw`^\s*separateWays\s+${endpoint}\s+$`), '-x-']
+        ];
+        const continuation = prefixes.flatMap(prefix =>
+            continuations.filter(([pattern]) => pattern.test(prefix)).map(([, label]) => label)
+        )[0];
+        if (!continuation) {
+            return [];
+        }
+
+        return [{
+            label: continuation,
+            kind: CompletionItemKind.Operator,
+            detail: 'Context-map relationship continuation',
+            sortText: '0',
+            textEdit: {
+                range: { start: position, end: position },
+                newText: `${continuation} `
+            }
+        }];
+    }
+
+    private getContextMapRightContextCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+        const rightContextPatterns = [
+            new RegExp(String.raw`^\s*customer\s+${endpoint}(?:\s*${integrationPatterns})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*separateWays\s+${endpoint}\s+-x-\s*([\w.]*)$`, 'i')
+        ];
+        const contextMap = AstUtils.streamAst(root)
+            .filter(candidate => candidate.$type === 'ContextMap')
+            .find(candidate => {
+                const cstNode = candidate.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+            }) as ContextMap | undefined;
+        if (!contextMap) {
+            return [];
+        }
+
+        const prefixes = AstUtils.streamAst(contextMap)
+            .filter(candidate => candidate.$type === 'CustomerSupplierRelationship' ||
+                candidate.$type === 'PartnershipRelationship' || candidate.$type === 'SeparateWaysRelationship')
+            .map(candidate => candidate.$cstNode)
+            .filter((cstNode): cstNode is NonNullable<typeof cstNode> => cstNode !== undefined && cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.offset - left.offset)
+            .map(cstNode => text.slice(cstNode.offset, offset));
+        prefixes.push(text.slice(lineStart, offset));
+        const match = prefixes.flatMap(prefix =>
+            rightContextPatterns.map(pattern => pattern.exec(prefix)).filter((result): result is RegExpExecArray => result !== null)
+        )[0];
+        if (!match) {
+            return [];
+        }
+
+        const typedPrefix = match[1] ?? '';
+        const prefixStart = offset - typedPrefix.length;
+        const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        const completionContext = this.getLangiumCompletionContext(document, position);
+        return scopeProvider.getContextMapBoundedContextCandidates(contextMap)
+            .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .map(description => {
+                const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
+                const item: CompletionValueItem = {
+                    nodeDescription: description,
+                    kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+                    detail: this.getCompletionDetail(description),
+                    sortText: '0',
+                    insertText
+                };
+                const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
+                return langiumItem ?? {
+                    ...item,
+                    label: description.name,
+                    textEdit: {
+                        range: { start: document.textDocument.positionAt(prefixStart), end: position },
+                        newText: insertText
+                    }
+                };
+            });
+    }
+
+    private getExposureDeclarationCompletions(
+        document: LangiumDocument,
+        position: Position,
+        defaultCompletion: CompletionList | undefined
+    ): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const exposure = AstUtils.streamAst(root)
+            .filter(node => node.$type === 'Exposure')
+            .find(node => {
+                const cstNode = node.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
+            });
+        if (!exposure?.$cstNode) {
+            return [];
+        }
+
+        const source = text.slice(exposure.$cstNode.offset, offset).trimStart();
+        const match = /^exposes\s+(?:(?:[_a-zA-Z][\w.]*)\s*,\s*)*([\w.]*)$/iu.exec(source);
+        if (!match) {
+            return [];
+        }
+        const typedPrefix = match[1] ?? '';
+        const prefixStart = offset - typedPrefix.length;
+        const existingItems = defaultCompletion?.items ?? [];
+        const completionContext = this.getLangiumCompletionContext(document, position);
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        return scopeProvider.getExposureDeclarationCandidates(exposure as import('./generated/ast.js').Exposure)
+            .filter(description => {
+                const detail = this.getCompletionDetail(description);
+                return description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()) &&
+                    !existingItems.some(item => item.label === description.name && item.detail === detail);
+            })
+            .map(description => {
+                const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
+                const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
+                const item: CompletionValueItem = {
+                    nodeDescription: description,
+                    kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+                    detail: this.getCompletionDetail(description),
+                    sortText: '0',
+                    insertText
+                };
+                const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
+                return langiumItem ?? {
+                    ...item,
+                    label: description.name,
+                    textEdit: {
+                        range: { start: document.textDocument.positionAt(prefixStart), end: position },
+                        newText: insertText
+                    }
+                };
+            });
+    }
+
     private addSupplementaryKeywords(
         completion: CompletionList | undefined,
         additions: CompletionItem[]
@@ -282,33 +566,62 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
-    private getModelGapKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+    private getModelGapKeywordCompletions(
+        document: LangiumDocument,
+        position: Position,
+        defaultCompletion: CompletionList | undefined,
+        inProgressCompletions: CompletionItem[]
+    ): CompletionItem[] {
         const model = document.parseResult.value;
         if (!isModel(model)) {
             return [];
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const rawPrefix = text.slice(lineStart, offset);
+        const typedPrefix = rawPrefix.trimStart();
+        const labels = [
+            'import', 'shared kernel', 'subdomain', 'bounded context', 'in bounded context',
+            'context map', 'actor', 'journey'
+        ];
+        const normalizedPrefix = typedPrefix.toLowerCase().replace(/\s+/g, ' ');
+        if (typedPrefix && !/^[\p{L}_][\p{L}_ ]*$/u.test(typedPrefix)) {
+            return [];
+        }
+        const matchingLabels = labels.filter(label =>
+            !normalizedPrefix || normalizedPrefix.length < label.length && label.startsWith(normalizedPrefix)
+        );
+        if (matchingLabels.length === 0 || typedPrefix && inProgressCompletions.length > 0) {
+            return [];
+        }
         const children = [...model.imports, ...model.declarations]
             .map(node => node.$cstNode)
             .filter((node): node is NonNullable<typeof node> => node !== undefined)
             .sort((left, right) => left.offset - right.offset);
-        if (children.some(node => node.offset <= offset && offset < node.end)) {
+        if (children.some(node => node.offset < lineStart && offset < node.end)) {
             return [];
         }
         const previousEnd = children
-            .filter(node => node.end <= offset)
+            .filter(node => node.end <= lineStart)
             .reduce((end, node) => Math.max(end, node.end), 0);
         const nextStart = children
             .filter(node => node.offset >= offset)
             .reduce((start, node) => Math.min(start, node.offset), text.length);
-        const before = text.slice(previousEnd, offset);
+        const beforeLine = text.slice(previousEnd, lineStart);
         const after = text.slice(offset, nextStart);
         const gap = text.slice(previousEnd, nextStart);
-        if (!/^\s*$/.test(before) || !/^\s*$/.test(after) || !/[\r\n]/.test(gap)) {
+        if (!/^\s*$/.test(beforeLine) || !/^\s*$/.test(after) ||
+            !/[\r\n]/.test(gap) && !(previousEnd === 0 && nextStart === text.length)) {
             return [];
         }
-        return this.getTopLevelKeywordCompletions(document, position);
+        const defaultKeywords = new Set((defaultCompletion?.items ?? [])
+            .filter(item => item.kind === CompletionItemKind.Keyword && typeof item.label === 'string')
+            .map(item => item.label as string));
+        if (matchingLabels.some(label => defaultKeywords.has(label) || defaultKeywords.has(label.split(/\s+/)[0]!))) {
+            return [];
+        }
+        return this.getTopLevelKeywordCompletions(document, position, typedPrefix);
     }
 
     private getEnclosingBlockKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
@@ -345,6 +658,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const linePrefixStart = (openingBrace: number) => openingBrace >= lineStart ? openingBrace + 1 : lineStart;
         const container = AstUtils.streamAst(root)
             .filter(candidate => labelsByType[candidate.$type] !== undefined)
             .filter(candidate => {
@@ -359,13 +674,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (!beforeCursor.includes('{')) {
                     return false;
                 }
-                return !AstUtils.streamAst(candidate).toArray().some(child => {
-                    if (child.$container !== candidate) {
-                        return false;
-                    }
+                const directChildren = AstUtils.streamAst(candidate).toArray().filter(child => child.$container === candidate);
+                const directChildAtCursor = directChildren.some(child => {
                     const childCst = child.$cstNode;
                     return childCst !== undefined && childCst.offset <= offset && offset < childCst.end;
                 });
+                if (!directChildAtCursor) {
+                    return true;
+                }
+                const openingBrace = text.lastIndexOf('{', offset - 1);
+                const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
+                const labels = isModule(candidate) && isInSharedKernel(candidate)
+                    ? labelsByType.SharedKernelModule
+                    : labelsByType[candidate.$type];
+                return this.matchesKeywordPrefix(labels, prefix);
             });
         if (!container) {
             return [];
@@ -373,7 +695,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const labels = isModule(container) && isInSharedKernel(container)
             ? labelsByType.SharedKernelModule
             : labelsByType[container.$type];
-        return this.createKeywordCompletions(labels);
+        const openingBrace = text.lastIndexOf('{', offset - 1);
+        const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
+        const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
+        const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
+        return this.createKeywordCompletions(matchingLabels, document, position, typedPrefix);
     }
 
     private filterSharedKernelModuleKeywords(
@@ -411,13 +737,28 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
-    private createKeywordCompletions(labels: string[]): CompletionItem[] {
-        return labels.map(label => ({
+    private createKeywordCompletions(
+        labels: string[],
+        document: LangiumDocument,
+        position: Position,
+        typedPrefix: string
+    ): CompletionItem[] {
+        const prefixStart = document.textDocument.offsetAt(position) - typedPrefix.length;
+        return labels.map(label => this.createKeywordCompletionItem(
+            document,
+            position,
             label,
-            kind: CompletionItemKind.Keyword,
-            detail: 'Language keyword',
-            sortText: '0'
-        }));
+            'Language keyword',
+            prefixStart,
+            label,
+            !typedPrefix.includes(' ')
+        ));
+    }
+
+    private matchesKeywordPrefix(labels: string[], prefix: string): boolean {
+        const normalizedPrefix = prefix.toLowerCase().replace(/\s+/g, ' ');
+        return labels.some(label => normalizedPrefix.length < label.length &&
+            label.toLowerCase().startsWith(normalizedPrefix));
     }
 
     private filterSameLineSiblingCompletions(
@@ -430,18 +771,23 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!sibling) {
             return completion;
         }
+        if (this.isStandalonePartialKeywordPrefix(document, position)) {
+            return completion;
+        }
         const continuations = this.getSameLineContinuationKeywords(sibling, document, position);
-        const allowed = new Set([...continuations, ...extraAllowedKeywords]);
+        const inProgressContinuations = extraAllowedKeywords.filter(keyword =>
+            ['-> supplier', '<-> partner', '-x-', 'supplier', 'partner', 'integrationPatterns',
+                'participants', 'manages', 'serves', 'from', 'to', 'on', 'realizes', 'kind', 'depends',
+                'mirrors', 'returns', 'initial', 'when', 'with',
+                'core', 'supporting', 'generic']
+                .includes(keyword)
+        );
+        const allowed = new Set([...continuations, ...inProgressContinuations]);
         if (allowed.size === 0) {
-            if (sibling.$container?.$type !== 'Model') {
-                return completion;
-            }
-            const topLevelItems = this.getTopLevelKeywordCompletions(document, position);
-            const items = completion?.items ?? [];
-            const labels = new Set(items.map(item => item.label));
+            const items = completion?.items.filter(item => item.kind !== CompletionItemKind.Keyword) ?? [];
             return {
                 isIncomplete: completion?.isIncomplete ?? false,
-                items: [...items, ...topLevelItems.filter(item => !labels.has(item.label))]
+                items
             };
         }
         if (!completion) {
@@ -459,23 +805,100 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
-    private getTopLevelKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+    private isStandalonePartialKeywordPrefix(document: LangiumDocument, position: Position): boolean {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const needsLeadingSpace = offset > 0 && !/\s/.test(text[offset - 1]);
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefix = text.slice(lineStart, offset);
+        const normalizedPrefix = prefix.trim().toLowerCase().replace(/\s+/g, ' ');
+        const statementKeywords = [
+            'import', 'shared kernel', 'subdomain', 'bounded context', 'in bounded context', 'context map',
+            'actor', 'journey', 'customer', 'partner', 'separateWays', 'sharedKernel',
+            'application service', 'query service', 'query repository', 'projector', 'aggregate',
+            'domain service', 'repository', 'factory', 'event', 'integration event', 'module',
+            'root entity', 'entity', 'value object', 'enum', 'read model', 'data object',
+            'exposes', 'constructor', 'method', 'invariant', 'precondition', 'postcondition', 'behavior',
+            'transition', 'invokes', 'emits', 'projects', 'by', 'invoke'
+        ];
+        if (normalizedPrefix && statementKeywords.some(keyword =>
+            keyword.toLowerCase().startsWith(normalizedPrefix)
+        )) {
+            return true;
+        }
+        return [
+            /^\s*in\s+bounded\s+[\p{L}_]*$/iu,
+            /^\s*(?:bounded|shared|application|domain|root|value|read|data|query|integration|depends|context)\s+[\p{L}_]*$/iu,
+            /^\s*import\s+\{[^}]*\}\s+[\p{L}_]*$/iu,
+            /^\s*query\s+repository\s+[_a-zA-Z][\w_]*\s+[\p{L}_]*$/iu,
+            /^\s*repository\s+[_a-zA-Z][\w_]*\s+[\p{L}_]*$/iu,
+            /^\s*transition\s+[_a-zA-Z][\w_]*\s+[\p{L}_]*$/iu,
+            /^\s*transition\s+[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+[\p{L}_]*$/iu,
+            /^\s*sharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*[\p{L}_]*$/iu,
+            /^\s*customer\s+[^\n]*?->\s*[\p{L}_]*$/iu,
+            /^\s*partner\s+[^\n]*?<->\s*[\p{L}_]*$/iu,
+            /^\s*(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*[\p{L}_]*$/iu
+        ].some(pattern => pattern.test(prefix));
+    }
+
+    private getTopLevelKeywordCompletions(
+        document: LangiumDocument,
+        position: Position,
+        typedPrefix = ''
+    ): CompletionItem[] {
+        const offset = document.textDocument.offsetAt(position);
+        const prefixStart = offset - typedPrefix.length;
         return [
             'import', 'shared kernel', 'subdomain', 'bounded context', 'in bounded context',
             'context map', 'actor', 'journey'
-        ].map(label => ({
+        ].filter(label => !typedPrefix ||
+            typedPrefix.length < label.length && label.toLowerCase().startsWith(typedPrefix.toLowerCase().replace(/\s+/g, ' ')))
+            .map(label => this.createKeywordCompletionItem(
+                document,
+                position,
+                label,
+                'Top-level declaration',
+                prefixStart,
+                label,
+                !typedPrefix.includes(' ')
+            ));
+    }
+
+    private createKeywordCompletionItem(
+        document: LangiumDocument,
+        position: Position,
+        label: string,
+        detail: string,
+        fallbackStart = document.textDocument.offsetAt(position),
+        insertText = label,
+        useLangiumTokenEdit = true
+    ): CompletionItem {
+        const baseItem: CompletionValueItem = {
             label,
             kind: CompletionItemKind.Keyword,
-            detail: 'Top-level declaration',
+            detail,
             sortText: '0',
+            insertText
+        };
+        const context = useLangiumTokenEdit ? this.getLangiumCompletionContext(document, position) : undefined;
+        const langiumItem = context ? this.fillCompletionItem(context, baseItem) : undefined;
+        if (langiumItem) {
+            return langiumItem;
+        }
+        return {
+            ...baseItem,
+            label,
             textEdit: {
-                range: { start: position, end: position },
-                newText: `${needsLeadingSpace ? ' ' : ''}${label}`
+                range: { start: document.textDocument.positionAt(fallbackStart), end: position },
+                newText: insertText
             }
-        }));
+        };
+    }
+
+    private getLangiumCompletionContext(document: LangiumDocument, position: Position): CompletionContext | undefined {
+        const offset = document.textDocument.offsetAt(position);
+        return [...this.buildContexts(document, position)].find(context =>
+            context.offset === offset && context.tokenOffset <= offset && context.tokenEndOffset >= offset
+        );
     }
 
     private getInProgressKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
@@ -520,18 +943,64 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const typedPrefix = match.match[1];
         const start = offset - typedPrefix.length;
+        const needsLeadingSpace = start > 0 && !/\s/.test(text[start - 1]!);
         return match.keywords
-            .filter(keyword => keyword.toLowerCase().startsWith(typedPrefix.toLowerCase()))
-            .map(keyword => ({
-                label: keyword,
-                kind: CompletionItemKind.Keyword,
-                detail: 'Keyword continuation',
-                sortText: '0',
-                textEdit: {
-                    range: { start: document.textDocument.positionAt(start), end: position },
-                    newText: keyword
-                }
-            }));
+            .filter(keyword => typedPrefix.length < keyword.length &&
+                keyword.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .map(keyword => this.createKeywordCompletionItem(
+                document,
+                position,
+                keyword,
+                'Keyword continuation',
+                start,
+                `${needsLeadingSpace ? ' ' : ''}${keyword}`
+            ));
+    }
+
+    private getPartialSameLineContinuations(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const results = new Map<string, CompletionItem>();
+        for (const node of AstUtils.streamAst(root)) {
+            const cstNode = node.$cstNode;
+            if (!cstNode || cstNode.offset > offset) {
+                continue;
+            }
+            const source = text.slice(cstNode.offset, offset);
+            const match = /\s+([\p{L}_]+)$/u.exec(source);
+            if (!match) {
+                continue;
+            }
+            const typedPrefix = match[1]!;
+            const headerSource = source.replace(/\s+[\p{L}_]+$/u, '').trim();
+            const continuations = new Set(this.getSameLineContinuationKeywords(node, document, position));
+            if (isBoundedContext(node) && /^bounded\s+context\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+                continuations.add('realizes');
+            } else if (isSubdomain(node) && /^subdomain\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+                continuations.add('kind');
+            } else if (isModule(node) && /^module\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+                continuations.add('depends');
+            } else if (isValueObject(node) && /^value\s+object\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+                continuations.add('mirrors');
+            }
+            for (const keyword of [...continuations].filter(candidate =>
+                typedPrefix.length < candidate.length && candidate.toLowerCase().startsWith(typedPrefix.toLowerCase())
+            )) {
+                const prefixStart = offset - typedPrefix.length;
+                results.set(keyword, this.createKeywordCompletionItem(
+                    document,
+                    position,
+                    keyword,
+                    'Keyword continuation',
+                    prefixStart
+                ));
+            }
+        }
+        return [...results.values()];
     }
 
     private getSameLineSiblingAt(document: LangiumDocument, position: Position): AstNode | undefined {
@@ -549,7 +1018,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset || cstNode.range.end.line !== currentLine) {
                 continue;
             }
-            if (isModule(node) && text.slice(cstNode.offset, cstNode.end).trimEnd().endsWith('{')) {
+            if (text.slice(cstNode.offset, offset).trimEnd().endsWith('{')) {
                 continue;
             }
             if (/[\r\n]/.test(text.slice(cstNode.end, offset))) {
@@ -593,7 +1062,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 return [];
             }
             const source = document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
-            if (source.trimEnd().endsWith(')')) {
+            const beforePartialKeyword = source.replace(/\s+[\p{L}_]*$/u, '');
+            if (beforePartialKeyword.trimEnd().endsWith(')')) {
                 return ['returns'];
             }
         }
@@ -705,6 +1175,41 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     newText: value.name
                 }
             }));
+    }
+
+    private getPartialInitialKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const completions: CompletionItem[] = [];
+        for (const node of AstUtils.streamAst(root)) {
+            if (!isField(node) || !isEntity(node.$container) || node.optional ||
+                !isEnumType(node.type?.ref) || !node.$cstNode || offset < node.$cstNode.offset) {
+                continue;
+            }
+            const source = text.slice(node.$cstNode.offset, offset);
+            if (/\binitial\b/i.test(source)) {
+                continue;
+            }
+            const match = /:\s*[_a-zA-Z][\w.]*(?:\.[_a-zA-Z][\w_]*)?\s+([\p{L}_]*)$/u.exec(source);
+            const typedPrefix = match?.[1];
+            if (typedPrefix === undefined || typedPrefix.length >= 'initial'.length ||
+                !'initial'.startsWith(typedPrefix.toLowerCase())) {
+                continue;
+            }
+            const prefixStart = offset - typedPrefix.length;
+            completions.push(this.createKeywordCompletionItem(
+                document,
+                position,
+                'initial',
+                'Field initial-state clause',
+                prefixStart
+            ));
+        }
+        return completions;
     }
 
     private getIntegrationPatternCompletions(document: LangiumDocument, position: Position): CompletionItem[] {

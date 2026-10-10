@@ -409,6 +409,114 @@ describe('Linking tests', () => {
         ))).toBe(false);
     });
 
+    test('allows equivalent relationships to be repeated across imported context maps', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping shared kernel CommonTypes {}'
+        );
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-one.tni'),
+            'import "./repeated-map-contexts.tni" context map FulfillmentA { customer Shipping -> supplier Ordering sharedKernel CommonTypes { participants: [Ordering, Shipping] } }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-two.tni'),
+            'import "./repeated-map-contexts.tni" context map FulfillmentB { customer Shipping -> supplier Ordering }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-consumer.tni'),
+            `import "./repeated-map-contexts.tni"
+             import { FulfillmentA } from "./repeated-map-one.tni"
+             import { FulfillmentB } from "./repeated-map-two.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, firstMap, secondMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Imported context maps'
+        ))).toBe(false);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(false);
+    });
+
+    test('rejects conflicting relationships between imported context maps and denies authorization', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const partnershipMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-partnership.tni'),
+            'import "./conflicting-map-contexts.tni" context map Partners { partner Ordering <-> partner Shipping }'
+        );
+        const separateWaysMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-separate-ways.tni'),
+            'import "./conflicting-map-contexts.tni" context map Separate { separateWays Ordering -x- Shipping }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-consumer.tni'),
+            `import "./conflicting-map-contexts.tni"
+             import { Partners } from "./conflicting-map-partnership.tni"
+             import { Separate } from "./conflicting-map-separate-ways.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, partnershipMap, separateWaysMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            "define conflicting relationships between 'Ordering' and 'Shipping'"
+        ))).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(true);
+    });
+
+    test('treats different integration patterns across imported maps as a conflict', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-map-one.tni'),
+            'import "./pattern-conflict-contexts.tni" context map FulfillmentA { customer Shipping { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Ordering }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-map-two.tni'),
+            'import "./pattern-conflict-contexts.tni" context map FulfillmentB { customer Shipping { integrationPatterns: ["OpenHostService"] } -> supplier Ordering }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-consumer.tni'),
+            `import "./pattern-conflict-contexts.tni"
+             import { FulfillmentA } from "./pattern-conflict-map-one.tni"
+             import { FulfillmentB } from "./pattern-conflict-map-two.tni"
+             in bounded context Shipping {
+                 application service ShippingApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, firstMap, secondMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            "define conflicting relationships between 'Ordering' and 'Shipping'"
+        ))).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an imported context map with an authorized relationship'
+        ))).toBe(true);
+    });
+
     test('separate-ways relationships do not authorize event consumption', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/contexts.tni'),

@@ -25,6 +25,7 @@ describe('Validating', () => {
         const compact = await parse(`bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { method place() { invariant "An order exists" behavior "Place it" } identifier id: OrderId status: Status } value object OrderId { raw: string } enum Status { Draft, Placed } }}`);
         const compactLayoutErrors = compact.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required') ?? [];
         expect(compactLayoutErrors.length).toBeGreaterThanOrEqual(3);
+        expect(compactLayoutErrors.every(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toBe(true);
 
         const multiline = await parse(`
             bounded context Ordering
@@ -1251,6 +1252,98 @@ describe('Validating', () => {
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'A shared-kernel relationship must include at least two bounded contexts'
+        ))).toBe(true);
+    });
+
+    test('rejects duplicate relationships between a bounded-context pair in one context map', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                customer Shipping -> supplier Ordering
+                customer Shipping -> supplier Ordering
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic => String(diagnostic.message).includes(
+            'may only be declared once in context map'
+        ))).toHaveLength(1);
+    });
+
+    test('treats reversed symmetric relationships as duplicates in one context map', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                partner Ordering <-> partner Shipping
+                partner Shipping <-> partner Ordering
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'may only be declared once in context map'
+        ))).toBe(true);
+    });
+
+    test('rejects conflicting relationship types for a pair in one context map', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                partner Ordering <-> partner Shipping
+                separateWays Shipping -x- Ordering
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Conflicting relationships between'
+        ))).toBe(true);
+    });
+
+    test('rejects reciprocal customer-supplier directions for one pair in a context map', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                customer Ordering -> supplier Shipping
+                customer Shipping -> supplier Ordering
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Conflicting relationships between'
+        ))).toBe(true);
+    });
+
+    test('allows a shared kernel to overlay a customer-supplier relationship', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            shared kernel CommonTypes {}
+            context map FulfillmentMap {
+                customer Shipping -> supplier Ordering
+                sharedKernel CommonTypes { participants: [Ordering, Shipping] }
+            }
+        `);
+
+        expect(document.diagnostics?.filter(diagnostic => String(diagnostic.message).includes(
+            'relationship between'
+        ))).toEqual([]);
+    });
+
+    test('rejects a separate-ways relationship paired with a shared kernel', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            shared kernel CommonTypes {}
+            context map FulfillmentMap {
+                separateWays Ordering -x- Shipping
+                sharedKernel CommonTypes { participants: [Ordering, Shipping] }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Conflicting relationships between'
         ))).toBe(true);
     });
 
