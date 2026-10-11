@@ -14,6 +14,7 @@ import {
 } from 'langium';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import {
+    type Aggregate,
     type Import,
     type ContextMap,
     type Constructor,
@@ -63,6 +64,7 @@ import {
     isValueObject,
     type Module
 } from './generated/ast.js';
+import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
 
 const exportedTypes = new Set([
     'Aggregate',
@@ -118,6 +120,10 @@ export function getOwningContextName(node: AstNode): string | undefined {
         current = current.$container;
     }
     return undefined;
+}
+
+export function getOwningAggregate(node: AstNode): Aggregate | undefined {
+    return AstUtils.getContainerOfType(node, isAggregate);
 }
 
 function getContextNameForIndexing(node: AstNode): string | undefined {
@@ -628,8 +634,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const sourceApplication = isApplicationService(source.$container);
         const sourceQueryService = isQueryService(source.$container) ? source.$container : undefined;
         const sourceAggregate = this.getOwningAggregateNode(source);
-        const reachable = this.getReachableMethods(target);
-        if (sourceQueryService && (target.$container !== sourceQueryService || this.hasBehaviorSideEffects(target))) {
+        const reachable = getReachableMethods(target);
+        if (sourceQueryService && (target.$container !== sourceQueryService || hasBehaviorSideEffects(target))) {
             return false;
         }
         if (isDomainService(source.$container) && (this.getOwningAggregateNode(target) !== undefined ||
@@ -691,32 +697,6 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return true;
     }
 
-    private getReachableMethods(method: Method, visited = new Set<Method>()): Method[] {
-        if (visited.has(method)) {
-            return [];
-        }
-        visited.add(method);
-        const reachable: Method[] = [];
-        for (const invocation of method.invocations) {
-            const target = invocation.targets.at(-1)?.ref;
-            if (isMethod(target)) {
-                reachable.push(target, ...this.getReachableMethods(target, visited));
-            }
-        }
-        return reachable;
-    }
-
-    private hasBehaviorSideEffects(method: Method, visited = new Set<Method>()): boolean {
-        if (visited.has(method)) {
-            return false;
-        }
-        visited.add(method);
-        return method.transitions.length > 0 || method.emissions.length > 0 || method.invocations.some(invocation => {
-            const target = invocation.targets.at(-1)?.ref;
-            return isMethod(target) && this.hasBehaviorSideEffects(target, visited);
-        });
-    }
-
     private isCrossContext(source: AstNode, target: AstNode): boolean {
         const sourceContext = getOwningContextName(source);
         const targetContext = getOwningContextName(target);
@@ -724,14 +704,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private getOwningAggregateNode(node: AstNode): import('./generated/ast.js').Aggregate | undefined {
-        let current: AstNode | undefined = node;
-        while (current) {
-            if (current.$type === 'Aggregate') {
-                return current as import('./generated/ast.js').Aggregate;
-            }
-            current = current.$container;
-        }
-        return undefined;
+        return getOwningAggregate(node);
     }
 
     private getPathSegmentCompletions(

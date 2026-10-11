@@ -1,7 +1,9 @@
 import {
     AstNodeDescription,
+    AstUtils,
     type LangiumDocument,
-    UriUtils
+    UriUtils,
+    isReference
 } from 'langium';
 import {
     CodeActionKind,
@@ -23,7 +25,7 @@ export class ThinaiCodeActionProvider {
     ): CodeAction[] {
         const actions: CodeAction[] = [];
         for (const diagnostic of params.context.diagnostics) {
-            const referenceName = this.getUnresolvedReferenceName(String(diagnostic.message));
+            const referenceName = this.getUnresolvedReferenceName(document, diagnostic.range);
             if (!referenceName) {
                 continue;
             }
@@ -54,8 +56,27 @@ export class ThinaiCodeActionProvider {
         return actions;
     }
 
-    private getUnresolvedReferenceName(message: string): string | undefined {
-        return /Could not resolve reference to .* named '([^']+)'/.exec(message)?.[1];
+    private getUnresolvedReferenceName(
+        document: LangiumDocument,
+        range: CodeActionParams['context']['diagnostics'][number]['range']
+    ): string | undefined {
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return undefined;
+        }
+        const start = document.textDocument.offsetAt(range.start);
+        const end = document.textDocument.offsetAt(range.end);
+        for (const node of AstUtils.streamAst(model)) {
+            for (const referenceInfo of AstUtils.streamReferences(node)) {
+                const reference = referenceInfo.reference;
+                const referenceNode = reference.$refNode;
+                if (isReference(reference) && !reference.ref && referenceNode &&
+                    referenceNode.offset <= start && end <= referenceNode.end) {
+                    return reference.$refText || undefined;
+                }
+            }
+        }
+        return undefined;
     }
 
     private findImportCandidates(document: LangiumDocument, name: string): AstNodeDescription[] {

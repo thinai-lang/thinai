@@ -47,6 +47,70 @@ describe('Validating', () => {
             }
         `);
         expect(multiline.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required')).toEqual([]);
+        expect(multiline.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required-after-open-brace'))
+            .toEqual([]);
+    });
+
+    test('requires the first statement in a non-empty block to follow the opening brace on a new line', async () => {
+        const inline = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        value object OrderId { raw: string }
+        root entity Order {
+            identifier id: OrderId
+        }
+    }
+}`);
+        expect(inline.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required-after-open-brace'))
+            .toHaveLength(1);
+
+        const inlineMethodBody = await parse(`bounded context Ordering
+in bounded context Ordering {
+    application service Orders {
+        method place() { behavior "Place the order" }
+    }
+}`);
+        expect(inlineMethodBody.diagnostics?.filter(diagnostic =>
+            diagnostic.code === 'line-break-required-after-open-brace'
+        )).toHaveLength(1);
+
+        const braceInComment = await parse(`bounded context Ordering
+in bounded context Ordering {
+    domain service Orders /* fake {
+    */ { method place() {} }
+}`);
+        expect(braceInComment.diagnostics?.filter(diagnostic =>
+            diagnostic.code === 'line-break-required-after-open-brace'
+        )).toHaveLength(1);
+
+        const emptyBlock = await parse(`bounded context Ordering
+in bounded context Ordering {
+    module Empty {}
+}`);
+        expect(emptyBlock.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required-after-open-brace'))
+            .toEqual([]);
+    });
+
+    test('allows entity and value-object members in source order', async () => {
+        const document = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            method place() {}
+            constructor(id: OrderId) {}
+        }
+        value object OrderId {
+            raw: string
+            method normalized() {}
+            constructor(raw: string) {}
+        }
+    }
+}`);
+        expect(document.parseResult.parserErrors).toEqual([]);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required-after-open-brace'))
+            .toEqual([]);
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required')).toEqual([]);
     });
 
     test('accepts aggregate effects and an application-service command', async () => {
@@ -1581,5 +1645,7 @@ function diagnosticToString(diagnostic: Diagnostic): string {
 
 function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
     // Most semantic-validation fixtures are compact; line-break policy has dedicated coverage.
-    return (document.diagnostics ?? []).filter(diagnostic => diagnostic.code !== 'line-break-required');
+    return (document.diagnostics ?? []).filter(diagnostic =>
+        diagnostic.code !== 'line-break-required' && diagnostic.code !== 'line-break-required-after-open-brace'
+    );
 }

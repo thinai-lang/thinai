@@ -1502,5 +1502,7 @@ function checkDocumentValid(document: LangiumDocument): string | undefined {
 
 function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
     // These fixtures focus on linking; line-break policy is covered separately.
-    return (document.diagnostics ?? []).filter(diagnostic => diagnostic.code !== 'line-break-required');
+    return (document.diagnostics ?? []).filter(diagnostic =>
+        diagnostic.code !== 'line-break-required' && diagnostic.code !== 'line-break-required-after-open-brace'
+    );
 }

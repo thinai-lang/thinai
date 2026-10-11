@@ -130,12 +130,12 @@ AggregateMember:
 
 Entity:
     (root?='root')? 'entity' name=ID
-    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ;
+    '{' (constructors+=Constructor | methods+=Method | fields+=Field)* '}' ;
 
 ValueObject:
     'value' 'object' name=ID
     ('mirrors' (mirrorsPath+=[NamedDeclaration:ID] '.')* mirrors=[ValueObject:ID])?
-    '{' constructors+=Constructor* methods+=Method* fields+=Field* '}' ;
+    '{' (constructors+=Constructor | methods+=Method | fields+=Field)* '}' ;
 
 EnumType:
     'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ;

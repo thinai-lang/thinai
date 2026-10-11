@@ -31,7 +31,6 @@ import type {
     Field,
     Journey,
     JourneyStep,
-    MethodInvocation,
     Method,
     Model,
     Module,
@@ -78,9 +77,17 @@ import {
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { getExportedName, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
+import { getExportedName, getOwningAggregate, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
+import {
+    canDeclareProjects,
+    canDeclareTransition,
+    getEventEmissionMode,
+    getInvokedMethod,
+    getReachableMethods,
+    hasBehaviorSideEffects
+} from './thinai-operation-utils.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
-import { isLineSeparatedSibling } from './thinai-layout.js';
+import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -306,8 +313,19 @@ export class ThinaiValidator {
 
         const textDocument = AstUtils.getDocument(model).textDocument;
         const text = textDocument.getText();
-        for (const children of siblings.values()) {
+        for (const [parent, children] of siblings) {
             children.sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
+            const first = children[0];
+            const parentCst = parent.$cstNode;
+            const openingBrace = parentCst ? findCstTokenOffset(parentCst, '{') : undefined;
+            if (first?.$cstNode && openingBrace !== undefined && openingBrace < first.$cstNode.offset &&
+                textDocument.positionAt(openingBrace).line === first.$cstNode.range.start.line) {
+                accept('error', 'Start the first statement on a new line after the opening brace.', {
+                    node: first,
+                    range: first.$cstNode.range,
+                    code: 'line-break-required-after-open-brace'
+                });
+            }
             for (let index = 1; index < children.length; index++) {
                 const previous = children[index - 1]!;
                 const current = children[index]!;
@@ -389,8 +407,13 @@ export class ThinaiValidator {
         this.checkCrossContextTypeUse(field, typeReferences, accept);
         this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModel(field.$container));
         const isDataObjectField = isDataObject(field.$container);
-        if (field.identifier && isDataObjectField) {
-            accept('error', 'Data objects have no entity identity.', { node: field, property: 'identifier' });
+        if (field.identifier && !isEntity(field.$container)) {
+            const message = isDataObjectField
+                ? 'Data objects have no entity identity.'
+                : isReadModel(field.$container)
+                    ? 'Read-model fields are projection data, not DDD entity identifiers.'
+                    : 'Only entity fields may be marked as identifiers.';
+            accept('error', message, { node: field, property: 'identifier' });
         }
         if (!isDataObjectField && typeReferences.some(reference => isDataObject(reference.ref))) {
             accept('error', 'Data objects may be used in method signatures or nested in other data objects, not as domain or read-model state.', {
@@ -404,12 +427,6 @@ export class ThinaiValidator {
             accept('error', 'Data objects may contain value data, but not entities or read models.', {
                 node: field,
                 property: 'type'
-            });
-        }
-        if (isReadModel(field.$container) && field.identifier) {
-            accept('error', 'Read-model fields are projection data, not DDD entity identifiers.', {
-                node: field,
-                property: 'identifier'
             });
         }
         if (isReadModel(field.$container) && typeReferences.some(reference =>
@@ -654,8 +671,8 @@ export class ThinaiValidator {
         const applicationService = isApplicationService(method.$container) ? method.$container : undefined;
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
-        const projector = projectorService !== undefined;
-        if (method.projects.length > 0 && !projector) {
+        const emissionMode = getEventEmissionMode(method);
+        if (method.projects.length > 0 && !canDeclareProjects(method)) {
             accept('error', 'The projects clause is allowed only in projector methods.', {
                 node: method,
                 property: 'projects'
@@ -676,7 +693,7 @@ export class ThinaiValidator {
             }
         }
         if (eventParameters.length > 0) {
-            if (!applicationService && !projector) {
+            if (!applicationService && !projectorService) {
                 accept('error', 'Event-typed method parameters are allowed only on application-service handlers and projectors.', {
                     node: method,
                     property: 'parameters'
@@ -717,7 +734,7 @@ export class ThinaiValidator {
             }
         }
         for (const invocation of method.invocations) {
-            const target = this.getInvokedMethod(invocation);
+            const target = getInvokedMethod(invocation);
             if (!target) {
                 accept('error', 'An invokes path must end at a method.', {
                     node: method,
@@ -748,7 +765,7 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
-            const reachable = this.getReachableMethods(target);
+            const reachable = getReachableMethods(target);
             if (!applicationService && !isApplicationService(target.$container) &&
                 reachable.some(candidate => isApplicationService(candidate.$container))) {
                 accept('error', 'Domain behavior cannot transitively invoke an application-service method.', {
@@ -816,7 +833,7 @@ export class ThinaiValidator {
                     property: 'invocations'
                 });
             }
-            if (queryService && (target.$container !== queryService || this.hasBehaviorSideEffects(target))) {
+            if (queryService && (target.$container !== queryService || hasBehaviorSideEffects(target))) {
                 accept('error', 'A query service may invoke only read-only query helpers in the same query service.', {
                     node: method,
                     property: 'invocations'
@@ -838,10 +855,9 @@ export class ThinaiValidator {
         if (queryService) {
             this.checkQueryServiceMethod(method, queryService, accept);
         }
-        if (projector) {
+        if (projectorService) {
             this.checkProjectorMethod(method, projectorService!, accept);
         }
-        const owningAggregate = this.getOwningAggregate(method);
         for (const emission of method.emissions) {
             for (const emitted of emission.events) {
                 const emittedEvent = emitted.target.ref;
@@ -858,14 +874,14 @@ export class ThinaiValidator {
                     accept('error', 'A query cannot emit events.', { node: emission, property: 'events' });
                     continue;
                 }
-                if (owningAggregate && this.isAggregateRootMethod(method, owningAggregate)) {
-                    if (!isDomainEvent(emittedEvent)) {
+            if (emissionMode === 'domain') {
+                if (!isDomainEvent(emittedEvent)) {
                         accept('error', 'Aggregate-root behavior may emit only domain events.', {
                             node: emission,
                             property: 'events'
                         });
                     }
-                } else if (applicationService && eventParameters.length === 1 && isDomainEvent(this.getEventParameterType(eventParameters[0]))) {
+            } else if (emissionMode === 'integration') {
                     if (!isIntegrationEvent(emittedEvent)) {
                         accept('error', 'A domain-event handler may emit only integration events.', {
                             node: emission,
@@ -880,11 +896,6 @@ export class ThinaiValidator {
                 }
             }
         }
-    }
-
-    private getInvokedMethod(invocation: MethodInvocation): Method | undefined {
-        const target = invocation.targets.at(-1)?.ref;
-        return isMethod(target) ? target : undefined;
     }
 
     checkApplicationService(service: ApplicationService, accept: ValidationAcceptor): void {
@@ -986,7 +997,7 @@ export class ThinaiValidator {
         const aggregate = this.getOwningAggregate(transition);
         const method = transition.$container;
         const entity = method.$container;
-        if (!aggregate || !isEntity(entity)) {
+        if (!aggregate || !canDeclareTransition(method) || !isEntity(entity)) {
             accept('error', 'A state transition must be declared in an entity method inside an aggregate.', {
                 node: transition,
                 keyword: 'transition'
@@ -1420,36 +1431,6 @@ export class ThinaiValidator {
         }
     }
 
-    private hasBehaviorSideEffects(method: Method, visited = new Set<Method>()): boolean {
-        if (visited.has(method)) {
-            return false;
-        }
-        visited.add(method);
-        if (method.transitions.length > 0 || method.emissions.length > 0) {
-            return true;
-        }
-        return method.invocations.some(invocation => {
-            const target = this.getInvokedMethod(invocation);
-            return target !== undefined && this.hasBehaviorSideEffects(target, visited);
-        });
-    }
-
-    private getReachableMethods(method: Method, visited = new Set<Method>()): Method[] {
-        if (visited.has(method)) {
-            return [];
-        }
-        visited.add(method);
-        const reachable: Method[] = [];
-        for (const invocation of method.invocations) {
-            const target = this.getInvokedMethod(invocation);
-            if (!target) {
-                continue;
-            }
-            reachable.push(target, ...this.getReachableMethods(target, visited));
-        }
-        return reachable;
-    }
-
     private isAggregateRootMethod(method: Method, aggregate: Aggregate): boolean {
         const root = aggregate.members.find(member => isEntity(member) && member.root);
         return isEntity(root) && method.$container === root;
@@ -1746,14 +1727,7 @@ export class ThinaiValidator {
     }
 
     private getOwningAggregate(node: AstNode): Aggregate | undefined {
-        let current: AstNode | undefined = node;
-        while (current) {
-            if (isAggregate(current)) {
-                return current;
-            }
-            current = current.$container;
-        }
-        return undefined;
+        return getOwningAggregate(node);
     }
 
     private collectTypeReferences(

@@ -1,7 +1,8 @@
 import type { LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
-import type * as vscode from 'vscode';
+import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
+import { applyConfiguredIndentationToCompletions } from 'thinai-language';
 
 let client: LanguageClient;
 
@@ -34,7 +35,33 @@ async function startLanguageClient(context: vscode.ExtensionContext): Promise<La
 
     // Options to control the language client
     const clientOptions: LanguageClientOptions = {
-        documentSelector: [{ scheme: '*', language: 'thinai' }]
+        documentSelector: [{ scheme: '*', language: 'thinai' }],
+        middleware: {
+            provideCompletionItem: async (document, position, completionContext, token, next) => {
+                const completion = await next(document, position, completionContext, token);
+                if (!completion) {
+                    return completion;
+                }
+                const editor = vscode.workspace.getConfiguration('editor', document.uri);
+                const textEditor = vscode.window.visibleTextEditors.find(candidate =>
+                    candidate.document.uri.toString() === document.uri.toString()
+                );
+                const configuredTabSize = textEditor?.options.tabSize ?? editor.get<unknown>('tabSize', 2);
+                const tabSize = typeof configuredTabSize === 'number' && configuredTabSize > 0
+                    ? configuredTabSize
+                    : 2;
+                const configuredInsertSpaces = editor.get<unknown>('insertSpaces', true);
+                const editorInsertSpaces = textEditor?.options.insertSpaces;
+                const insertSpaces = typeof editorInsertSpaces === 'boolean'
+                    ? editorInsertSpaces
+                    : typeof configuredInsertSpaces === 'boolean' ? configuredInsertSpaces : true;
+                const items = Array.isArray(completion) ? completion : completion.items;
+                const adjustedItems = applyConfiguredIndentationToCompletions(items, tabSize, insertSpaces);
+                return Array.isArray(completion)
+                    ? adjustedItems
+                    : { ...completion, items: adjustedItems };
+            }
+        }
     };
 
     // Create the language client and start the client.

@@ -11,6 +11,16 @@
         ["[", "]"],
         ["(", ")"]
     ],
+    "indentationRules": {
+        "increaseIndentPattern": "^(?!\\s*//).*\\{\\s*$",
+        "decreaseIndentPattern": "^\\s*\\}"
+    },
+    "onEnterRules": [
+        {
+            "beforeText": "^\\s*(?:identifier\\s+)?[A-Za-z_][A-Za-z0-9_]*\\??\\s*:\\s*\\S.*$",
+            "action": { "indent": "none" }
+        }
+    ],
     // symbols that are auto closed when typing
     "autoClosingPairs": [
         ["{", "}"],

@@ -1,31 +1,6 @@
-import { isCompositeCstNode, isLeafCstNode, type AstNode, type CstNode } from 'langium';
+import { CstUtils, isCompositeCstNode, isLeafCstNode, type AstNode } from 'langium';
 import { AbstractFormatter, Formatting } from 'langium/lsp';
-
-const blockTypes = new Set([
-    'BoundedContextPart',
-    'ContextMap',
-    'ContextMapEndpoint',
-    'SharedKernelRelationship',
-    'ApplicationService',
-    'SharedKernel',
-    'Module',
-    'Aggregate',
-    'Entity',
-    'ValueObject',
-    'EnumType',
-    'ReadModel',
-    'DataObject',
-    'Projector',
-    'DomainService',
-    'Method',
-    'Constructor',
-    'QueryService',
-    'Factory',
-    'DomainEvent',
-    'IntegrationEvent',
-    'Journey',
-    'JourneyActor'
-]);
+import { getBlockNestingDepth, isBlockNodeType } from './thinai-layout.js';
 
 const commaSeparatedTypes = new Set([
     'Import',
@@ -192,7 +167,7 @@ export class ThinaiFormatter extends AbstractFormatter {
             formatter.keywords('<', '>').surround(Formatting.noSpace());
         }
 
-        if (blockTypes.has(node.$type)) {
+        if (isBlockNodeType(node.$type)) {
             const open = formatter.keyword('{');
             const close = formatter.keyword('}');
             const children = this.getBlockChildren(node);
@@ -228,14 +203,12 @@ export class ThinaiFormatter extends AbstractFormatter {
                 methods?: AstNode[];
                 fields?: AstNode[];
             };
-            this.separateGroup(formatter, declaration.constructors, declaration.methods);
-            this.separateGroup(
-                formatter,
-                declaration.methods?.length ? declaration.methods : declaration.constructors,
-                declaration.fields
-            );
-            this.separateSiblings(formatter, declaration.constructors);
-            this.separateSiblings(formatter, declaration.methods);
+            const members = [
+                ...(declaration.constructors ?? []),
+                ...(declaration.methods ?? []),
+                ...(declaration.fields ?? [])
+            ].sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
+            this.separateOrderedMembers(formatter, members);
         } else if (['ApplicationService', 'Projector', 'DomainService', 'QueryService', 'Factory'].includes(node.$type)) {
             const declaration = node as AstNode & { methods?: AstNode[] };
             this.separateSiblings(formatter, declaration.methods);
@@ -281,6 +254,17 @@ export class ThinaiFormatter extends AbstractFormatter {
         }
     }
 
+    private separateOrderedMembers(formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>, nodes: AstNode[]): void {
+        for (let index = 1; index < nodes.length; index++) {
+            const previous = nodes[index - 1]!;
+            const current = nodes[index]!;
+            if (previous.$type === 'Field' && current.$type === 'Field') {
+                continue;
+            }
+            this.prependSiblingSpacing(formatter, previous, current, this.blankLineIndent());
+        }
+    }
+
     private separateGroup(
         formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>,
         previous?: AstNode[],
@@ -305,12 +289,11 @@ export class ThinaiFormatter extends AbstractFormatter {
             return;
         }
         const gapStart = previousCst?.end ?? parentCst.offset;
-        const leadingComments = this.getLeafNodes(parentCst).filter(comment =>
-            isLeafCstNode(comment) &&
+        const leadingComments = CstUtils.flattenCst(parentCst).filter(comment =>
             (comment.tokenType.name === 'SL_COMMENT' || comment.tokenType.name === 'ML_COMMENT') &&
             comment.offset >= gapStart && comment.end <= nextCst.offset &&
             (!previousCst || comment.range.start.line > previousCst.range.end.line)
-        );
+        ).toArray();
         const firstLeadingComment = leadingComments[0];
         if (firstLeadingComment) {
             formatter.cst([firstLeadingComment]).prepend({
@@ -327,15 +310,7 @@ export class ThinaiFormatter extends AbstractFormatter {
     }
 
     private getBlockIndentation(node: AstNode): number {
-        let indentation = 0;
-        let container = node.$container;
-        while (container) {
-            if (blockTypes.has(container.$type)) {
-                indentation++;
-            }
-            container = container.$container;
-        }
-        return indentation;
+        return getBlockNestingDepth(node.$container);
     }
 
     private alignKeyword(node: AstNode, keyword: string, indentation: number): void {
@@ -343,21 +318,11 @@ export class ThinaiFormatter extends AbstractFormatter {
         if (!cstNode || !isCompositeCstNode(cstNode)) {
             return;
         }
-        const keywordNode = this.getLeafNodes(cstNode).find(leaf => leaf.text === keyword);
+        const keywordNode = CstUtils.flattenCst(cstNode).find(leaf => leaf.text === keyword);
         const start = keywordNode?.range.start;
         if (start) {
             this.continuationColumns.set(`${start.line}:${start.character}`, { indentation, prefixLength: 0 });
         }
-    }
-
-    private getLeafNodes(node: CstNode): CstNode[] {
-        if (isLeafCstNode(node)) {
-            return [node];
-        }
-        if (!isCompositeCstNode(node)) {
-            return [];
-        }
-        return node.content.flatMap(child => this.getLeafNodes(child));
     }
 
     private getBlockChildren(node: AstNode): AstNode[] {
@@ -398,7 +363,7 @@ export class ThinaiFormatter extends AbstractFormatter {
                     ...(properties.constructors ?? []),
                     ...(properties.methods ?? []),
                     ...(properties.fields ?? [])
-                ];
+                ].sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
                 break;
             case 'EnumType':
                 children = properties.values ?? [];

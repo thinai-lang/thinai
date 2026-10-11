@@ -3,10 +3,10 @@ import { readFile } from 'node:fs/promises';
 import { EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
 import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
-import { createThinaiServices } from 'thinai-language';
+import { applyConfiguredIndentation, applyConfiguredIndentationToCompletions, createThinaiServices } from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
-import { CompletionItemKind, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
+import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -21,6 +21,26 @@ afterEach(async () => {
 });
 
 describe('LSP services', () => {
+    test('applies configured indentation to structurally indented completion edits', () => {
+        const completionText = '\n  method\n  }';
+        expect(applyConfiguredIndentation(completionText, 2, 2, true)).toBe('\n    method\n  }');
+        expect(applyConfiguredIndentation(completionText, 2, 4, true)).toBe('\n        method\n  }');
+        expect(applyConfiguredIndentation(completionText, 2, 4, false)).toBe('\n\t\tmethod\n  }');
+        expect(applyConfiguredIndentation('\r\n  method', 1, 2, true)).toBe('\r\n  method');
+        const completionItems = [{
+            label: 'method',
+            data: { thinaiIndentationDepth: 2 },
+            textEdit: {
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                newText: '\n  method'
+            }
+        }];
+        expect(applyConfiguredIndentationToCompletions(completionItems, 4, true)[0]?.textEdit?.newText)
+            .toBe('\n        method');
+        expect(applyConfiguredIndentationToCompletions(completionItems, 4, false)[0]?.textEdit?.newText)
+            .toBe('\n\t\tmethod');
+    });
+
     test('formats nested Thinai declarations using the editor indentation options', async () => {
         const source = 'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id:OrderId items:Map<string,number> } } enum OrderStatus { Draft,Placed } } actor Customer';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
@@ -71,6 +91,44 @@ describe('LSP services', () => {
             textDocument: { uri: formattedDocument.uri.toString() },
             options: { tabSize: 2, insertSpaces: true }
         })).toEqual([]);
+    });
+
+    test('preserves field, method, and constructor source order when formatting', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            method place() {}
+            constructor(id: OrderId) {}
+        }
+        value object OrderId {
+            raw: string
+            method normalize() {}
+            constructor(raw: string) {}
+        }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/value-object-member-order-formatting.tni'), source
+        );
+        documents.push(document);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+        expect(formatted.indexOf('raw: string')).toBeLessThan(formatted.indexOf('method normalize'));
+        expect(formatted.indexOf('method normalize')).toBeLessThan(formatted.indexOf('constructor(raw'));
+        expect(formatted.indexOf('identifier id: OrderId')).toBeLessThan(formatted.indexOf('method place'));
+        expect(formatted.indexOf('method place')).toBeLessThan(formatted.indexOf('constructor(id'));
     });
 
     test('formats context map endpoints and shared-kernel participant lists', async () => {
@@ -1193,8 +1251,9 @@ bounded context Second`;
         });
         const labels = completion?.items.map(item => item.label) ?? [];
         expect(labels).toContain('when');
-        expect(labels).not.toContain('invokes');
+        expect(labels).toContain('invokes');
         expect(labels).not.toContain('emits');
+        expect(completion?.items.find(item => item.label === 'invokes')?.detail).toBe('Language keyword');
         expect(completion?.items.find(item => item.label === 'when')?.textEdit).toMatchObject({
             newText: ' when',
             range: { start: document.textDocument.positionAt(offset), end: document.textDocument.positionAt(offset) }
@@ -1240,7 +1299,9 @@ bounded context Second`;
             textDocument: { uri: sameLine.uri.toString() },
             position: sameLinePosition
         });
-        expect(sameLineCompletion?.items.map(item => item.label)).toEqual(['realizes']);
+        expect(sameLineCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining([
+            'realizes', 'bounded context', 'subdomain', 'context map'
+        ]));
 
         const nextLineText = 'bounded context Ordering\n';
         const nextLine = services.shared.workspace.LangiumDocuments.createDocument(
@@ -1336,7 +1397,7 @@ bounded context Second`;
             ['read m', 'model'],
             ['data o', 'object'],
             ['value o', 'object'],
-            ['root e', 'entity'],
+            ['bounded context X\nin bounded context X { aggregate A { root e', 'entity'],
             ['integration e', 'event'],
             ['depends o', 'on'],
             ['context m', 'map'],
@@ -1489,7 +1550,7 @@ bounded context Second`;
         ]));
     });
 
-    test('offers relationship-start keywords after a newline, not after a completed same-line relationship', async () => {
+    test('offers relationship-start keywords after a newline and after a completed same-line relationship', async () => {
         const cases = [
             { name: 'customer-supplier', relationship: 'customer Alpha ' },
             { name: 'partnership', relationship: 'partner Alpha ' },
@@ -1531,10 +1592,10 @@ bounded context Second`;
                 textDocument: { uri: completedLine.uri.toString() },
                 position: completedLine.textDocument.positionAt(completedLineText.indexOf(relationship) + relationship.length)
             });
-            expect(sameLineCompletion?.items, relationship).toEqual([]);
-            for (const keyword of ['customer', 'partner', 'separateWays', 'sharedKernel']) {
-                expect(sameLineCompletion?.items.map(item => item.label), relationship).not.toContain(keyword);
-            }
+            expect(sameLineCompletion?.items.map(item => item.label), relationship).toEqual(expect.arrayContaining([
+                'customer', 'partner', 'separateWays', 'sharedKernel'
+            ]));
+            expect(sameLineCompletion?.items.every(item => item.data?.thinaiSiblingCompletion === true), relationship).toBe(true);
         }
 
         const nextLineText = 'bounded context Alpha\nbounded context Beta\ncontext map Relations {\n    customer Alpha -> supplier Beta\n    \n}';
@@ -1567,7 +1628,9 @@ bounded context Second`;
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(source.indexOf(`${completionCase.relationship} ${completionCase.prefix}`) + `${completionCase.relationship} ${completionCase.prefix}`.length)
             });
-            expect(completion?.items, completionCase.relationship).toEqual([]);
+            expect(completion?.items.some(item => item.data?.thinaiSiblingCompletion === true), completionCase.relationship).toBe(true);
+            expect(completion?.items.find(item => item.data?.thinaiSiblingCompletion === true)?.textEdit?.newText)
+                .toMatch(/^\n\s+/u);
         }
     });
 
@@ -1724,7 +1787,7 @@ bounded context Second`;
         }
     });
 
-    test('offers top-level keywords only after a newline following a completed declaration', async () => {
+    test('offers top-level sibling keywords from a completed declaration on the same line', async () => {
         const sameLineText = 'bounded context Ordering realizes OrderManagement ';
         const sameLine = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/top-level-same-line-completion.tni'), sameLineText
@@ -1736,7 +1799,17 @@ bounded context Second`;
         });
         const siblingKeywords = ['bounded context', 'subdomain', 'context map'];
         for (const keyword of siblingKeywords) {
-            expect(sameLineCompletion?.items.map(item => item.label)).not.toContain(keyword);
+            expect(sameLineCompletion?.items.map(item => item.label)).toContain(keyword);
+            const item = sameLineCompletion?.items.find(candidate => candidate.label === keyword);
+            expect(item?.detail).toBe('Language keyword');
+            expect(item?.data?.thinaiSiblingCompletion).toBe(true);
+            expect(item?.textEdit).toMatchObject({
+                range: {
+                    start: sameLine.textDocument.positionAt(sameLineText.trimEnd().length),
+                    end: sameLine.textDocument.positionAt(sameLineText.length)
+                },
+                newText: `\n${keyword}`
+            });
         }
 
         const partialSiblingText = `${sameLineText.trimEnd()} bounded `;
@@ -1748,7 +1821,28 @@ bounded context Second`;
             textDocument: { uri: partialSibling.uri.toString() },
             position: partialSibling.textDocument.positionAt(partialSiblingText.length)
         });
-        expect(partialSiblingCompletion?.items ?? []).toEqual([]);
+        const partialSiblingItem = partialSiblingCompletion?.items.find(item => item.label === 'bounded context');
+        expect(partialSiblingItem?.detail).toBe('Language keyword');
+        expect(partialSiblingItem?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(partialSiblingItem?.textEdit).toMatchObject({
+            range: {
+                start: partialSibling.textDocument.positionAt(sameLineText.trimEnd().length),
+                end: partialSibling.textDocument.positionAt(partialSiblingText.length)
+            },
+            newText: '\nbounded context'
+        });
+
+        const crlfText = 'subdomain Commerce\r\nbounded context Ordering realizes OrderManagement ';
+        const crlfDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/top-level-crlf-sibling-completion.tni'), crlfText
+        );
+        documents.push(crlfDocument);
+        const crlfCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(crlfDocument, {
+            textDocument: { uri: crlfDocument.uri.toString() },
+            position: crlfDocument.textDocument.positionAt(crlfText.length)
+        });
+        expect(crlfCompletion?.items.find(item => item.label === 'bounded context')?.textEdit)
+            .toMatchObject({ newText: '\r\nbounded context' });
 
         const nextLineText = `${sameLineText.trimEnd()}\n`;
         const nextLine = services.shared.workspace.LangiumDocuments.createDocument(
@@ -1833,7 +1927,7 @@ bounded context Second`;
         }
     });
 
-    test('offers context-member suggestions after a newline, not after a same-line sibling', async () => {
+    test('offers context-member sibling suggestions on the same line and after a newline', async () => {
         const sameLineText = 'bounded context Ordering\nin bounded context Ordering {\n    event OrderPlaced \n}';
         const sameLine = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/context-member-same-line-completion.tni'), sameLineText
@@ -1843,7 +1937,11 @@ bounded context Second`;
             textDocument: { uri: sameLine.uri.toString() },
             position: sameLine.textDocument.positionAt(sameLineText.indexOf('event OrderPlaced') + 'event OrderPlaced '.length)
         });
-        expect(sameLineCompletion?.items).toEqual([]);
+        expect(sameLineCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining([
+            'aggregate', 'application service', 'module', 'value object'
+        ]));
+        const sameLineSibling = sameLineCompletion?.items.find(item => item.label === 'aggregate');
+        expect(sameLineSibling?.textEdit).toMatchObject({ newText: '\n    aggregate' });
 
         const nextLineText = 'bounded context Ordering\nin bounded context Ordering {\n    event OrderPlaced\n    \n}';
         const nextLine = services.shared.workspace.LangiumDocuments.createDocument(
@@ -1857,6 +1955,318 @@ bounded context Second`;
         expect(nextLineCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining([
             'aggregate', 'application service', 'module', 'value object'
         ]));
+    });
+
+    test('waits for a statement boundary while typing a bare declaration name', async () => {
+        const declaration = 'bounded context Ordering\nin bounded context Ordering { domain service Curr';
+        const inName = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/sibling-completion-at-domain-service-name.tni'), declaration
+        );
+        documents.push(inName);
+        const inNameCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(inName, {
+            textDocument: { uri: inName.uri.toString() },
+            position: inName.textDocument.positionAt(declaration.length)
+        });
+        expect(inNameCompletion?.items.some(item => item.data?.thinaiSiblingCompletion === true)).toBe(false);
+
+        const completeDeclaration = `${declaration.replace(/Curr$/u, 'Currency')} `;
+        const afterName = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/sibling-completion-after-domain-service-name.tni'), completeDeclaration
+        );
+        documents.push(afterName);
+        const afterNameCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(afterName, {
+            textDocument: { uri: afterName.uri.toString() },
+            position: afterName.textDocument.positionAt(completeDeclaration.length)
+        });
+        expect(afterNameCompletion?.items.some(item => item.data?.thinaiSiblingCompletion === true)).toBe(true);
+        expect(afterNameCompletion?.items.map(item => item.label)).toContain('value object');
+    });
+
+    test('does not offer same-line siblings while the current field or method is incomplete', async () => {
+        const cases = [
+            {
+                source: 'shared kernel CommonTypes { value object Currency { raw: string amount: str',
+                name: 'incomplete field type',
+                forbidden: ['constructor', 'method']
+            },
+            {
+                source: 'shared kernel CommonTypes { value object Currency { raw: string method normalize',
+                name: 'incomplete method signature',
+                forbidden: ['constructor', 'method']
+            },
+            {
+                source: 'shared kernel CommonTypes { value object Currency',
+                name: 'incomplete value-object declaration',
+                forbidden: ['enum', 'domain service', 'module']
+            },
+            {
+                source: 'bounded context Ordering\nin bounded context Ordering { module Api { exposes',
+                name: 'incomplete exposure',
+                forbidden: ['aggregate', 'application service', 'value object']
+            },
+            {
+                source: 'bounded context Ordering\nin bounded context Ordering { repository OrderRepository',
+                name: 'repository without manages target',
+                forbidden: ['aggregate', 'application service', 'value object']
+            },
+            {
+                source: 'bounded context Ordering\nin bounded context Ordering { query repository OrderQueries',
+                name: 'query repository without serves target',
+                forbidden: ['aggregate', 'application service', 'value object']
+            },
+            {
+                source: 'shared kernel CommonTypes { value object Currency { raw: string method normalize() { behavior "Normalize',
+                name: 'unfinished behavior text',
+                forbidden: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits']
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/incomplete-same-line-sibling-${index}.tni`), completionCase.source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(completionCase.source.length)
+            });
+            expect(completion?.items.filter(item => item.data?.thinaiSiblingCompletion === true).map(item => item.label), completionCase.name)
+                .toEqual([]);
+            for (const label of completionCase.forbidden) {
+                expect(completion?.items.map(item => item.label), completionCase.name).not.toContain(label);
+            }
+        }
+    });
+
+    test('does not repeat the method keyword while its declaration is being typed', async () => {
+        const sources = [
+            'shared kernel CommonTypes {\n  value object Currency {\n    method ',
+            'shared kernel CommonTypes {\n  value object Currency {\n    method normal'
+        ];
+        for (const [index, source] of sources.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/method-keyword-not-repeated-${index}.tni`), source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(source.length)
+            });
+            expect(completion?.items.map(item => item.label), source).not.toContain('method');
+        }
+    });
+
+    test('does not suggest method-body siblings before invocation, emission, or transition syntax is complete', async () => {
+        const cases = [
+            {
+                name: 'invocation without a target',
+                source: 'bounded context Ordering\nin bounded context Ordering { application service App { method run() { invokes'
+            },
+            {
+                name: 'emission without an event',
+                source: 'bounded context Ordering\nin bounded context Ordering { application service App { method run() { emits'
+            },
+            {
+                name: 'transition missing a destination state',
+                source: 'bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method change() { transition status from Draft to'
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/incomplete-method-sibling-${index}.tni`), completionCase.source
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(completionCase.source.length)
+            });
+            expect(completion?.items.some(item => item.data?.thinaiSiblingCompletion === true), completionCase.name)
+                .toBe(false);
+            for (const sibling of ['invariant', 'emits', 'transition', 'invokes', 'projects']) {
+                expect(completion?.items.map(item => item.label), completionCase.name).not.toContain(sibling);
+            }
+        }
+    });
+
+    test('indents sibling completions by structural nesting when existing statements are inline', async () => {
+        const prefix = 'bounded context Ordering\nin bounded context Ordering { aggregate Order { value object OrderId { raw: string } ';
+        const source = `${prefix}} }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/inline-nested-sibling-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        expect(completion?.items.map(item => item.label)).toContain('enum');
+        const enumCompletion = completion?.items.find(item => item.label === 'enum');
+        expect(enumCompletion?.detail).toBe('Language keyword');
+        expect(enumCompletion?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(enumCompletion?.insertTextMode).toBe(InsertTextMode.asIs);
+        expect(enumCompletion?.data).toMatchObject({ thinaiIndentationDepth: 2 });
+        expect(enumCompletion?.textEdit)
+            .toMatchObject({
+                range: {
+                    start: document.textDocument.positionAt(
+                        prefix.indexOf('value object OrderId { raw: string }') + 'value object OrderId { raw: string }'.length
+                    ),
+                    end: document.textDocument.positionAt(prefix.length)
+                },
+                newText: '\n    enum'
+            });
+    });
+
+    test('ignores braces inside behavior text when computing sibling indentation depth', async () => {
+        const prefix = 'bounded context Ordering\nin bounded context Ordering { application service App { method run() { invokes validate when "Keep {" ';
+        const source = `${prefix}} } }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/brace-in-specification-sibling-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const invocation = completion?.items.find(item => item.label === 'invokes');
+        expect(invocation?.data).toMatchObject({ thinaiIndentationDepth: 3 });
+        expect(invocation?.textEdit).toMatchObject({ newText: '\n      invokes' });
+    });
+
+    test('expands an empty value-object block when completing its first member', async () => {
+        const prefix = 'bounded context Ordering\nin bounded context Ordering {\n  value object OrderId {';
+        const source = `${prefix}}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/empty-value-object-member-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        for (const label of ['constructor', 'method']) {
+            const item = completion?.items.find(candidate => candidate.label === label);
+            expect(item?.detail).toBe('Language keyword');
+            expect(item?.data?.thinaiSiblingCompletion).toBe(true);
+            expect(item?.insertTextMode).toBe(InsertTextMode.asIs);
+            expect(item?.data).toMatchObject({ thinaiIndentationDepth: 2 });
+            expect(item?.textEdit).toMatchObject({
+                range: {
+                    start: document.textDocument.positionAt(prefix.length),
+                    end: document.textDocument.positionAt(source.length - 1)
+                },
+                newText: `\n    ${label}\n  `
+            });
+        }
+    });
+
+    test('corrects indentation when completing a member on an already-indented next line', async () => {
+        const prefix = `bounded context Ordering
+in bounded context Ordering {
+  value object Currency {
+    code: string
+        con`;
+        const source = `${prefix}
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/incorrectly-indented-value-object-member.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const constructor = completion?.items.find(item => item.label === 'constructor');
+        expect(constructor?.detail).toBe('Language keyword');
+        expect(constructor?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(constructor?.textEdit).toMatchObject({
+            range: {
+                start: document.textDocument.positionAt(prefix.lastIndexOf('\n') + 1),
+                end: document.textDocument.positionAt(prefix.length)
+            },
+            newText: '    constructor'
+        });
+    });
+
+    test('aligns blank-line member completion with the preceding field in a shared-kernel value object', async () => {
+        const prefix = `shared kernel CommonTypes {
+  value object Currency {
+    code: string
+        `;
+        const source = `${prefix}
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-kernel-value-object-member-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const method = completion?.items.find(item => item.label === 'method');
+        expect(method?.detail).toBe('Language keyword');
+        expect(method?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(method?.preselect).toBe(true);
+        expect(method?.textEdit).toMatchObject({
+            range: {
+                start: document.textDocument.positionAt(prefix.lastIndexOf('\n') + 1),
+                end: document.textDocument.positionAt(prefix.length)
+            },
+            newText: '    method'
+        });
+    });
+
+    test('replaces a partially typed same-line value-object member when moving it to a sibling line', async () => {
+        const prefix = 'shared kernel CommonTypes\n  value object Currency {\n    code: string met';
+        const source = `${prefix}\n  }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/partial-same-line-value-object-member.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const method = completion?.items.find(item => item.label === 'method');
+        expect(method?.detail).toBe('Language keyword');
+        expect(method?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(method?.preselect).toBe(true);
+        expect(method?.textEdit).toMatchObject({
+            range: {
+                start: document.textDocument.positionAt(prefix.indexOf('code: string') + 'code: string'.length),
+                end: document.textDocument.positionAt(prefix.length)
+            },
+            newText: '\n    method'
+        });
+    });
+
+    test('replaces partial member text on an over-indented next line in a shared kernel', async () => {
+        const prefix = `shared kernel CommonTypes {
+  value object Currency {
+    code: string
+        met`;
+        const source = `${prefix}
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/partial-next-line-shared-kernel-member.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const method = completion?.items.find(item => item.label === 'method');
+        expect(method?.detail).toBe('Language keyword');
+        expect(method?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(method?.textEdit).toMatchObject({
+            range: {
+                start: document.textDocument.positionAt(prefix.lastIndexOf('\n') + 1),
+                end: document.textDocument.positionAt(prefix.length)
+            },
+            newText: '    method'
+        });
     });
 
     test('offers top-level keywords in a gap before a later declaration', async () => {
@@ -1953,17 +2363,17 @@ bounded context Billing realizes Payments`;
             isIncomplete: false,
             items: [{ label: 'constructor', kind: CompletionItemKind.Keyword }]
         };
-        expect(provider.withCompoundKeywordCompletions(completion, []).items).toEqual(completion.items);
+        expect(provider.withCompoundKeywordCompletions(completion, [])?.items).toEqual(completion.items);
     });
 
-    test('offers sibling elements after a newline, not after a closing brace on the same line', async () => {
+    test('offers sibling elements after a closing brace on the same line or after a newline', async () => {
         const marker = '__completion_position__';
         const cases = [
             {
                 name: 'module in bounded context, same line',
                 prefix: 'bounded context Ordering\nin bounded context Ordering {\n    module Api {}',
                 suffix: '\n}',
-                expected: []
+                expected: ['aggregate', 'application service']
             },
             {
                 name: 'module in bounded context, next line',
@@ -1997,9 +2407,6 @@ bounded context Billing realizes Payments`;
                 position: document.textDocument.positionAt(offset)
             });
             const labels = completion?.items.map(item => item.label) ?? [];
-            if (completionCase.expected.length === 0) {
-                expect(completion?.items ?? [], completionCase.name).toEqual([]);
-            }
             for (const expected of completionCase.expected) {
                 expect(labels, completionCase.name).toContain(expected);
             }
@@ -2113,8 +2520,20 @@ bounded context Billing realizes Payments`;
         const cases = [
             {
                 name: 'method body',
-                expected: ['invariant', 'precondition', 'postcondition', 'behavior', 'transition', 'invokes', 'emits', 'projects'],
+                expected: ['invariant', 'precondition', 'postcondition', 'behavior', 'invokes'],
+                forbidden: ['transition', 'projects', 'emits', 'identifier', 'entity', 'root entity'],
                 source: `bounded context Ordering\nin bounded context Ordering { application service App { method execute() { ${marker} } } }`
+            },
+            {
+                name: 'aggregate root method body',
+                expected: ['transition', 'emits'],
+                forbidden: ['identifier', 'entity', 'root entity'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method place() { ${marker} } } } }`
+            },
+            {
+                name: 'projector method body',
+                expected: ['projects'],
+                source: `bounded context Ordering\nin bounded context Ordering { projector OrderProjector { method project() { ${marker} } } }`
             },
             {
                 name: 'constructor body',
@@ -2124,7 +2543,19 @@ bounded context Billing realizes Payments`;
             {
                 name: 'aggregate body',
                 expected: ['entity', 'value object', 'enum', 'invariant'],
+                forbidden: ['transition', 'projects', 'emits'],
                 source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId }\nvalue object OrderId { raw: string } } }`
+            },
+            {
+                name: 'entity fields allow identifier',
+                expected: ['identifier'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { ${marker} } } }`
+            },
+            {
+                name: 'value object fields exclude identifier',
+                expected: ['method', 'constructor'],
+                forbidden: ['identifier', 'entity', 'root entity'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { value object OrderId { ${marker} } } }`
             },
             {
                 name: 'module body',
@@ -2170,6 +2601,9 @@ bounded context Billing realizes Payments`;
             const labels = completion?.items.map(item => item.label) ?? [];
             for (const keyword of completionCase.expected) {
                 expect(labels, completionCase.name).toContain(keyword);
+            }
+            for (const keyword of completionCase.forbidden ?? []) {
+                expect(labels, completionCase.name).not.toContain(keyword);
             }
         }
     });

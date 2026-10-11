@@ -1,4 +1,4 @@
-import { createLangiumParser, type AstNode, type LangiumCoreServices } from 'langium';
+import { AstUtils, createLangiumParser, type LangiumCoreServices } from 'langium';
 import { isSpecificationText, type SpecificationText } from './generated/ast.js';
 
 const REFERENCE_MARKER_START = '\uE000thinai-reference-';
@@ -9,7 +9,7 @@ export function createThinaiParser(services: LangiumCoreServices) {
     const parse = parser.parse.bind(parser);
     parser.parse = ((input, options) => {
         const result = parse(input, options);
-        for (const node of streamNodes(result.value)) {
+        for (const node of AstUtils.streamAst(result.value)) {
             if (isSpecificationText(node)) {
                 dedentBehaviorText(node);
             }
@@ -17,27 +17,6 @@ export function createThinaiParser(services: LangiumCoreServices) {
         return result;
     }) as typeof parser.parse;
     return parser;
-}
-
-function* streamNodes(root: AstNode): Iterable<AstNode> {
-    const pending: unknown[] = [root];
-    while (pending.length > 0) {
-        const value = pending.pop();
-        if (Array.isArray(value)) {
-            pending.push(...value);
-            continue;
-        }
-        if (!value || typeof value !== 'object' || !('$type' in value)) {
-            continue;
-        }
-        const node = value as AstNode;
-        yield node;
-        for (const [key, child] of Object.entries(node)) {
-            if (!key.startsWith('$')) {
-                pending.push(child);
-            }
-        }
-    }
 }
 
 function dedentBehaviorText(node: SpecificationText): void {
