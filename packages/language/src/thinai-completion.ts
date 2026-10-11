@@ -46,7 +46,7 @@ import { isLineSeparatedSibling } from './thinai-layout.js';
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-']
+        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',']
     };
 
     private readonly thinaiServices: ThinaiServices;
@@ -725,6 +725,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const allowed = new Set(['exposes', 'domain', 'domain service', 'depends', 'depends on', 'on', 'module', 'value', 'value object', 'enum']);
+        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'List', 'Set', 'Map']);
+        const inTypePosition = this.isTypeKeywordCompletionPosition(document, position);
         return {
             ...completion,
             items: completion.items.filter(item => {
@@ -732,9 +734,28 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     return true;
                 }
                 const firstWord = item.label.split(/\s+/)[0];
-                return allowed.has(item.label) || allowed.has(firstWord);
+                return allowed.has(item.label) || allowed.has(firstWord) ||
+                    inTypePosition && typeKeywords.has(item.label);
             })
         };
+    }
+
+    private isTypeKeywordCompletionPosition(document: LangiumDocument, position: Position): boolean {
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        return AstUtils.streamAst(root).some(node => {
+            if (!isField(node) && !isParameter(node) && !isMethod(node)) {
+                return false;
+            }
+            const cstNode = node.$cstNode;
+            return cstNode !== undefined && cstNode.offset <= offset && cstNode.end <= offset &&
+                cstNode.range.end.line === position.line && !/[\r\n]/.test(text.slice(cstNode.end, offset)) &&
+                this.isInIncompleteTypePosition(node, document, position);
+        });
     }
 
     private createKeywordCompletions(
@@ -1018,6 +1039,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset || cstNode.range.end.line !== currentLine) {
                 continue;
             }
+            if (this.isInIncompleteTypePosition(node, document, position)) {
+                continue;
+            }
             if (text.slice(cstNode.offset, offset).trimEnd().endsWith('{')) {
                 continue;
             }
@@ -1030,6 +1054,63 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         return best;
+    }
+
+    private isInIncompleteTypePosition(node: AstNode, document: LangiumDocument, position: Position): boolean {
+        if (!isField(node) && !isParameter(node) && !isMethod(node)) {
+            return false;
+        }
+
+        if (isField(node) || isParameter(node)) {
+            if (node.primitive !== undefined || this.hasCompletedTypeReference(node.type) ||
+                node.collection && !this.isIncompleteCollectionType(node.collection)) {
+                return false;
+            }
+            if (node.collection) {
+                return true;
+            }
+            const source = document.textDocument.getText().slice(
+                node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
+                document.textDocument.offsetAt(position)
+            );
+            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[snbd][\w]*)?$/iu.test(source);
+        }
+
+        if (node.returnCollection) {
+            return this.isIncompleteCollectionType(node.returnCollection);
+        }
+        if (node.returnPrimitive !== undefined || this.hasCompletedTypeReference(node.returnType)) {
+            return false;
+        }
+        const source = document.textDocument.getText().slice(
+            node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
+            document.textDocument.offsetAt(position)
+        );
+        return /\)\s+returns\s*(?:[snbd][\w]*)?$/iu.test(source);
+    }
+
+    private isIncompleteCollectionType(collection: import('./generated/ast.js').CollectionType): boolean {
+        const hasElement = collection.elementPrimitive !== undefined || this.hasCompletedTypeReference(collection.elementType) ||
+            collection.elementCollection !== undefined;
+        if (!hasElement || collection.elementCollection && this.isIncompleteCollectionType(collection.elementCollection)) {
+            return true;
+        }
+        if (collection.kind === 'Map') {
+            const hasValue = collection.valuePrimitive !== undefined || this.hasCompletedTypeReference(collection.valueType) ||
+                collection.valueCollection !== undefined;
+            return !hasValue || collection.valueCollection !== undefined &&
+                this.isIncompleteCollectionType(collection.valueCollection);
+        }
+        return false;
+    }
+
+    private hasCompletedTypeReference(reference: { $refText: string } | undefined): boolean {
+        if (!reference?.$refText) {
+            return false;
+        }
+        return !['string', 'number', 'boolean', 'date'].some(primitive =>
+            primitive.startsWith(reference.$refText.toLowerCase())
+        );
     }
 
     private getSameLineContinuationKeywords(node: AstNode, document: LangiumDocument, position: Position): string[] {

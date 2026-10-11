@@ -1934,7 +1934,10 @@ bounded context Billing realizes Payments`;
         expect(labels).toEqual(expect.arrayContaining([
             'exposes', 'domain service', 'module', 'value object', 'enum'
         ]));
-        for (const unsupported of ['aggregate', 'application service', 'data object', 'entity', 'repository']) {
+        for (const unsupported of [
+            'aggregate', 'application service', 'data object', 'entity', 'repository',
+            'string', 'number', 'boolean', 'date', 'List', 'Set', 'Map'
+        ]) {
             expect(labels).not.toContain(unsupported);
         }
     });
@@ -2000,6 +2003,108 @@ bounded context Billing realizes Payments`;
             for (const expected of completionCase.expected) {
                 expect(labels, completionCase.name).toContain(expected);
             }
+        }
+    });
+
+    test('offers primitive types while completing incomplete type positions', async () => {
+        const marker = '__completion_position__';
+        expect(services.Thinai.lsp.CompletionProvider?.completionOptions?.triggerCharacters).toEqual(
+            expect.arrayContaining([':', '<', ','])
+        );
+        const cases = [
+            {
+                name: 'field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amount: ${marker} } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'field type without a separating space',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amount:${marker} } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'partial field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amount: str${marker} } } }`,
+                expectedPrefix: 'str'
+            },
+            {
+                name: 'method parameter type',
+                before: `bounded context Sample\nin bounded context Sample { application service App { method run(amount: ${marker}) } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'constructor parameter type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { constructor(amount: ${marker}) {} } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'method parameter collection element type',
+                before: `bounded context Sample\nin bounded context Sample { application service App { method run(amounts: List<${marker}>) } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'method return type',
+                before: `bounded context Sample\nin bounded context Sample { application service App { method run() returns ${marker} } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'method return collection element type',
+                before: `bounded context Sample\nin bounded context Sample { application service App { method run() returns List<${marker}> } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'collection element type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amounts: List<${marker}> } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'nested collection element type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amounts: List<Set<${marker}>> } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'map key type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amounts: Map<${marker}, string> } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'map value type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amounts: Map<string, ${marker}> } } }`,
+                expectedPrefix: ''
+            },
+            {
+                name: 'type inside a nested shared-kernel module',
+                before: `shared kernel Common { module Outer { module Inner { value object Identifier { raw: ${marker} } } } }`,
+                expectedPrefix: ''
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.before.indexOf(marker);
+            const text = completionCase.before.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/primitive-type-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const primitive = completion?.items.find(item => item.label === 'string');
+            expect(primitive, completionCase.name).toMatchObject({
+                kind: CompletionItemKind.Keyword,
+                textEdit: {
+                    range: {
+                        start: document.textDocument.positionAt(offset - completionCase.expectedPrefix.length),
+                        end: document.textDocument.positionAt(offset)
+                    },
+                    newText: 'string'
+                }
+            });
+            expect(completion?.items.map(item => item.label), completionCase.name).toEqual(
+                expect.arrayContaining(completionCase.expectedPrefix
+                    ? ['string']
+                    : ['string', 'number', 'boolean', 'date'])
+            );
         }
     });
 
