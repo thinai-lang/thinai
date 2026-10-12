@@ -1,0 +1,217 @@
+import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
+import { type CompletionContext, type CompletionValueItem } from 'langium/lsp';
+import {
+    CompletionItemKind,
+    type CompletionItem,
+    type CompletionList,
+    type Position
+} from 'vscode-languageserver';
+import type { AstNodeDescription } from 'langium';
+import type { ContextMap } from './generated/ast.js';
+import type { ThinaiServices } from './thinai-module.js';
+import { ThinaiScopeProvider } from './thinai-scope-provider.js';
+import { getSiblingCompletionKeywords } from './thinai-layout.js';
+
+interface ContextMapCompletionCallbacks {
+    isCompleteSameLineSibling(node: AstNode, document: LangiumDocument, position: Position): boolean;
+    getCompletionDetail(description: AstNodeDescription): string;
+    getCompletionContext(document: LangiumDocument, position: Position): CompletionContext | undefined;
+    fillCompletionItem(context: CompletionContext, item: CompletionValueItem): CompletionItem | undefined;
+}
+
+/** Context-map relationship completion kept separate from general grammar completion. */
+export class ThinaiContextMapCompletion {
+    constructor(
+        private readonly services: ThinaiServices,
+        private readonly callbacks: ContextMapCompletionCallbacks
+    ) {}
+
+    filterKeywords(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const root = document.parseResult.value;
+        if (!root) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const inContextMap = AstUtils.streamAst(root).some(node => {
+            if (node.$type !== 'ContextMap') {
+                return false;
+            }
+            const cstNode = node.$cstNode;
+            return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+        });
+        const hasBoundedContextCandidates = completion.items.some(item =>
+            item.detail?.startsWith('BoundedContext ')
+        );
+        const relationshipLineState = this.getRelationshipLineState(document, position);
+        const shouldFilterKeywords = relationshipLineState === 'incomplete' ||
+            hasBoundedContextCandidates && relationshipLineState !== 'complete';
+        if (!inContextMap || !shouldFilterKeywords) {
+            return completion;
+        }
+        return {
+            ...completion,
+            items: completion.items.filter(item =>
+                item.kind !== CompletionItemKind.Keyword ||
+                !getSiblingCompletionKeywords('ContextMap').includes(String(item.label))
+            )
+        };
+    }
+
+    getRelationshipContinuations(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const contextMap = AstUtils.streamAst(root)
+            .filter(node => node.$type === 'ContextMap')
+            .find(node => {
+                const cstNode = node.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
+            });
+        if (!contextMap) {
+            return [];
+        }
+
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefixes = AstUtils.streamAst(contextMap)
+            .filter(node => node.$type === 'CustomerSupplierRelationship' ||
+                node.$type === 'PartnershipRelationship' || node.$type === 'SeparateWaysRelationship')
+            .map(node => node.$cstNode)
+            .filter((cstNode): cstNode is NonNullable<typeof cstNode> => cstNode !== undefined && cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.offset - left.offset)
+            .map(cstNode => text.slice(cstNode.offset, offset));
+        prefixes.push(text.slice(lineStart, offset));
+        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+        const continuations: ReadonlyArray<readonly [RegExp, string]> = [
+            [new RegExp(String.raw`^\s*customer\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '-> supplier'],
+            [new RegExp(String.raw`^\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '<-> partner'],
+            [new RegExp(String.raw`^\s*separateWays\s+${endpoint}\s+$`), '-x-']
+        ];
+        const continuation = prefixes.flatMap(prefix =>
+            continuations.filter(([pattern]) => pattern.test(prefix)).map(([, label]) => label)
+        )[0];
+        if (!continuation) {
+            return [];
+        }
+        return [{
+            label: continuation,
+            kind: CompletionItemKind.Operator,
+            detail: 'Context-map relationship continuation',
+            sortText: '0',
+            textEdit: {
+                range: { start: position, end: position },
+                newText: `${continuation} `
+            }
+        }];
+    }
+
+    getRightContextCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+        const rightContextPatterns = [
+            new RegExp(String.raw`^\s*customer\s+(${endpoint})(?:\s*${integrationPatterns})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*partner\s+(${endpoint})(?:\s*${integrationPatterns})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*separateWays\s+(${endpoint})\s+-x-\s*([\w.]*)$`, 'i')
+        ];
+        const contextMap = AstUtils.streamAst(root)
+            .filter(candidate => candidate.$type === 'ContextMap')
+            .find(candidate => {
+                const cstNode = candidate.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+            }) as ContextMap | undefined;
+        if (!contextMap) {
+            return [];
+        }
+        const prefixes = AstUtils.streamAst(contextMap)
+            .filter(candidate => candidate.$type === 'CustomerSupplierRelationship' ||
+                candidate.$type === 'PartnershipRelationship' || candidate.$type === 'SeparateWaysRelationship')
+            .map(candidate => candidate.$cstNode)
+            .filter((cstNode): cstNode is NonNullable<typeof cstNode> => cstNode !== undefined && cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.offset - left.offset)
+            .map(cstNode => text.slice(cstNode.offset, offset));
+        prefixes.push(text.slice(lineStart, offset));
+        const match = prefixes.flatMap(prefix =>
+            rightContextPatterns.map(pattern => pattern.exec(prefix)).filter((result): result is RegExpExecArray => result !== null)
+        )[0];
+        if (!match) {
+            return [];
+        }
+
+        const leftContextName = match[1] ?? '';
+        const typedPrefix = match[2] ?? '';
+        const prefixStart = offset - typedPrefix.length;
+        const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
+        const scopeProvider = this.services.references.ScopeProvider as ThinaiScopeProvider;
+        const completionContext = this.callbacks.getCompletionContext(document, position);
+        const contextCandidates = scopeProvider.getContextMapBoundedContextCandidates(contextMap);
+        const leftContext = contextCandidates.find(description => description.name === leftContextName)?.node;
+        return contextCandidates
+            .filter(description => !leftContext || description.node !== leftContext)
+            .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .map(description => {
+                const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
+                const item: CompletionValueItem = {
+                    nodeDescription: description,
+                    kind: this.services.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+                    detail: this.callbacks.getCompletionDetail(description),
+                    sortText: '0',
+                    insertText
+                };
+                const langiumItem = completionContext
+                    ? this.callbacks.fillCompletionItem(completionContext, item)
+                    : undefined;
+                return langiumItem ?? {
+                    ...item,
+                    label: description.name,
+                    textEdit: {
+                        range: { start: document.textDocument.positionAt(prefixStart), end: position },
+                        newText: insertText
+                    }
+                };
+            });
+    }
+
+    private getRelationshipLineState(document: LangiumDocument, position: Position): 'incomplete' | 'complete' | undefined {
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const relationshipPrefix = text.slice(lineStart, offset).trim();
+        if (!/^(?:customer|partner|separateWays)\b/i.test(relationshipPrefix)) {
+            return undefined;
+        }
+        const model = document.parseResult.value;
+        if (!model) {
+            return 'incomplete';
+        }
+        const relationship = AstUtils.streamAst(model)
+            .filter(node => node.$type === 'CustomerSupplierRelationship' ||
+                node.$type === 'PartnershipRelationship' || node.$type === 'SeparateWaysRelationship')
+            .filter(node => node.$cstNode?.range.start.line === position.line &&
+                node.$cstNode.offset <= offset && node.$cstNode.end <= offset)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.end - left.$cstNode!.end)[0];
+        if (!relationship?.$cstNode || !this.callbacks.isCompleteSameLineSibling(relationship, document, position)) {
+            return 'incomplete';
+        }
+        return /^[\t ]+$/.test(text.slice(relationship.$cstNode.end, offset)) ? 'complete' : 'incomplete';
+    }
+}

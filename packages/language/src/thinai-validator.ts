@@ -58,7 +58,6 @@ import {
     isContextMap,
     isCustomerSupplierRelationship,
     isEnumType,
-    isFactory,
     isModel,
     isModule,
     isMethod,
@@ -77,18 +76,21 @@ import {
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { getExportedName, getOwningAggregate, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
+import { getExportedName, getOwningAggregate, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete as isAstSyntacticallyComplete } from './thinai-ast-utils.js';
 import {
     canDeclareProjects,
     canDeclareTransition,
-    getEventEmissionMode,
-    getInvokedMethod,
-    getReachableMethods,
-    hasBehaviorSideEffects
+    getEventEmissionMode
 } from './thinai-operation-utils.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
+import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
+import {
+    areRelationshipPairDefinitionsCompatible,
+    getRelationshipPairSemantics,
+    type ContextRelationshipPairSemantics
+} from './thinai-context-map-utils.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -129,16 +131,6 @@ export function registerValidationChecks(services: ThinaiServices): void {
         ValueObject: validator.checkValueObject
     };
     registry.register(checks, validator);
-}
-
-type ContextRelationshipPairKind = 'customerSupplier' | 'partnership' | 'separateWays' | 'sharedKernel';
-
-interface ContextRelationshipPairSemantics {
-    key: string;
-    identity: string;
-    signature: string;
-    kind: ContextRelationshipPairKind;
-    name: string;
 }
 
 export class ThinaiValidator {
@@ -265,10 +257,10 @@ export class ThinaiValidator {
             if (!this.isSyntacticallyComplete(relationship)) {
                 continue;
             }
-            for (const pair of this.getRelationshipPairSemantics(relationship)) {
+            for (const pair of getRelationshipPairSemantics(relationship)) {
                 const existing = relationshipsByPair.get(pair.key) ?? [];
                 const duplicate = existing.some(previous => previous.identity === pair.identity);
-                const conflict = existing.some(previous => !this.areRelationshipPairDefinitionsCompatible(previous, pair));
+                const conflict = existing.some(previous => !areRelationshipPairDefinitionsCompatible(previous, pair));
                 if ((duplicate || conflict) && !reported.has(relationship)) {
                     const message = duplicate
                         ? `A relationship between ${pair.name} may only be declared once in context map '${contextMap.name}'.`
@@ -293,10 +285,10 @@ export class ThinaiValidator {
                 if (!this.isSyntacticallyComplete(relationship)) {
                     continue;
                 }
-                for (const pair of this.getRelationshipPairSemantics(relationship)) {
+                for (const pair of getRelationshipPairSemantics(relationship)) {
                     const existing = relationshipsByPair.get(pair.key) ?? [];
                     for (const previous of existing) {
-                        if (previous.map === contextMap || this.areRelationshipPairDefinitionsCompatible(previous.pair, pair)) {
+                        if (previous.map === contextMap || areRelationshipPairDefinitionsCompatible(previous.pair, pair)) {
                             continue;
                         }
                         if (!reported.has(relationship)) {
@@ -759,144 +751,16 @@ export class ThinaiValidator {
                 });
             }
         }
-        for (const invocation of method.invocations) {
-            if (projectorService) {
-                accept('error', 'Projector methods cannot invoke other methods.', {
-                    node: invocation,
-                    keyword: 'invokes'
-                });
-                continue;
-            }
-            if (!this.isSyntacticallyComplete(invocation)) {
-                continue;
-            }
-            const target = getInvokedMethod(invocation);
-            if (!target) {
-                accept('error', 'An invokes path must end at a method.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-                continue;
-            }
-            const targetSharedKernel = this.getOwningSharedKernel(target);
-            const allowedSharedKernelService = targetSharedKernel !== undefined && isDomainService(target.$container) &&
-                (applicationService !== undefined || isDomainService(method.$container)) &&
-                this.hasVisibleSharedKernel(method, targetSharedKernel) &&
-                this.hasSharedKernelRelationship(method, targetSharedKernel);
-            if (this.isCrossContextOwned(method, target) && !allowedSharedKernelService) {
-                accept('error', 'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (target.parameters.some(parameter => this.isEventParameter(parameter))) {
-                accept('error', 'An event-triggered method cannot be invoked directly; invoke an ordinary command method instead.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (isApplicationService(target.$container) && !applicationService) {
-                accept('error', 'Domain behavior cannot invoke an application-service method.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            const reachable = getReachableMethods(target);
-            if (!applicationService && !isApplicationService(target.$container) &&
-                reachable.some(candidate => isApplicationService(candidate.$container))) {
-                accept('error', 'Domain behavior cannot transitively invoke an application-service method.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            const targetAggregate = this.getOwningAggregate(target);
-            const targetIsAggregateRoot = targetAggregate !== undefined && this.isAggregateRootMethod(target, targetAggregate);
-            const sourceAggregate = this.getOwningAggregate(method);
-            if (isDomainService(method.$container) && (targetAggregate !== undefined || reachable.some(candidate =>
-                this.getOwningAggregate(candidate) !== undefined
-            ))) {
-                accept('error', 'A domain service must not invoke aggregate-owned methods; application services should invoke aggregate roots directly.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (isDomainService(method.$container) && !isDomainService(target.$container) &&
-                !isApplicationService(target.$container) && targetAggregate === undefined &&
-                !reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined) &&
-                !target.parameters.some(parameter => this.isEventParameter(parameter))) {
-                accept('error', 'A domain service may invoke only another domain service.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (sourceAggregate && (isDomainService(target.$container) || reachable.some(candidate =>
-                isDomainService(candidate.$container)
-            ))) {
-                accept('error', 'Aggregate-owned methods must not invoke domain services, directly or transitively; application services coordinate both.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (applicationService && !isApplicationService(target.$container) &&
-                (reachable.some(candidate => isApplicationService(candidate.$container)) ||
-                    (!targetIsAggregateRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined)))) {
-                accept('error', 'Application services must invoke aggregate-root behavior directly, not through another method call chain.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            const targetFactory = isFactory(target.$container) ? target.$container : undefined;
-            const factoryReturnType = target.returnType?.ref;
-            const isAssociatedFactoryMethod = applicationService !== undefined && targetFactory !== undefined &&
-                isEntity(factoryReturnType) && factoryReturnType.root && this.getOwningAggregate(factoryReturnType) !== undefined;
-            if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) &&
-                !isEntity(method.$container) && !isAssociatedFactoryMethod) {
-                accept('error', 'Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (sourceAggregate && targetAggregate && targetAggregate !== sourceAggregate) {
-                accept('error', 'Domain behavior must not invoke another aggregate directly.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (!applicationService && sourceAggregate && reachable.some(candidate => {
-                const candidateAggregate = this.getOwningAggregate(candidate);
-                return candidateAggregate !== undefined && candidateAggregate !== sourceAggregate;
-            })) {
-                accept('error', 'Domain behavior must not transitively invoke another aggregate.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (applicationService && isApplicationService(target.$container) && target.$container !== applicationService &&
-                (eventParameters.length !== 1 || target.parameters.some(parameter => this.isEventParameter(parameter)))) {
-                accept('error', 'Only an event handler may dispatch to a command in another application service.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (queryService && (target.$container !== queryService || hasBehaviorSideEffects(target))) {
-                accept('error', 'A query service may invoke only read-only query helpers in the same query service.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-        }
-        if (queryService && this.getOwningAggregate(target)) {
-                accept('error', 'A query service must not invoke aggregate methods.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-            if (applicationService && targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) && !isAssociatedFactoryMethod) {
-                accept('error', 'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.', {
-                    node: invocation,
-                    property: 'targets'
-                });
-            }
-        }
+        validateMethodInvocations(method, applicationService, queryService, eventParameters, accept, {
+            isSyntacticallyComplete: node => this.isSyntacticallyComplete(node),
+            getOwningSharedKernel: node => this.getOwningSharedKernel(node),
+            hasVisibleSharedKernel: (source, sharedKernel) => this.hasVisibleSharedKernel(source, sharedKernel),
+            hasSharedKernelRelationship: (source, sharedKernel) => this.hasSharedKernelRelationship(source, sharedKernel),
+            isCrossContextOwned: (source, target) => this.isCrossContextOwned(source, target),
+            isEventParameter: parameter => this.isEventParameter(parameter),
+            getOwningAggregate: node => this.getOwningAggregate(node),
+            isAggregateRootMethod: (target, aggregate) => this.isAggregateRootMethod(target, aggregate)
+        });
         if (queryService) {
             this.checkQueryServiceMethod(method, queryService, accept);
         }
@@ -1648,7 +1512,7 @@ export class ThinaiValidator {
         const pairKey = JSON.stringify([consumer, producer].sort());
         const relationships = contextMaps.flatMap(contextMap =>
             contextMap.relationships.flatMap(relationship =>
-                this.getRelationshipPairSemantics(relationship)
+                getRelationshipPairSemantics(relationship)
                     .filter(pair => pair.key === pairKey)
                     .map(pair => pair)
             )
@@ -1688,102 +1552,6 @@ export class ThinaiValidator {
             }
         }
         return [...contextMaps];
-    }
-
-    private areRelationshipPairDefinitionsCompatible(
-        left: ContextRelationshipPairSemantics,
-        right: ContextRelationshipPairSemantics
-    ): boolean {
-        if (left.kind === 'sharedKernel' && right.kind === 'sharedKernel') {
-            return true;
-        }
-        if (left.kind === 'sharedKernel' || right.kind === 'sharedKernel') {
-            return left.kind !== 'separateWays' && right.kind !== 'separateWays';
-        }
-        return left.signature === right.signature;
-    }
-
-    private getRelationshipPairSemantics(relationship: ContextRelationship): ContextRelationshipPairSemantics[] {
-        const createPair = (
-            left: BoundedContext,
-            right: BoundedContext,
-            kind: ContextRelationshipPairKind,
-            identity: unknown,
-            signature: unknown
-        ): ContextRelationshipPairSemantics | undefined => {
-            if (left === right) {
-                return undefined;
-            }
-            const contexts = [left.name, right.name].sort();
-            return {
-                key: JSON.stringify(contexts),
-                identity: JSON.stringify(identity),
-                signature: JSON.stringify(signature),
-                kind,
-                name: contexts.map(name => `'${name}'`).join(' and ')
-            };
-        };
-        const patterns = (endpoint: ContextMapEndpoint) => [...endpoint.integrationPatterns].sort();
-
-        if (isCustomerSupplierRelationship(relationship)) {
-            const customer = relationship.customer?.context?.ref;
-            const supplier = relationship.supplier?.context?.ref;
-            if (!customer || !supplier) {
-                return [];
-            }
-            const identity = ['customerSupplier', customer.name, supplier.name];
-            const pair = createPair(customer, supplier, 'customerSupplier', identity, [
-                'customerSupplier', customer.name, patterns(relationship.customer), supplier.name, patterns(relationship.supplier)
-            ]);
-            return pair ? [pair] : [];
-        }
-        if (isPartnershipRelationship(relationship)) {
-            const left = relationship.left?.context?.ref;
-            const right = relationship.right?.context?.ref;
-            if (!left || !right) {
-                return [];
-            }
-            const sides = [
-                { context: left, patterns: patterns(relationship.left) },
-                { context: right, patterns: patterns(relationship.right) }
-            ].sort((a, b) => a.context.name.localeCompare(b.context.name));
-            const identity = ['partnership', ...[left.name, right.name].sort()];
-            const pair = createPair(left, right, 'partnership', identity, [
-                'partnership', ...sides.map(side => [side.context.name, side.patterns])
-            ]);
-            return pair ? [pair] : [];
-        }
-        if (isSeparateWaysRelationship(relationship)) {
-            const left = relationship.left?.ref;
-            const right = relationship.right?.ref;
-            if (!left || !right) {
-                return [];
-            }
-            const identity = ['separateWays', ...[left.name, right.name].sort()];
-            const pair = createPair(left, right, 'separateWays', identity, identity);
-            return pair ? [pair] : [];
-        }
-
-        const sharedKernel = relationship.sharedKernel?.ref;
-        const participants = [...new Set((relationship.participants ?? [])
-            .map(participant => participant?.target?.ref)
-            .filter((context): context is BoundedContext => context !== undefined))];
-        if (!sharedKernel) {
-            return [];
-        }
-        const pairs = [];
-        for (let leftIndex = 0; leftIndex < participants.length; leftIndex++) {
-            for (let rightIndex = leftIndex + 1; rightIndex < participants.length; rightIndex++) {
-                const left = participants[leftIndex]!;
-                const right = participants[rightIndex]!;
-                const identity = ['sharedKernel', sharedKernel.name, ...[left.name, right.name].sort()];
-                const pair = createPair(left, right, 'sharedKernel', identity, ['sharedKernel', sharedKernel.name]);
-                if (pair) {
-                    pairs.push(pair);
-                }
-            }
-        }
-        return pairs;
     }
 
     private isIntegrationEventExposed(event: IntegrationEvent): boolean {

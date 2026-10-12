@@ -1,5 +1,6 @@
-import type { AstNode, LangiumCoreServices, LangiumDocument } from 'langium';
+import type { LangiumCoreServices, LangiumDocument } from 'langium';
 import chalk from 'chalk';
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { URI } from 'langium';
@@ -22,7 +23,12 @@ export async function extractDocuments(fileName: string, services: LangiumCoreSe
         let document: LangiumDocument<Model>;
         try {
             document = await services.shared.workspace.LangiumDocuments.getOrCreateDocument(uri) as LangiumDocument<Model>;
-        } catch {
+        } catch (error) {
+            if (uri.toString() === rootUri.toString()) {
+                const failure = new Error(`Could not load Thinai source file '${uri.fsPath}'.`);
+                (failure as Error & { cause?: unknown }).cause = error;
+                throw failure;
+            }
             continue;
         }
         documents.set(key, document);
@@ -59,14 +65,6 @@ export async function extractDocuments(fileName: string, services: LangiumCoreSe
     return loadedDocuments;
 }
 
-export async function extractDocument(fileName: string, services: LangiumCoreServices): Promise<LangiumDocument> {
-    return (await extractDocuments(fileName, services))[0];
-}
-
-export async function extractAstNode<T extends AstNode>(fileName: string, services: LangiumCoreServices): Promise<T> {
-    return (await extractDocument(fileName, services)).parseResult?.value as T;
-}
-
 function validateFileName(fileName: string, services: LangiumCoreServices): void {
     const extensions = services.LanguageMetaData.fileExtensions;
     if (!extensions.includes(path.extname(fileName))) {
@@ -86,9 +84,12 @@ interface FilePathData {
 }
 
 export function extractDestinationAndName(filePath: string, destination: string | undefined): FilePathData {
-    filePath = path.basename(filePath, path.extname(filePath)).replace(/[.-]/g, '');
+    const absoluteFilePath = path.resolve(filePath);
+    const baseName = path.basename(absoluteFilePath, path.extname(absoluteFilePath));
     return {
-        destination: destination ?? path.join(path.dirname(filePath), 'generated'),
-        name: path.basename(filePath)
+        destination: destination ?? path.join(path.dirname(absoluteFilePath), 'generated'),
+        name: destination === undefined
+            ? baseName
+            : `${baseName}-${createHash('sha256').update(absoluteFilePath).digest('hex').slice(0, 12)}`
     };
 }

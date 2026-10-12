@@ -1,7 +1,9 @@
 import {
     AstNodeDescription,
     AstUtils,
+    GrammarUtils,
     type LangiumDocument,
+    type ReferenceInfo,
     UriUtils,
     isReference
 } from 'langium';
@@ -12,8 +14,25 @@ import {
 } from 'vscode-languageserver';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
-import { isModel } from './generated/ast.js';
-import { resolveImportUri } from './thinai-scope.js';
+import {
+    isImportableComponent,
+    isModel,
+    type Import,
+    type ImportableComponent
+} from './generated/ast.js';
+import { resolveImportUri } from './thinai-scope-utils.js';
+import { ThinaiScopeProvider } from './thinai-scope-provider.js';
+
+interface UnresolvedReference {
+    name: string;
+    info: ReferenceInfo;
+}
+
+interface ImportCandidate {
+    importPath: string;
+    existingImport?: Import;
+    component?: ImportableComponent;
+}
 
 export class ThinaiCodeActionProvider {
     constructor(private readonly services: ThinaiServices) {}
@@ -25,28 +44,42 @@ export class ThinaiCodeActionProvider {
     ): CodeAction[] {
         const actions: CodeAction[] = [];
         for (const diagnostic of params.context.diagnostics) {
-            const referenceName = this.getUnresolvedReferenceName(document, diagnostic.range);
-            if (!referenceName) {
+            const unresolved = this.getUnresolvedReference(document, diagnostic.range);
+            if (!unresolved) {
                 continue;
             }
 
-            for (const candidate of this.findImportCandidates(document, referenceName)) {
-                const importPath = this.toImportPath(document, candidate.documentUri);
+            const candidates = this.findImportCandidates(document, unresolved);
+            for (const candidate of candidates) {
+                const { importPath, existingImport, component } = candidate;
+                const title = `Import '${unresolved.name}' from '${importPath}'`;
+                const textDocument = document.textDocument;
+                let range;
+                let newText: string;
+                if (existingImport && component) {
+                    const closingBrace = existingImport.$cstNode && GrammarUtils.findNodesForKeyword(existingImport.$cstNode, '}')[0];
+                    if (!closingBrace) {
+                        continue;
+                    }
+                    range = {
+                        start: textDocument.positionAt(closingBrace.offset),
+                        end: textDocument.positionAt(closingBrace.offset)
+                    };
+                    newText = `, ${component.name}`;
+                } else {
+                    const newline = textDocument.getText().includes('\r\n') ? '\r\n' : '\n';
+                    range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
+                    newText = `import "${importPath}"${newline}`;
+                }
                 actions.push({
-                    title: `Import '${referenceName}' from '${importPath}'`,
+                    title,
                     kind: CodeActionKind.QuickFix,
-                    isPreferred: true,
+                    isPreferred: candidates.length === 1,
                     diagnostics: [diagnostic],
                     edit: {
                         changes: {
                             [document.uri.toString()]: [
-                                {
-                                    range: {
-                                        start: { line: 0, character: 0 },
-                                        end: { line: 0, character: 0 }
-                                    },
-                                    newText: `import "${importPath}"\n`
-                                }
+                                { range, newText }
                             ]
                         }
                     }
@@ -56,10 +89,10 @@ export class ThinaiCodeActionProvider {
         return actions;
     }
 
-    private getUnresolvedReferenceName(
+    private getUnresolvedReference(
         document: LangiumDocument,
         range: CodeActionParams['context']['diagnostics'][number]['range']
-    ): string | undefined {
+    ): UnresolvedReference | undefined {
         const model = document.parseResult.value;
         if (!isModel(model)) {
             return undefined;
@@ -72,33 +105,79 @@ export class ThinaiCodeActionProvider {
                 const referenceNode = reference.$refNode;
                 if (isReference(reference) && !reference.ref && referenceNode &&
                     referenceNode.offset <= start && end <= referenceNode.end) {
-                    return reference.$refText || undefined;
+                    return reference.$refText ? { name: reference.$refText, info: referenceInfo } : undefined;
                 }
             }
         }
         return undefined;
     }
 
-    private findImportCandidates(document: LangiumDocument, name: string): AstNodeDescription[] {
+    private findImportCandidates(document: LangiumDocument, unresolved: UnresolvedReference): ImportCandidate[] {
         const model = document.parseResult.value;
         if (!isModel(model)) {
             return [];
         }
 
-        const importedUris = new Set(model.imports.flatMap(importDeclaration => {
+        const importsByUri = new Map<string, Import[]>();
+        for (const importDeclaration of model.imports) {
             const uri = resolveImportUri(document, importDeclaration);
-            return uri ? [uri.toString()] : [];
-        }));
-        const candidates = new Map<string, AstNodeDescription>();
+            if (uri) {
+                const imports = importsByUri.get(uri.toString()) ?? [];
+                imports.push(importDeclaration);
+                importsByUri.set(uri.toString(), imports);
+            }
+        }
+        const scopeProvider = this.services.references.ScopeProvider as ThinaiScopeProvider;
+        const reflection = this.services.shared.AstReflection;
+        const targetType = reflection.getReferenceType(unresolved.info);
+        const candidates = new Map<string, ImportCandidate>();
         for (const description of this.services.shared.workspace.IndexManager.allElements()) {
-            if (UriUtils.equals(description.documentUri, document.uri) || importedUris.has(description.documentUri.toString())) {
+            if (UriUtils.equals(description.documentUri, document.uri) ||
+                description.name !== unresolved.name && !description.name.endsWith(`.${unresolved.name}`) ||
+                !reflection.isSubtype(description.type, targetType) ||
+                scopeProvider.filterCompletionCandidates(unresolved.info, [description]).toArray().length === 0) {
                 continue;
             }
-            if (description.name === name || description.name.endsWith(`.${name}`)) {
-                candidates.set(description.documentUri.toString(), description);
+
+            const uriKey = description.documentUri.toString();
+            const existingImport = importsByUri.get(uriKey)?.find(importDeclaration => importDeclaration.components.length > 0);
+            const importPath = this.toImportPath(document, description.documentUri);
+            if (importsByUri.has(uriKey)) {
+                if (!existingImport) {
+                    continue;
+                }
+                const component = this.getImportableComponent(this.getDescriptionNode(description));
+                if (!component || existingImport.components.some(selection => selection.component.ref === component)) {
+                    continue;
+                }
+                const key = `${uriKey}#${component.$cstNode?.offset ?? component.name}`;
+                candidates.set(key, { importPath, existingImport, component });
+            } else {
+                candidates.set(uriKey, { importPath });
             }
         }
         return [...candidates.values()];
+    }
+
+    private getDescriptionNode(description: AstNodeDescription) {
+        if (description.node) {
+            return description.node;
+        }
+        const document = this.services.shared.workspace.LangiumDocuments.getDocument(description.documentUri);
+        return document?.parseResult.value
+            ? this.services.workspace.AstNodeLocator.getAstNode(document.parseResult.value, description.path)
+            : undefined;
+    }
+
+    private getImportableComponent(node: import('langium').AstNode | undefined): ImportableComponent | undefined {
+        let current = node;
+        while (current) {
+            if (isImportableComponent(current)) {
+                return current;
+            }
+            current = current.$container;
+        }
+        return undefined;
     }
 
     private toImportPath(document: LangiumDocument, target: AstNodeDescription['documentUri']): string {

@@ -3,7 +3,7 @@ import { DefaultDefinitionProvider } from 'langium/lsp';
 import { LocationLink, type DefinitionParams } from 'vscode-languageserver';
 import { isImport, isModel } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { resolveImportUri } from './thinai-scope.js';
+import { resolveImportUri } from './thinai-scope-utils.js';
 
 /**
  * Uses Langium's normal reference navigation for AST cross-references and adds

@@ -6,6 +6,7 @@ import { clearDocuments } from 'langium/test';
 import { applyConfiguredIndentation, applyConfiguredIndentationToCompletions, createThinaiServices } from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
+import { ThinaiImportCompletion } from '../src/thinai-import-completion.js';
 import { createThinaiSelectionRange } from '../src/thinai-selection-range.js';
 import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
@@ -1161,11 +1162,11 @@ bounded context Second`;
 
     test('suggests workspace files inside import paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/ordering.tni'),
+            URI.file("/workspace/order's.tni"),
             'bounded context Ordering'
         );
         documents = [target];
-        const sourceText = 'import "./o';
+        const sourceText = 'import "./order\'s';
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-consumer.tni'),
             sourceText
@@ -1184,18 +1185,24 @@ bounded context Second`;
             textDocument: { uri: source.uri.toString() },
             position: source.textDocument.positionAt(sourceText.length)
         });
-        workspaceFolders.mockRestore();
-        searchFolder.mockRestore();
+        await services.Thinai.lsp.CompletionProvider?.getCompletion(source, {
+            textDocument: { uri: source.uri.toString() },
+            position: source.textDocument.positionAt(sourceText.length)
+        });
+        expect(searchFolder).toHaveBeenCalledTimes(1);
 
         const importSuggestions = completion?.items.filter(item => item.kind === CompletionItemKind.File) ?? [];
-        expect(importSuggestions.map(item => item.label)).toEqual(['./ordering.tni']);
+        expect(importSuggestions.map(item => item.label)).toEqual(["./order's.tni"]);
         expect(importSuggestions[0].textEdit).toMatchObject({
-            newText: './ordering.tni',
+            newText: "./order's.tni",
             range: {
                 start: source.textDocument.positionAt('import "'.length),
                 end: source.textDocument.positionAt(sourceText.length)
             }
         });
+
+        workspaceFolders.mockRestore();
+        searchFolder.mockRestore();
 
         const outsideImport = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/outside-import.tni'), 'actor Customer'
@@ -1206,6 +1213,42 @@ bounded context Second`;
             position: outsideImport.textDocument.positionAt('actor Customer'.length)
         });
         expect(ordinaryCompletion?.items.some(item => item.kind === CompletionItemKind.File)).toBe(false);
+    });
+
+    test('caches import file searches and invalidates them on file create and delete', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-cache.tni'), 'import "./'
+        );
+        documents = [document];
+        const workspaceManager = services.shared.workspace.WorkspaceManager;
+        const workspaceFolders = vi.spyOn(workspaceManager, 'workspaceFolders', 'get').mockReturnValue([
+            { uri: URI.file('/workspace').toString(), name: 'workspace' }
+        ]);
+        const searchFolder = vi.spyOn(workspaceManager, 'searchFolder').mockResolvedValue([]);
+        const updateListeners: Array<(changed: URI[], deleted: URI[]) => void> = [];
+        const onUpdate = vi.spyOn(services.shared.workspace.DocumentBuilder, 'onUpdate').mockImplementation(callback => {
+            updateListeners.push(callback);
+            return { dispose: () => undefined };
+        });
+        const completion = new ThinaiImportCompletion(services.Thinai);
+
+        const getCompletions = () => completion.getCompletions(document, './', 9);
+        await getCompletions();
+        await getCompletions();
+        expect(searchFolder).toHaveBeenCalledTimes(1);
+
+        const addedUri = URI.file('/workspace/new-file.tni');
+        updateListeners[0]!([addedUri], []);
+        await getCompletions();
+        expect(searchFolder).toHaveBeenCalledTimes(2);
+
+        updateListeners[0]!([], [addedUri]);
+        await getCompletions();
+        expect(searchFolder).toHaveBeenCalledTimes(3);
+
+        onUpdate.mockRestore();
+        searchFolder.mockRestore();
+        workspaceFolders.mockRestore();
     });
 
     test('navigates from import paths to the start of target documents', async () => {
@@ -4032,7 +4075,7 @@ bounded context Billing realizes Payments`;
         );
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/consumer.tni'),
-            'bounded context Shipping in bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
+            'in bounded context Ordering { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
         );
         documents = [target, source];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
@@ -4047,5 +4090,76 @@ bounded context Billing realizes Payments`;
         });
 
         expect(actions?.some(action => 'title' in action && action.title === "Import 'OrderPlaced' from './ordering.tni'")).toBe(true);
+    });
+
+    test('extends an existing selective import for an unresolved component', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/components.tni'),
+            'bounded context Ordering\nbounded context Shipping'
+        );
+        const sourceText = 'import { Ordering } from "./components.tni"\nin bounded context Shipping {}';
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/selective-consumer.tni'), sourceText
+        );
+        documents = [target, source];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(source, {
+            textDocument: { uri: source.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 1, character: sourceText.length - sourceText.indexOf('\n') - 1 }
+            },
+            context: { diagnostics: source.diagnostics ?? [] }
+        });
+        const action = actions?.find(candidate => 'title' in candidate && candidate.title === "Import 'Shipping' from './components.tni'");
+        expect(action && 'edit' in action ? action.edit?.changes?.[source.uri.toString()]?.[0]?.newText : undefined)
+            .toBe(', Shipping');
+    });
+
+    test('does not offer import quick fixes for private cross-context types', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/private-types.tni'),
+            'bounded context Ordering in bounded context Ordering { value object OrderId { raw: string } }'
+        );
+        const sourceText = 'bounded context Shipping in bounded context Shipping { data object Request { id: OrderId } }';
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/private-type-consumer.tni'), sourceText
+        );
+        documents = [target, source];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(source, {
+            textDocument: { uri: source.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: sourceText.length }
+            },
+            context: { diagnostics: source.diagnostics ?? [] }
+        });
+        expect(actions?.some(candidate => 'title' in candidate && candidate.title.includes("Import 'OrderId'"))).toBe(false);
+    });
+
+    test('does not offer import quick fixes for same-named declarations of the wrong type', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/wrong-kind.tni'),
+            'actor OrderId'
+        );
+        const sourceText = 'bounded context Ordering in bounded context Ordering { data object Request { id: OrderId } }';
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/wrong-kind-consumer.tni'), sourceText
+        );
+        documents = [target, source];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(source, {
+            textDocument: { uri: source.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: sourceText.length }
+            },
+            context: { diagnostics: source.diagnostics ?? [] }
+        });
+        expect(actions?.some(candidate => 'title' in candidate && candidate.title.includes("Import 'OrderId'"))).toBe(false);
     });
 });
