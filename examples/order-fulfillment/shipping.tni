@@ -12,13 +12,16 @@ in bounded context Shipping {
   aggregate Shipment {
     root entity Shipment {
       method start() {
-        emits ShipmentStarted
+        precondition "The shipment is pending."
         transition status from Pending to Started
+        emits ShipmentStarted
+        behavior "Start shipment processing for its associated order."
+        postcondition "The shipment status is Started and ShipmentStarted is emitted."
       }
 
       identifier id: ShipmentId
       orderId: OrderId
-      status: ShipmentStatus
+      status: ShipmentStatus initial Pending
       currency: Common.Currency
     }
 
@@ -30,7 +33,11 @@ in bounded context Shipping {
   repository ShipmentRepository manages Shipment.Shipment
 
   factory ShipmentFactory {
-    method createShipment(id: ShipmentId, orderId: OrderId) returns Shipment.Shipment
+    method createShipment(id: ShipmentId, orderId: OrderId) returns Shipment.Shipment {
+      precondition "The shipment and order identifiers are valid."
+      behavior "Create a pending shipment for the identified order."
+      postcondition "The returned shipment has the supplied identifiers and is Pending."
+    }
   }
 
   enum ShipmentStatus {
@@ -50,14 +57,18 @@ in bounded context Shipping {
 
   application service ShipmentApplication {
     method createShipment(orderId: OrderId) {
+      precondition "The order has been placed and is eligible for fulfillment."
       invokes ShipmentFactory.createShipment
       invokes Shipment.Shipment.start
       behavior "First, authorize the Common.Role.FulfillmentOperator role for creating a shipment with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment by invoking the aggregate root's start operation."
+      postcondition "A shipment has been started for the order."
     }
 
     method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {
+      precondition "The incoming contract contains a valid order identifier."
       invokes createShipment
       behavior "First, authorize the Common.Role.System role for handling the incoming event with [[Authorization.authorize]]; stop if authorization fails. Then create a shipment from the order identifier in the incoming event."
+      postcondition "A shipment is started for the order from the incoming event."
     }
   }
 

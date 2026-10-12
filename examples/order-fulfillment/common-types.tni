@@ -11,11 +11,12 @@ shared kernel CommonTypes {
 
   /* Domain policies can live in the shared kernel alongside value types. */
   domain service CurrencyConversion {
-    method convert(amount: number, rate: number) returns number
+    method convert(amount: number, rate: number) returns number {
+      precondition "The amount is non-negative and the conversion rate is positive."
+      behavior "Convert the amount using the supplied exchange rate."
+      postcondition "The returned amount is expressed in the target currency."
+    }
   }
-
-  // A domain service may be declared without a method body.
-  domain service UnspecifiedPolicy
 
   module SharedContracts {
     exposes CorrelationId, TenantId

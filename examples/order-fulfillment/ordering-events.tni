@@ -16,21 +16,27 @@ in bounded context Ordering {
 
     method publishOrderPlaced(source: OrderPlaced) {
       emits Contracts.OrderPlacedV1, Contracts.OrderPlacedAuditV1
+      precondition "The source event is a valid placed-order event."
       behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract."
+      postcondition "The corresponding public event contracts are emitted."
     }
   }
 
   application service OrderItemFulfillment {
     method fulfillItem(orderId: OrderId, itemId: OrderItemId) {
+      precondition "The item belongs to the identified order."
       invokes Order.Order.fulfillItem
       behavior "Ship the selected child item through the aggregate root."
+      postcondition "The selected item is shipped through its owning order."
     }
   }
 
   application service OrderMaintenance {
     method deleteDraftOrder(orderId: OrderId) {
+      precondition "The identified order exists and is still a draft."
       invokes Order.Order.validateCanDelete
       behavior "Remove the order only after its root validates the deletion rule."
+      postcondition "The draft order is removed."
     }
   }
 
@@ -39,6 +45,8 @@ in bounded context Ordering {
     items: List<OrderLineDetails>
     deliveryAddress: DeliveryAddress
     submittedAt: instant
+    requestedDeliveryDate: date
+    preferredDeliveryTime: time
   }
 
   data object OrderLineDetails {
@@ -97,11 +105,15 @@ in bounded context Ordering {
 
   query service OrderQueries {
     method canPlaceOrder(orderId: OrderId) returns OrderEligibilityResult {
+      precondition "The identified order exists."
       behavior "Read [[OrderSummaryRepository]] for [[orderId]] and return whether [[result.eligible]] is true."
+      postcondition "The result reports whether the order is eligible for placement."
     }
 
     method findCustomerOrders(customerId: CustomerId) returns List<OrderSummary> {
+      precondition "The customer identifier is valid."
       behavior "Combine [[OrderSummaryRepository]] and [[CustomerSummaryRepository]] for the selected customer."
+      postcondition "The result contains the selected customer's order summaries."
     }
   }
 

@@ -8,20 +8,20 @@ examples.
 ## Files
 
 - `strategic.tni` defines all subdomain kinds and an unclassified subdomain.
-- `context-catalog.tni` declares canonical bounded contexts, including multiple and omitted realizations.
+- `context-catalog.tni` declares canonical bounded contexts, including zero, one, and multiple subdomain realizations.
 - `ordering.tni` demonstrates aggregates, entities, value objects, enums, primitive and nested collection fields, constructors, all specification clauses, escaped specification markers, and grouped guarded transitions.
 - `ordering-events.tni` demonstrates nested data objects, services, repositories, factories, read models, projectors with multiple targets, multiple emitted contracts, and multi-actor journeys.
 - `shipping.tni` demonstrates a mirrored identifier, an integration-event handler, module exposures, and multiple module dependencies.
 - `context-map.tni` demonstrates every relationship form and every integration-pattern label.
 - `common-types.tni` defines shared-kernel values, services, and nested modules.
 
-The model demonstrates root and child entity identities and transitions, constructors that accept domain values, DataObjects kept at the application-service boundary, a grouped transition across two status fields with one shared descriptive guard, guarded method invocations, conditional emissions, application-service calls to aggregate-root and factory methods, multiple command services per aggregate, query projections reused across aggregates, event-driven projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive cross-context journeys. Application-service behavior specifications describe authorization as each method's first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, and module dependencies.
+The model demonstrates root and child entity identities and transitions, constructors that accept domain values, DataObjects kept at the application-service boundary, a grouped transition across two status fields with one shared descriptive guard, guarded method invocations, conditional emissions, application-service calls to aggregate-root and factory methods, multiple command services per aggregate, query projections reused across aggregates, event-driven projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive cross-context journeys. Where authorization is relevant, application-service behavior specifications describe it as the first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, and module dependencies.
 
 ## Language coverage index
 
 | Language feature | Example location |
 | --- | --- |
-| All subdomain kinds, an unkinded subdomain, and contexts with zero or multiple realizations | `strategic.tni`, `context-catalog.tni` |
+| All subdomain kinds, an unkinded subdomain, and contexts with zero, one, or multiple realizations | `strategic.tni`, `context-catalog.tni` |
 | Simple and component-selective imports, aliases, and qualified references | `ordering.tni`, `context-map.tni`, `ordering-events.tni`, `shipping.tni` |
 | Customer-supplier, partnership, separate-ways, and shared-kernel relationships; all integration-pattern labels | `context-map.tni` |
 | Shared-kernel value objects, enum, domain services, nested modules, and multiple exposures | `common-types.tni` |

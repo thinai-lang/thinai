@@ -12,32 +12,50 @@ in bounded context Ordering {
         postcondition "The order has an identifier and owner."
       }
 
-      method ensureOwner()
+      method ensureOwner() {
+        precondition "An owner has been supplied."
+        behavior "Reject an order whose owner is missing or blank."
+        postcondition "The order has a non-empty owner."
+      }
 
       method place() {
+        precondition "The order is Draft, has a valid owner, and contains at least one valid line."
+        transition status from Draft to Placed
+          when "The order is ready to be placed."
         emits OrderPlaced
           when "The order is ready to be placed."
-        transition status from Draft to Placed
+        behavior "Place the draft order after its lines and owner have been validated."
+        postcondition "The order is placed and its status is Placed."
       }
 
       method pay() {
+        precondition "The order is Placed and the payment provider has confirmed payment."
         transition status from Placed to Paid,
                    paymentStatus from Pending to Confirmed
           when "The payment provider has confirmed the payment."
         emits OrderPaid
           when "The payment provider has confirmed the payment."
+        behavior "Record the confirmed payment and advance both order and payment status."
+        postcondition "The order is Paid and payment is Confirmed."
       }
 
       method fulfillItem(itemId: OrderItemId) {
+        precondition "The selected item belongs to this order."
         invokes Order.OrderItem.ship
+        behavior "Delegate shipping of the selected child item while preserving aggregate invariants."
+        postcondition "The selected item is shipped."
       }
 
       method validateCanDelete() {
         precondition "Only a draft order can be deleted."
+        behavior "Reject deletion when the order has progressed beyond Draft."
+        postcondition "A successful validation guarantees that the order is still a draft."
       }
 
       method addLine(line: OrderLine) {
+        precondition "The line has a non-empty SKU and a positive quantity."
         behavior 'Add the line quantity to the order\'s lines. The initial state is [[Ordering.Order.OrderStatus.Draft]], and \[[ is literal text.'
+        postcondition "The order contains the supplied line."
       }
 
       identifier id: OrderId
@@ -63,7 +81,11 @@ in bounded context Ordering {
         postcondition "The identifier value is normalized."
       }
 
-      method normalize() returns string
+      method normalize() returns string {
+        precondition "The raw identifier is non-empty."
+        behavior "Trim and normalize [[OrderId.raw]] into its canonical representation."
+        postcondition "The returned identifier is normalized and non-empty."
+      }
 
       raw: string
     }
@@ -74,10 +96,17 @@ in bounded context Ordering {
     }
 
     entity OrderItem {
-      constructor(id: OrderItemId, line: OrderLine)
+      constructor(id: OrderItemId, line: OrderLine) {
+        precondition "The identifier is non-empty and the line is valid."
+        behavior "Create an open order item for the supplied line."
+        postcondition "The item has the supplied identifier and line and starts Open."
+      }
 
       method ship() {
+        precondition "The item has not already shipped."
         transition status from Open to Shipped
+        behavior "Mark the item as shipped."
+        postcondition "The item status is Shipped."
       }
 
       identifier id: OrderItemId
@@ -118,12 +147,12 @@ in bounded context Ordering {
 
   repository OrderRepository manages Order.Order
 
-  factory OrderFactory
-
   aggregate Customer {
     root entity Customer {
       method register() {
         emits CustomerRegistered
+        behavior "Register the customer after its identity and name have been validated."
+        postcondition "A CustomerRegistered event is emitted for the customer."
       }
 
       identifier id: CustomerId
@@ -138,13 +167,20 @@ in bounded context Ordering {
   repository CustomerRepository manages Customer.Customer
 
   factory CustomerFactory {
-    method createCustomer(id: CustomerId, name: string) returns Customer.Customer
+    method createCustomer(id: CustomerId, name: string) returns Customer.Customer {
+      precondition "The identifier and name are valid."
+      behavior "Create a customer root with the supplied identity and name."
+      postcondition "The returned customer has the supplied identifier and name."
+    }
   }
 
   application service CustomerRegistration {
     method registerCustomer(id: CustomerId, name: string) {
+      precondition "The customer identifier and name are valid."
       invokes CustomerFactory.createCustomer
       invokes Customer.Customer.register
+      behavior "Create the customer and register it through the customer aggregate."
+      postcondition "The customer is registered and a CustomerRegistered event is emitted."
     }
   }
 
