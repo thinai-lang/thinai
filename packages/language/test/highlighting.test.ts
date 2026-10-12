@@ -69,6 +69,8 @@ describe('TextMate highlighting', () => {
         };
 
         expect(scopesOn('method placeOrder(id: OrderId)', 'id')).toContain('variable.other.property.thinai');
+        expect(scopesOn('adjustments?: List<number>', 'adjustments')).toContain('variable.other.property.thinai');
+        expect(scopesOn('adjustments?: List<number>', '?')).toContain('keyword.operator.optional.thinai');
         expect(scopesOn('enum OrderStatus { Draft, Placed }', 'OrderStatus')).toContain('entity.name.type.thinai');
         expect(scopesOn('raw: string', 'string')).toContain('storage.type.thinai');
         expect(scopesOn('items: List<OrderLine>', 'List')).toContain('storage.type.thinai');

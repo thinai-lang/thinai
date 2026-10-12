@@ -30,6 +30,23 @@ describe('Parsing tests', () => {
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 
+    test('explains that enum values in initial and transition clauses cannot be quoted', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    status: OrderStatus initial "asdf"
+                    method ship() { transition status from "op" to Shipped }
+                }
+                enum OrderStatus { Open, Shipped }
+            }
+        }`);
+
+        const parserMessages = document.parseResult.parserErrors.map(error => error.message);
+        expect(parserMessages.filter(message =>
+            message === 'Enum values must be unquoted identifiers declared by the field\'s enum type.'
+        )).toHaveLength(2);
+    });
+
     test('rejects entity inheritance syntax', async () => {
         const document = await parse('bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order {} entity SpecialOrder extends Order {} } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);

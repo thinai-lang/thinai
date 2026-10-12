@@ -957,6 +957,36 @@ bounded context Second`;
         expect(definitions?.[0]?.targetSelectionRange.start).toEqual({ line: 0, character: 0 });
     });
 
+    test('navigates from an initial state to its enum value declaration', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    identifier id: OrderId
+                    status: OrderStatus initial Draft
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/initial-state-definition.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        const initialValueOffset = text.indexOf('Draft', text.indexOf('initial'));
+        const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(initialValueOffset)
+        });
+
+        expect(definitions).toHaveLength(1);
+        expect(definitions?.[0]?.targetUri).toBe(document.uri.toString());
+        expect(definitions?.[0]?.targetSelectionRange.start).toEqual(
+            document.textDocument.positionAt(text.lastIndexOf('Draft'))
+        );
+    });
+
     test('navigates only from within single- or double-quoted import paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/common-types.tni'), 'shared kernel CommonTypes {}'
@@ -2560,7 +2590,7 @@ bounded context Billing realizes Payments`;
         ]));
         for (const unsupported of [
             'aggregate', 'application service', 'data object', 'entity', 'repository',
-            'string', 'number', 'boolean', 'date', 'List', 'Set', 'Map'
+            'string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map'
         ]) {
             expect(labels).not.toContain(unsupported);
         }
@@ -2649,6 +2679,18 @@ bounded context Billing realizes Payments`;
                 expectedPrefix: 'str'
             },
             {
+                name: 'partial time field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { opensAt: ti${marker} } } }`,
+                expectedPrefix: 'ti',
+                expectedPrimitive: 'time'
+            },
+            {
+                name: 'partial instant field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { createdAt: ins${marker} } } }`,
+                expectedPrefix: 'ins',
+                expectedPrimitive: 'instant'
+            },
+            {
                 name: 'method parameter type',
                 before: `bounded context Sample\nin bounded context Sample { application service App { method run(amount: ${marker}) } }`,
                 expectedPrefix: ''
@@ -2710,7 +2752,8 @@ bounded context Billing realizes Payments`;
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(offset)
             });
-            const primitive = completion?.items.find(item => item.label === 'string');
+            const expectedPrimitive = completionCase.expectedPrimitive ?? 'string';
+            const primitive = completion?.items.find(item => item.label === expectedPrimitive);
             expect(primitive, completionCase.name).toMatchObject({
                 kind: CompletionItemKind.Keyword,
                 textEdit: {
@@ -2718,13 +2761,13 @@ bounded context Billing realizes Payments`;
                         start: document.textDocument.positionAt(offset - completionCase.expectedPrefix.length),
                         end: document.textDocument.positionAt(offset)
                     },
-                    newText: 'string'
+                    newText: expectedPrimitive
                 }
             });
             expect(completion?.items.map(item => item.label), completionCase.name).toEqual(
                 expect.arrayContaining(completionCase.expectedPrefix
-                    ? ['string']
-                    : ['string', 'number', 'boolean', 'date'])
+                    ? [expectedPrimitive]
+                    : ['string', 'number', 'boolean', 'date', 'time', 'instant'])
             );
         }
     });

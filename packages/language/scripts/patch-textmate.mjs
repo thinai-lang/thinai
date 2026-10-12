@@ -118,10 +118,18 @@ const enumDeclaration = {
 
 const additionalScopes = [
     enumDeclaration,
-    { name: 'storage.type.thinai', match: '\\b(?:string|number|boolean|date|List|Set|Map)\\b' },
+    { name: 'storage.type.thinai', match: '\\b(?:string|number|boolean|date|time|instant|List|Set|Map)\\b' },
     { name: 'constant.language.thinai', match: '\\b(?:core|supporting|generic)\\b' },
     { name: 'keyword.operator.relationship.thinai', match: '<->|->|-x-' },
-    { name: 'variable.other.property.thinai', match: '\\b[_a-zA-Z][\\w_]*\\??(?=\\s*:)' }
+    {
+        name: 'meta.field.optional.thinai',
+        match: '\\b([_a-zA-Z][\\w_]*)(\\?)(?=\\s*:)',
+        captures: {
+            '1': { name: 'variable.other.property.thinai' },
+            '2': { name: 'keyword.operator.optional.thinai' }
+        }
+    },
+    { name: 'variable.other.property.thinai', match: '\\b[_a-zA-Z][\\w_]*(?=\\s*:)' }
 ];
 
 grammar.patterns = grammar.patterns.filter(pattern => pattern.name !== 'meta.declaration.thinai');

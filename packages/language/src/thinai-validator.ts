@@ -455,8 +455,9 @@ export class ThinaiValidator {
         }
         if (field.initialState !== undefined) {
             const stateType = field.type?.ref;
+            const initialState = field.initialState.ref;
             if (!isEntity(field.$container) || !stateType || !isEnumType(stateType) || field.optional ||
-                !stateType.values.some(value => value.name === field.initialState)) {
+                !isEnumValue(initialState) || initialState.$container !== stateType) {
                 accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
                     node: field,
                     property: 'initialState'
@@ -621,10 +622,11 @@ export class ThinaiValidator {
                 }
             }
 
-            if (field.initialState === undefined) {
+            const initialState = field.initialState?.ref;
+            if (!isEnumValue(initialState)) {
                 continue;
             }
-            const reachable = new Set<string>([field.initialState]);
+            const reachable = new Set<string>([initialState.name]);
             let changed = true;
             while (changed) {
                 changed = false;
@@ -639,7 +641,7 @@ export class ThinaiValidator {
             }
             const unreachable = stateType.values.find(value => !reachable.has(value.name));
             if (unreachable) {
-                accept('error', `State '${unreachable.name}' is unreachable from initial state '${field.initialState}'.`, {
+                accept('error', `State '${unreachable.name}' is unreachable from initial state '${initialState.name}'.`, {
                     node: field,
                     property: 'initialState'
                 });

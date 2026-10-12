@@ -448,6 +448,26 @@ in bounded context Ordering {
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
+    test('rejects an initial state from a different enum', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        status: OrderStatus initial Pending
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                    enum PaymentStatus { Pending, Paid }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('initial state') || String(diagnostic.message).includes('Pending')
+        )).toBe(true);
+    });
+
     test('allows the same transition in different methods', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

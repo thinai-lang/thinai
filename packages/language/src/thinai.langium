@@ -146,7 +146,7 @@ EnumValue:
 Field:
     (identifier?='identifier')? name=ID (optional?='?')? ':'
     (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[TypeDeclaration:ID] | collection=CollectionType)
-    ('initial' initialState=ID)? ;
+    ('initial' initialState=[EnumValue:ID])? ;
 
 Invariant:
     'invariant' description=SpecificationText ;
@@ -291,7 +291,7 @@ StringLiteral returns string:
     | SINGLE_STRING_START SINGLE_STRING_TEXT SINGLE_STRING_END;
 
 PrimitiveType returns string:
-    'string' | 'number' | 'boolean' | 'date';
+    'string' | 'number' | 'boolean' | 'date' | 'time' | 'instant';
 
 SubdomainKind returns string:
     'core' | 'supporting' | 'generic';

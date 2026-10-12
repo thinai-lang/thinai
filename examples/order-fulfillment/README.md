@@ -25,7 +25,7 @@ The model demonstrates root and child entity identities and transitions, constru
 | Simple and component-selective imports, aliases, and qualified references | `ordering.tni`, `context-map.tni`, `ordering-events.tni`, `shipping.tni` |
 | Customer-supplier, partnership, separate-ways, and shared-kernel relationships; all integration-pattern labels | `context-map.tni` |
 | Shared-kernel value objects, enum, domain services, nested modules, and multiple exposures | `common-types.tni` |
-| `string`, `number`, `boolean`, and `date`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
+| `string`, `number`, `boolean`, `date`, `time`, and `instant`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
 | Nested data objects, optional fields/parameters, identifiers, initial states, constructors, and mirrored value objects | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
 | Application/domain/query services, repositories, factories, projectors, read models, events, and exposed integration contracts | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
 | All behavior clauses, multiple emits/projects targets, guarded and grouped transitions, enum-value links | `ordering.tni`, `ordering-events.tni` |

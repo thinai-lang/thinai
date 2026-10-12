@@ -1,8 +1,21 @@
-import { AstUtils, createLangiumParser, type LangiumCoreServices } from 'langium';
+import { AstUtils, createLangiumParser, LangiumParserErrorMessageProvider, type LangiumCoreServices } from 'langium';
 import { isSpecificationText, type SpecificationText } from './generated/ast.js';
 
 const REFERENCE_MARKER_START = '\uE000thinai-reference-';
 const REFERENCE_MARKER_END = '\uE001';
+
+export class ThinaiParserErrorMessageProvider extends LangiumParserErrorMessageProvider {
+    override buildMismatchTokenMessage(
+        options: Parameters<LangiumParserErrorMessageProvider['buildMismatchTokenMessage']>[0]
+    ): string {
+        const isEnumValuePosition = ['initial', 'from', 'to'].includes(options.previous.image.toLowerCase());
+        const isQuotedValue = options.actual.image === '"' || options.actual.image === "'";
+        if (options.expected.name === 'ID' && isEnumValuePosition && isQuotedValue) {
+            return 'Enum values must be unquoted identifiers declared by the field\'s enum type.';
+        }
+        return super.buildMismatchTokenMessage(options);
+    }
+}
 
 export function createThinaiParser(services: LangiumCoreServices) {
     const parser = createLangiumParser(services);

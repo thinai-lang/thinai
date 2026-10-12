@@ -38,7 +38,7 @@ in bounded context Ordering {
     orderId: OrderId
     items: List<OrderLineDetails>
     deliveryAddress: DeliveryAddress
-    submittedAt: date
+    submittedAt: instant
   }
 
   data object OrderLineDetails {

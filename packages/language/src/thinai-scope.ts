@@ -20,6 +20,7 @@ import {
     type Constructor,
     type DataObject,
     type Exposure,
+    type Field,
     type JourneyStep,
     type Method,
     type ReadModel,
@@ -238,6 +239,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     override getScope(context: ReferenceInfo): Scope {
+        if (isField(context.container) && context.property === 'initialState') {
+            return this.getInitialStateScope(context.container);
+        }
         if (isTransitionChange(context.container)) {
             if (context.property === 'field') {
                 return this.getTransitionFieldScope(context.container);
@@ -401,6 +405,26 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const enumType = isEnumType(stateType)
             ? stateType
             : aggregate?.members.find(member => isEnumType(member) && member.name === field?.type?.$refText);
+        if (!isEnumType(enumType)) {
+            return this.createScope([]);
+        }
+        const document = AstUtils.getDocument(enumType);
+        return this.createScope(enumType.values.map(value =>
+            this.descriptions.createDescription(value, value.name, document)
+        ));
+    }
+
+    private getInitialStateScope(field: Field): Scope {
+        const stateType = field.type?.ref;
+        let current: AstNode | undefined = field.$container;
+        while (current && !isEntity(current)) {
+            current = current.$container;
+        }
+        const entity = isEntity(current) ? current : undefined;
+        const aggregate = entity ? this.getOwningAggregateNode(entity) : undefined;
+        const enumType = isEnumType(stateType)
+            ? stateType
+            : aggregate?.members.find(member => isEnumType(member) && member.name === field.type?.$refText);
         if (!isEnumType(enumType)) {
             return this.createScope([]);
         }

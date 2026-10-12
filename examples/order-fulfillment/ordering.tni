@@ -51,7 +51,7 @@ in bounded context Ordering {
       labels: Set<string>
       quantities: Map<string, number>
       characteristics: Map<string, List<Set<string>>>
-      createdAt: date
+      createdAt: instant
       externalReference?: string
     }
 

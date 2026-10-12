@@ -195,7 +195,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             item.detail?.startsWith('BoundedContext ')
         ) === true;
         const constrainedValueCompletions = [
-            ...this.getInitialStateCompletions(document, params.position),
             ...this.getPartialInitialKeywordCompletions(document, params.position),
             ...this.getIntegrationPatternCompletions(document, params.position),
             ...relationshipContinuations,
@@ -920,7 +919,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const allowed = new Set(['exposes', 'domain', 'domain service', 'depends', 'depends on', 'on', 'module', 'value', 'value object', 'enum']);
-        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'List', 'Set', 'Map']);
+        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
         const inTypePosition = this.isTypeKeywordCompletionPosition(document, position);
         return {
             ...completion,
@@ -994,7 +993,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (sibling === null) {
             const allowedContinuations = new Set(extraAllowedKeywords);
             const inTypePosition = this.isTypeKeywordCompletionPosition(document, position);
-            const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'List', 'Set', 'Map']);
+            const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
             return {
                 isIncomplete: completion?.isIncomplete ?? false,
                 items: completion?.items.filter(item =>
@@ -1425,7 +1424,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (parameters.some(parameter => this.isInIncompleteTypePosition(parameter, document, position))) {
             return false;
         }
-        if (isField(node) && node.initialState === undefined && /\binitial\s*$/iu.test(source)) {
+        if (isField(node) && !this.hasReferenceText(node.initialState) && /\binitial\s*$/iu.test(source)) {
             return false;
         }
         const policy = getSiblingStatementPolicy(node.$type);
@@ -1620,7 +1619,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
                 document.textDocument.offsetAt(position)
             );
-            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[snbd][\w]*)?$/iu.test(source);
+            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[snbdti][\w]*)?$/iu.test(source);
         }
 
         if (node.returnCollection) {
@@ -1633,7 +1632,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
             document.textDocument.offsetAt(position)
         );
-        return /\)\s+returns\s*(?:[snbd][\w]*)?$/iu.test(source);
+        return /\)\s+returns\s*(?:[snbdti][\w]*)?$/iu.test(source);
     }
 
     private isIncompleteCollectionType(collection: import('./generated/ast.js').CollectionType): boolean {
@@ -1655,7 +1654,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!reference?.$refText) {
             return false;
         }
-        return !['string', 'number', 'boolean', 'date'].some(primitive =>
+        return !['string', 'number', 'boolean', 'date', 'time', 'instant'].some(primitive =>
             primitive.startsWith(reference.$refText.toLowerCase())
         );
     }
@@ -1681,7 +1680,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
             return node.mirrors === undefined && !source.includes('{') ? ['mirrors'] : [];
         }
-        if (isField(node) && isEntity(node.$container) && !node.optional && node.initialState === undefined && isEnumType(node.type?.ref)) {
+        if (isField(node) && isEntity(node.$container) && !node.optional && !this.hasReferenceText(node.initialState) && isEnumType(node.type?.ref)) {
             return ['initial'];
         }
         if (isMethod(node) && !node.returnPrimitive && !node.returnType && !node.returnCollection) {
@@ -1778,51 +1777,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                         end: position
                     },
                     newText: `${best!.needsLeadingSpace ? ' ' : ''}${keyword}`
-                }
-            }));
-    }
-
-    private getInitialStateCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
-        const model = document.parseResult.value;
-        if (!model) {
-            return [];
-        }
-        const offset = document.textDocument.offsetAt(position);
-        const text = document.textDocument.getText();
-        let match: RegExpExecArray | null = null;
-        let selected: import('./generated/ast.js').Field | undefined;
-        let selectedStart = -1;
-        for (const node of AstUtils.streamAst(model)) {
-            if (!isField(node) || !node.$cstNode) {
-                continue;
-            }
-            const start = document.textDocument.offsetAt(node.$cstNode.range.start);
-            if (start < selectedStart || start > offset) {
-                continue;
-            }
-            const fieldPrefix = text.slice(start, offset);
-            const candidateMatch = /\binitial\s+([\p{L}_]*)$/u.exec(fieldPrefix);
-            if (candidateMatch) {
-                selected = node;
-                selectedStart = start;
-                match = candidateMatch;
-            }
-        }
-        if (!selected || !match || !isEntity(selected.$container) || selected.optional || !isEnumType(selected.type?.ref)) {
-            return [];
-        }
-        const prefix = match[1];
-        const start = offset - prefix.length;
-        return selected.type.ref.values
-            .filter(value => value.name.startsWith(prefix))
-            .map(value => ({
-                label: value.name,
-                kind: CompletionItemKind.EnumMember,
-                detail: `Initial state of ${selected!.name}`,
-                sortText: '0',
-                textEdit: {
-                    range: { start: document.textDocument.positionAt(start), end: position },
-                    newText: value.name
                 }
             }));
     }

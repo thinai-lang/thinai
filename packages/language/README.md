@@ -196,6 +196,11 @@ typed methods and constructors, domain services, write repositories, factories,
 events, reusable actors, journeys, and context maps.
 Built-in collections are
 `List<T>`, `Set<T>`, and `Map<K, V>`.
+Primitive types include `string`, `number`, `boolean`, `date`, `time`, and
+`instant`. Use `date` for a calendar date, `time` for a wall-clock time without
+a date or time zone, and `instant` for an exact point on the global timeline.
+`time` does not represent an elapsed duration; model richer temporal concepts,
+such as a time-zone-aware appointment, with a value object.
 
 The language server provides keyword and cross-reference completion,
 navigation, diagnostics, import-path completion, document formatting, and quick
