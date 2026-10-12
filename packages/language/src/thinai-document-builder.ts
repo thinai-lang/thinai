@@ -9,8 +9,9 @@ export class ThinaiDocumentBuilder extends DefaultDocumentBuilder {
         }
 
         const model = document.parseResult.value;
-        return isModel(model) && model.imports.some(importDeclaration =>
-            changedUris.has(resolveImportUri(document, importDeclaration).toString())
-        );
+        return isModel(model) && model.imports.some(importDeclaration => {
+            const uri = resolveImportUri(document, importDeclaration);
+            return uri !== undefined && changedUris.has(uri.toString());
+        });
     }
 }

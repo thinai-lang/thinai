@@ -65,6 +65,7 @@ import {
     type Module
 } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
+import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 
 const exportedTypes = new Set([
     'Aggregate',
@@ -194,7 +195,10 @@ export function getExportedName(node: NamedNode): string {
 }
 
 export function resolveImportUri(document: LangiumDocument, importDeclaration: Import) {
-    return UriUtils.resolvePath(UriUtils.dirname(document.uri), importDeclaration.path);
+    const path = importDeclaration.path;
+    return typeof path === 'string' && path.length > 0
+        ? UriUtils.resolvePath(UriUtils.dirname(document.uri), path)
+        : undefined;
 }
 
 export class ThinaiScopeComputation extends DefaultScopeComputation {
@@ -878,7 +882,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         const importsByUri = new Map<string, Import[]>();
         for (const importDeclaration of root.imports) {
-            const uri = resolveImportUri(document, importDeclaration).toString();
+            const resolvedUri = resolveImportUri(document, importDeclaration);
+            if (!resolvedUri) {
+                continue;
+            }
+            const uri = resolvedUri.toString();
             const imports = importsByUri.get(uri) ?? [];
             imports.push(importDeclaration);
             importsByUri.set(uri, imports);
@@ -1323,7 +1331,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         const contextMaps = [...root.declarations.filter(isContextMap)];
         for (const declaration of root.imports) {
-            const uri = resolveImportUri(document, declaration).toString();
+            const resolvedUri = resolveImportUri(document, declaration);
+            if (!resolvedUri) {
+                continue;
+            }
+            const uri = resolvedUri.toString();
             contextMaps.push(...this.indexManager.allElements('ContextMap', new Set([uri]))
                 .map(description => description.node)
                 .filter((node): node is import('./generated/ast.js').ContextMap =>
@@ -1332,8 +1344,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 ).toArray());
         }
         return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
-            relationship.participants.some(participant => participant.target.ref?.name === contextName)
+            isSyntacticallyComplete(relationship) && isSharedKernelRelationship(relationship) &&
+            relationship.sharedKernel?.ref === sharedKernel &&
+            relationship.participants.some(participant => participant?.target?.ref?.name === contextName)
         ));
     }
 
@@ -1347,10 +1360,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
         const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
-        return root.imports.some(declaration =>
-            UriUtils.equals(resolveImportUri(document, declaration), sharedKernelUri) &&
-            (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel))
-        );
+        return root.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, sharedKernelUri) &&
+                (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel));
+        });
     }
 
     private hasAuthorizedEventRelationship(source: AstNode, event: import('./generated/ast.js').IntegrationEvent): boolean {
@@ -1358,13 +1372,18 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const producer = getOwningContextName(event);
         const document = AstUtils.getDocument(source);
         const root = document.parseResult.value;
-        if (!consumer || !producer || !isModel(root) || !root.imports.some(declaration =>
-            UriUtils.equals(resolveImportUri(document, declaration), AstUtils.getDocument(event).uri)
-        )) {
+        if (!consumer || !producer || !isModel(root) || !root.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, AstUtils.getDocument(event).uri);
+        })) {
             return false;
         }
         for (const declaration of root.imports) {
-            const uri = resolveImportUri(document, declaration).toString();
+            const resolvedUri = resolveImportUri(document, declaration);
+            if (!resolvedUri) {
+                continue;
+            }
+            const uri = resolvedUri.toString();
             const contextMaps = this.indexManager.allElements('ContextMap', new Set([uri]))
                 .map(description => description.node)
                 .filter((node): node is import('./generated/ast.js').ContextMap => isContextMap(node))
@@ -1374,13 +1393,17 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     continue;
                 }
                 for (const relationship of contextMap.relationships) {
+                    if (!isSyntacticallyComplete(relationship)) {
+                        continue;
+                    }
                     if (isCustomerSupplierRelationship(relationship) &&
-                        relationship.customer.context.ref?.name === consumer && relationship.supplier.context.ref?.name === producer) {
+                        relationship.customer?.context?.ref?.name === consumer &&
+                        relationship.supplier?.context?.ref?.name === producer) {
                         return true;
                     }
                     if (isPartnershipRelationship(relationship)) {
-                        const left = relationship.left.context.ref?.name;
-                        const right = relationship.right.context.ref?.name;
+                        const left = relationship.left?.context?.ref?.name;
+                        const right = relationship.right?.context?.ref?.name;
                         if ((left === consumer && right === producer) || (right === consumer && left === producer)) {
                             return true;
                         }
@@ -1419,7 +1442,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     private getImportableComponents(component: import('./generated/ast.js').ImportComponent, referenceType: string): AstNodeDescription[] {
         const importDeclaration = component.$container;
         const document = AstUtils.getDocument(importDeclaration);
-        const uri = resolveImportUri(document, importDeclaration).toString();
+        const resolvedUri = resolveImportUri(document, importDeclaration);
+        if (!resolvedUri) {
+            return [];
+        }
+        const uri = resolvedUri.toString();
         return this.indexManager.allElements(referenceType, new Set([uri]))
             .filter(description => ['BoundedContext', 'ContextMap', 'SharedKernel'].includes(description.type))
             .toArray();

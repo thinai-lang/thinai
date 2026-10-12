@@ -186,7 +186,10 @@ export function getSiblingCompletionKeywords(containerType: string, inSharedKern
 }
 
 export function getSiblingKeywordPrefixes(): readonly string[] {
-    return [...new Set(Object.values(siblingContainerPolicies).flatMap(policy => policy.completionKeywords ?? []))];
+    return [...new Set([
+        ...Object.values(siblingContainerPolicies).flatMap(policy => policy.completionKeywords ?? []),
+        'transition', 'emits', 'projects'
+    ])];
 }
 
 export function getSiblingStatementPolicy(nodeType: string): SiblingStatementPolicy {

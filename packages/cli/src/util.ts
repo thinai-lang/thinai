@@ -30,7 +30,10 @@ export async function extractDocuments(fileName: string, services: LangiumCoreSe
         const model = document.parseResult.value;
         if (isModel(model)) {
             for (const importDeclaration of model.imports) {
-                pending.push(resolveImportUri(document, importDeclaration));
+                const importUri = resolveImportUri(document, importDeclaration);
+                if (importUri) {
+                    pending.push(importUri);
+                }
             }
         }
     }

@@ -21,6 +21,202 @@ afterEach(async () => {
 });
 
 describe('Validating', () => {
+    test('keeps an incomplete context-map relationship local while it is being typed', async () => {
+        const prefixes = [
+            'customer ',
+            'customer Ordering',
+            'customer Ordering ->',
+            'customer Ordering -> supplier',
+            'customer Ordering -> supplier Shipping'
+        ];
+        for (const [index, relationship] of prefixes.entries()) {
+            const source = `bounded context Ordering
+bounded context Shipping
+context map Fulfillment {
+    ${relationship}`;
+            const document = await parse(source);
+            const exceptionDiagnostics = document.diagnostics?.filter(diagnostic =>
+                String(diagnostic.message).startsWith('An error occurred during validation:')
+            ) ?? [];
+            expect(exceptionDiagnostics, `prefix ${index}: ${relationship}`).toEqual([]);
+            const mapStart = source.indexOf('context map Fulfillment');
+            const mapEnd = source.length;
+            const mapWideDiagnostics = document.diagnostics?.filter(diagnostic =>
+                document.textDocument.offsetAt(diagnostic.range.start) <= mapStart &&
+                document.textDocument.offsetAt(diagnostic.range.end) >= mapEnd
+            ) ?? [];
+            expect(mapWideDiagnostics, `prefix ${index}: ${relationship}`).toEqual([]);
+        }
+    });
+
+    test('does not throw while import paths or import clauses are incomplete', async () => {
+        for (const [index, source] of ['import ', 'import { Foo } from '].entries()) {
+            const document = await parse(source);
+            const exceptionDiagnostics = document.diagnostics?.filter(diagnostic =>
+                String(diagnostic.message).startsWith('An error occurred')
+            ) ?? [];
+            expect(exceptionDiagnostics, `incomplete import ${index}`).toEqual([]);
+        }
+    });
+
+    test('does not crash shared-kernel checks while a context-map relationship is incomplete', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+    application service App {
+        method run() {
+            invokes Common.Pricing.calculate
+        }
+    }
+}
+shared kernel Common {
+    domain service Pricing {
+        method calculate() {}
+    }
+}
+context map Relations {
+    sharedKernel`);
+        const exceptionDiagnostics = document.diagnostics?.filter(diagnostic =>
+            String(diagnostic.message).startsWith('An error occurred')
+        ) ?? [];
+        expect(exceptionDiagnostics).toEqual([]);
+    });
+
+    test('defers required-member diagnostics until the containing construct is complete', async () => {
+        const incomplete = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {`);
+        const incompleteMessages = incomplete.diagnostics?.map(diagnostic => String(diagnostic.message)) ?? [];
+        expect(incompleteMessages.some(message => message.includes('exactly one root entity'))).toBe(false);
+        expect(incompleteMessages.some(message => message.includes('exactly one identifier field'))).toBe(false);
+
+        const complete = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {}
+    }
+}`);
+        const completeMessages = complete.diagnostics?.map(diagnostic => String(diagnostic.message)) ?? [];
+        expect(completeMessages.some(message => message.includes('exactly one identifier field'))).toBe(true);
+
+        const incompleteProjector = await parse(`bounded context Ordering
+in bounded context Ordering {
+    projector OrderProjector {
+        method project(event: OrderPlaced) {`);
+        expect(incompleteProjector.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('must declare at least one read model')
+        )).toBe(false);
+
+        const incompleteProjectorEmission = await parse(`bounded context Ordering
+in bounded context Ordering {
+    projector OrderProjector {
+        method project(event: OrderPlaced) {
+            emits`);
+        expect(incompleteProjectorEmission.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('cannot invoke domain/application methods, emit events')
+        )).toBe(false);
+    });
+
+    test('defers participant and journey-step requirements while their blocks are open', async () => {
+        const incomplete = await parse(`bounded context Ordering
+shared kernel Common {}
+context map Fulfillment {
+    sharedKernel Common {
+        participants: [Ordering`);
+        const incompleteMessages = incomplete.diagnostics?.map(diagnostic => String(diagnostic.message)) ?? [];
+        expect(incompleteMessages.some(message => message.includes('must include at least two bounded contexts'))).toBe(false);
+
+        const complete = await parse(`bounded context Ordering
+shared kernel Common {}
+context map Fulfillment {
+    sharedKernel Common {
+        participants: [Ordering]
+    }
+}`);
+        expect(complete.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('must include at least two bounded contexts')
+        )).toBe(true);
+
+        const incompleteJourney = await parse(`actor Customer
+journey PlaceOrder {
+    by Customer {`);
+        expect(incompleteJourney.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('must contain at least one command step')
+        )).toBe(false);
+
+        const completeJourney = await parse(`actor Customer
+journey PlaceOrder {
+    by Customer {}
+}`);
+        expect(completeJourney.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('must contain at least one command step')
+        )).toBe(true);
+    });
+
+    test('defers transition and collection semantics while their syntax is incomplete', async () => {
+        const incompleteTransition = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            method ship() {
+                transition status from Draft to
+            }
+            identifier id: OrderId
+            status: OrderStatus
+        }
+        value object OrderId { raw: string }
+        enum OrderStatus { Draft, Shipped }
+    }
+}`);
+        expect(incompleteTransition.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A transition must target an enum field')
+        )).toBe(false);
+
+        const incompleteCollection = await parse(`bounded context Ordering
+in bounded context Ordering {
+    value object OrderId {
+        keys: Map<string,
+    }
+}`);
+        expect(incompleteCollection.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A Map type requires both a key and a value type')
+        )).toBe(false);
+
+        const completeInvalidCollection = await parse(`bounded context Ordering
+in bounded context Ordering {
+    value object OrderId {
+        keys: Map<string>
+    }
+}`);
+        expect(completeInvalidCollection.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A Map type requires both a key and a value type')
+        )).toBe(true);
+    });
+
+    test('does not report missing repository and method return types before their declarations are complete', async () => {
+        const incompleteRepository = await parse(`bounded context Ordering
+in bounded context Ordering {
+    repository OrderRepository manages`);
+        const repositoryMessages = incompleteRepository.diagnostics?.map(diagnostic => String(diagnostic.message)) ?? [];
+        expect(repositoryMessages.some(message => message.startsWith('An error occurred'))).toBe(false);
+        expect(repositoryMessages.some(message => message.includes('must manage an aggregate-root entity'))).toBe(false);
+
+        const incompleteQuery = await parse(`bounded context Ordering
+in bounded context Ordering {
+    query service Orders {
+        method search(`);
+        expect(incompleteQuery.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A query must declare a result type')
+        )).toBe(false);
+
+        const incompleteFactory = await parse(`bounded context Ordering
+in bounded context Ordering {
+    factory OrderFactory {
+        method create(`);
+        expect(incompleteFactory.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A factory method must return an aggregate-root entity')
+        )).toBe(false);
+    });
+
     test('requires line breaks between sibling declarations and body statements', async () => {
         const compact = await parse(`bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { method place() { invariant "An order exists" behavior "Place it" } identifier id: OrderId status: Status } value object OrderId { raw: string } enum Status { Draft, Placed } }}`);
         const compactLayoutErrors = compact.diagnostics?.filter(diagnostic => diagnostic.code === 'line-break-required') ?? [];

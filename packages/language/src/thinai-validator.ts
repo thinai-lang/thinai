@@ -78,6 +78,7 @@ import {
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { getExportedName, getOwningAggregate, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope.js';
+import { isSyntacticallyComplete as isAstSyntacticallyComplete } from './thinai-ast-utils.js';
 import {
     canDeclareProjects,
     canDeclareTransition,
@@ -160,10 +161,10 @@ export class ThinaiValidator {
 
         const model = currentDocument.parseResult.value;
         const imported = isModel(model)
-            ? model.imports.some(importDeclaration => UriUtils.equals(
-                resolveImportUri(currentDocument, importDeclaration),
-                targetDocument.uri
-            ))
+            ? model.imports.some(importDeclaration => {
+                const uri = resolveImportUri(currentDocument, importDeclaration);
+                return uri !== undefined && UriUtils.equals(uri, targetDocument.uri);
+            })
             : false;
         if (!imported) {
             accept('error', 'A bounded-context contribution must directly import its canonical declaration.', {
@@ -175,6 +176,9 @@ export class ThinaiValidator {
 
     checkImport(importDeclaration: Import, accept: ValidationAcceptor): void {
         const path = importDeclaration.path;
+        if (typeof path !== 'string' || path.length === 0) {
+            return;
+        }
         if (!path.startsWith('./') && !path.startsWith('../')) {
             accept('error', 'Imports must use a relative path beginning with ./ or ../.', {
                 node: importDeclaration,
@@ -190,6 +194,9 @@ export class ThinaiValidator {
 
         const document = AstUtils.getDocument(importDeclaration);
         const uri = resolveImportUri(document, importDeclaration);
+        if (!uri) {
+            return;
+        }
         if (UriUtils.equals(document.uri, uri)) {
             accept('error', 'A file cannot import itself.', {
                 node: importDeclaration,
@@ -198,9 +205,10 @@ export class ThinaiValidator {
         }
 
         const duplicate = isModel(document.parseResult.value)
-            ? document.parseResult.value.imports.some(other =>
-                other !== importDeclaration && UriUtils.equals(resolveImportUri(document, other), uri)
-            )
+            ? document.parseResult.value.imports.some(other => {
+                const otherUri = resolveImportUri(document, other);
+                return other !== importDeclaration && otherUri !== undefined && UriUtils.equals(otherUri, uri);
+            })
             : false;
         if (duplicate) {
             accept('error', 'The same file is imported more than once.', {
@@ -254,6 +262,9 @@ export class ThinaiValidator {
         const relationshipsByPair = new Map<string, ContextRelationshipPairSemantics[]>();
         const reported = new Set<ContextRelationship>();
         for (const relationship of contextMap.relationships) {
+            if (!this.isSyntacticallyComplete(relationship)) {
+                continue;
+            }
             for (const pair of this.getRelationshipPairSemantics(relationship)) {
                 const existing = relationshipsByPair.get(pair.key) ?? [];
                 const duplicate = existing.some(previous => previous.identity === pair.identity);
@@ -279,6 +290,9 @@ export class ThinaiValidator {
 
         for (const contextMap of this.getImportedContextMaps(model)) {
             for (const relationship of contextMap.relationships) {
+                if (!this.isSyntacticallyComplete(relationship)) {
+                    continue;
+                }
                 for (const pair of this.getRelationshipPairSemantics(relationship)) {
                     const existing = relationshipsByPair.get(pair.key) ?? [];
                     for (const previous of existing) {
@@ -350,7 +364,7 @@ export class ThinaiValidator {
     checkAggregate(aggregate: Aggregate, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(aggregate, accept);
         const roots = aggregate.members.filter(member => isEntity(member) && member.root);
-        if (roots.length !== 1) {
+        if (roots.length !== 1 && this.isSyntacticallyComplete(aggregate)) {
             accept('error', 'An aggregate must declare exactly one root entity.', {
                 node: aggregate,
                 property: 'members'
@@ -363,16 +377,18 @@ export class ThinaiValidator {
         this.checkFieldMethodNameConflicts(entity.fields, entity.methods, accept);
         this.checkDuplicateFieldNames(entity.fields, accept);
         this.checkDuplicateConstructorSignatures(entity.constructors, accept);
-        this.checkEntityStateGraph(entity, accept);
+        if (this.isSyntacticallyComplete(entity)) {
+            this.checkEntityStateGraph(entity, accept);
+        }
         const aggregate = this.getOwningAggregate(entity);
-        if (!aggregate) {
+        if (!aggregate && this.isSyntacticallyComplete(entity)) {
             accept('error', 'An entity must belong to an aggregate.', {
                 node: entity,
                 property: 'name'
             });
         }
         const identifierFields = entity.fields.filter(field => field.identifier);
-        if (identifierFields.length !== 1) {
+        if (identifierFields.length !== 1 && this.isSyntacticallyComplete(entity)) {
             accept('error', 'An entity must declare exactly one identifier field.', {
                 node: entity,
                 property: 'fields'
@@ -643,6 +659,9 @@ export class ThinaiValidator {
     }
 
     checkCollectionType(collection: CollectionType, accept: ValidationAcceptor): void {
+        if (!this.isSyntacticallyComplete(collection) || !collection.$cstNode?.text.trimEnd().endsWith('>')) {
+            return;
+        }
         const hasValueType = collection.valuePrimitive !== undefined || collection.valueType !== undefined || collection.valueCollection !== undefined;
         const hasElementType = collection.elementPrimitive !== undefined || collection.elementType !== undefined || collection.elementCollection !== undefined;
         if (!hasElementType) {
@@ -672,20 +691,21 @@ export class ThinaiValidator {
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
         const emissionMode = getEventEmissionMode(method);
-        if (method.projects.length > 0 && !canDeclareProjects(method)) {
+        if (method.projects.some(project => this.isSyntacticallyComplete(project)) && !canDeclareProjects(method)) {
             accept('error', 'The projects clause is allowed only in projector methods.', {
                 node: method,
                 property: 'projects'
             });
         }
         if (queryService) {
-            if (!method.returnPrimitive && !method.returnType && !method.returnCollection) {
+            if (!method.returnPrimitive && !method.returnType && !method.returnCollection &&
+                this.isSyntacticallyComplete(method)) {
                 accept('error', 'A query must declare a result type.', {
                     node: method,
                     property: 'returnType'
                 });
             }
-            if (eventParameters.length > 0 || method.emissions.length > 0) {
+            if (eventParameters.length > 0 || method.emissions.some(emission => this.isSyntacticallyComplete(emission))) {
                 accept('error', 'A query cannot handle events or emit events.', {
                     node: method,
                     property: 'returnType'
@@ -734,6 +754,9 @@ export class ThinaiValidator {
             }
         }
         for (const invocation of method.invocations) {
+            if (!this.isSyntacticallyComplete(invocation)) {
+                continue;
+            }
             const target = getInvokedMethod(invocation);
             if (!target) {
                 accept('error', 'An invokes path must end at a method.', {
@@ -859,8 +882,11 @@ export class ThinaiValidator {
             this.checkProjectorMethod(method, projectorService!, accept);
         }
         for (const emission of method.emissions) {
+            if (!this.isSyntacticallyComplete(emission)) {
+                continue;
+            }
             for (const emitted of emission.events) {
-                const emittedEvent = emitted.target.ref;
+                const emittedEvent = emitted?.target?.ref;
                 if (!emittedEvent) {
                     continue;
                 }
@@ -934,14 +960,17 @@ export class ThinaiValidator {
     }
 
     private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
-        if (method.projects.length === 0) {
+        const cstNode = method.$cstNode;
+        const hasClosedBody = cstNode !== undefined && findCstTokenOffset(cstNode, '{') !== undefined &&
+            cstNode.text.trimEnd().endsWith('}') && this.isSyntacticallyComplete(method);
+        if (method.projects.length === 0 && hasClosedBody) {
             accept('error', 'A projector method must declare at least one read model with projects.', {
                 node: method,
                 property: 'projects'
             });
         }
         for (const project of method.projects) {
-            if (project.target.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
+            if (project.target?.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
                 accept('error', 'A projector and its read models must belong to the same bounded context.', {
                     node: method,
                     property: 'projects'
@@ -949,7 +978,7 @@ export class ThinaiValidator {
             }
         }
         const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
-        if (eventParameters.length !== 1 || method.parameters.length !== 1) {
+        if ((eventParameters.length !== 1 || method.parameters.length !== 1) && hasClosedBody) {
             accept('error', 'A projector method must handle exactly one domain or integration event.', {
                 node: method,
                 property: 'parameters'
@@ -961,7 +990,9 @@ export class ThinaiValidator {
                 property: 'returnType'
             });
         }
-        if (method.invocations.length > 0 || method.emissions.length > 0 || method.transitions.length > 0) {
+        if (method.invocations.some(invocation => this.isSyntacticallyComplete(invocation)) ||
+            method.emissions.some(emission => this.isSyntacticallyComplete(emission)) ||
+            method.transitions.some(transition => this.isSyntacticallyComplete(transition))) {
             accept('error', 'A projector describes a read-model projection and cannot invoke domain/application methods, emit events, or transition aggregate state.', {
                 node: method,
                 property: 'invocations'
@@ -994,6 +1025,9 @@ export class ThinaiValidator {
     }
 
     checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
+        if (!this.isSyntacticallyComplete(transition)) {
+            return;
+        }
         const aggregate = this.getOwningAggregate(transition);
         const method = transition.$container;
         const entity = method.$container;
@@ -1032,21 +1066,23 @@ export class ThinaiValidator {
 
     checkJourney(journey: Journey, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(journey, accept);
-        if (journey.actors.length === 0) {
+        if (journey.actors.length === 0 && this.isSyntacticallyComplete(journey)) {
             accept('error', 'A journey must contain at least one actor block.', {
                 node: journey,
                 property: 'actors'
             });
         }
         for (const actorBlock of journey.actors) {
-            if (actorBlock.steps.length === 0) {
+            if (actorBlock.steps.length === 0 && this.isSyntacticallyComplete(actorBlock)) {
                 accept('error', 'An actor block in a journey must contain at least one command step.', {
                     node: actorBlock,
                     property: 'steps'
                 });
             }
             for (const step of actorBlock.steps) {
-                this.checkJourneyStep(step, accept);
+                if (this.isSyntacticallyComplete(step)) {
+                    this.checkJourneyStep(step, accept);
+                }
             }
         }
     }
@@ -1387,9 +1423,12 @@ export class ThinaiValidator {
 
     checkRepository(repository: Repository, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(repository, accept);
-        const root = repository.root.ref;
+        const root = repository.root?.ref;
         const aggregate = root ? this.getOwningAggregate(root) : undefined;
         if (!isEntity(root) || !root.root || !aggregate) {
+            if (!this.isSyntacticallyComplete(repository)) {
+                return;
+            }
             accept('error', 'A repository must manage an aggregate-root entity.', {
                 node: repository,
                 property: 'root'
@@ -1440,7 +1479,8 @@ export class ThinaiValidator {
         this.checkDuplicateDeclaration(factory, accept);
         for (const method of factory.methods) {
             const result = method.returnType?.ref;
-            if (!isEntity(result) || !result.root || !this.getOwningAggregate(result) || this.isCrossContextOwned(factory, result)) {
+            if (this.isSyntacticallyComplete(method) &&
+                (!isEntity(result) || !result.root || !this.getOwningAggregate(result) || this.isCrossContextOwned(factory, result))) {
                 accept('error', 'A factory method must return an aggregate-root entity in its own bounded context.', {
                     node: method,
                     property: 'returnType'
@@ -1450,6 +1490,9 @@ export class ThinaiValidator {
     }
 
     checkContextRelationship(relationship: ContextRelationship, accept: ValidationAcceptor): void {
+        if (!this.isSyntacticallyComplete(relationship)) {
+            return;
+        }
         const endpoints = this.getContextMapEndpoints(relationship);
         const sharedKernelRelationship = isSharedKernelRelationship(relationship);
         const contexts = sharedKernelRelationship
@@ -1457,7 +1500,9 @@ export class ThinaiValidator {
             : isSeparateWaysRelationship(relationship)
                 ? [relationship.left, relationship.right]
                 : endpoints.map(endpoint => endpoint.context);
-        const resolvedContexts = contexts.map(context => 'target' in context ? context.target.ref : context.ref)
+        const resolvedContexts = contexts
+            .filter((context): context is NonNullable<typeof context> => context !== undefined)
+            .map(context => 'target' in context ? context.target?.ref : context?.ref)
             .filter((context): context is BoundedContext => context !== undefined);
 
         if (sharedKernelRelationship && resolvedContexts.length < 2) {
@@ -1554,7 +1599,10 @@ export class ThinaiValidator {
             return false;
         }
         const eventDocument = AstUtils.getDocument(event);
-        if (!model.imports.some(declaration => UriUtils.equals(resolveImportUri(document, declaration), eventDocument.uri))) {
+        if (!model.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, eventDocument.uri);
+        })) {
             return false;
         }
 
@@ -1583,8 +1631,12 @@ export class ThinaiValidator {
         const document = AstUtils.getDocument(model);
         const contextMaps = new Set<ContextMap>();
         for (const declaration of model.imports) {
+            const uri = resolveImportUri(document, declaration);
+            if (!uri) {
+                continue;
+            }
             const mapDocument = this.services.shared.workspace.LangiumDocuments.getDocument(
-                resolveImportUri(document, declaration)
+                uri
             );
             const importedModel = mapDocument?.parseResult.value;
             if (!mapDocument || !isModel(importedModel)) {
@@ -1636,8 +1688,8 @@ export class ThinaiValidator {
         const patterns = (endpoint: ContextMapEndpoint) => [...endpoint.integrationPatterns].sort();
 
         if (isCustomerSupplierRelationship(relationship)) {
-            const customer = relationship.customer.context.ref;
-            const supplier = relationship.supplier.context.ref;
+            const customer = relationship.customer?.context?.ref;
+            const supplier = relationship.supplier?.context?.ref;
             if (!customer || !supplier) {
                 return [];
             }
@@ -1648,8 +1700,8 @@ export class ThinaiValidator {
             return pair ? [pair] : [];
         }
         if (isPartnershipRelationship(relationship)) {
-            const left = relationship.left.context.ref;
-            const right = relationship.right.context.ref;
+            const left = relationship.left?.context?.ref;
+            const right = relationship.right?.context?.ref;
             if (!left || !right) {
                 return [];
             }
@@ -1664,8 +1716,8 @@ export class ThinaiValidator {
             return pair ? [pair] : [];
         }
         if (isSeparateWaysRelationship(relationship)) {
-            const left = relationship.left.ref;
-            const right = relationship.right.ref;
+            const left = relationship.left?.ref;
+            const right = relationship.right?.ref;
             if (!left || !right) {
                 return [];
             }
@@ -1674,9 +1726,9 @@ export class ThinaiValidator {
             return pair ? [pair] : [];
         }
 
-        const sharedKernel = relationship.sharedKernel.ref;
-        const participants = [...new Set(relationship.participants
-            .map(participant => participant.target.ref)
+        const sharedKernel = relationship.sharedKernel?.ref;
+        const participants = [...new Set((relationship.participants ?? [])
+            .map(participant => participant?.target?.ref)
             .filter((context): context is BoundedContext => context !== undefined))];
         if (!sharedKernel) {
             return [];
@@ -1704,13 +1756,16 @@ export class ThinaiValidator {
     }
 
     private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {
+        if (!this.isSyntacticallyComplete(relationship)) {
+            return false;
+        }
         if (isCustomerSupplierRelationship(relationship)) {
-            return relationship.customer.context.ref?.name === consumer &&
-                relationship.supplier.context.ref?.name === producer;
+            return relationship.customer?.context?.ref?.name === consumer &&
+                relationship.supplier?.context?.ref?.name === producer;
         }
         if (isPartnershipRelationship(relationship)) {
-            const left = relationship.left.context.ref?.name;
-            const right = relationship.right.context.ref?.name;
+            const left = relationship.left?.context?.ref?.name;
+            const right = relationship.right?.context?.ref?.name;
             return (left === consumer && right === producer) || (right === consumer && left === producer);
         }
         return false;
@@ -1718,12 +1773,18 @@ export class ThinaiValidator {
 
     private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {
         if (isCustomerSupplierRelationship(relationship)) {
-            return [relationship.customer, relationship.supplier];
+            return [relationship.customer, relationship.supplier]
+                .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
         }
         if (isPartnershipRelationship(relationship)) {
-            return [relationship.left, relationship.right];
+            return [relationship.left, relationship.right]
+                .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
         }
         return [];
+    }
+
+    private isSyntacticallyComplete(node: AstNode): boolean {
+        return isAstSyntacticallyComplete(node);
     }
 
     private getOwningAggregate(node: AstNode): Aggregate | undefined {
@@ -1792,7 +1853,11 @@ export class ThinaiValidator {
         }
         const contextMaps = [...model.declarations.filter(isContextMap)];
         for (const declaration of model.imports) {
-            const importedDocument = this.services.shared.workspace.LangiumDocuments.getDocument(resolveImportUri(document, declaration));
+            const uri = resolveImportUri(document, declaration);
+            if (!uri) {
+                continue;
+            }
+            const importedDocument = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
             const importedModel = importedDocument?.parseResult.value;
             if (!importedDocument || !isModel(importedModel)) {
                 continue;
@@ -1802,8 +1867,9 @@ export class ThinaiValidator {
             ));
         }
         return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            isSharedKernelRelationship(relationship) && relationship.sharedKernel.ref === sharedKernel &&
-            relationship.participants.some(participant => participant.target.ref?.name === contextName)
+            this.isSyntacticallyComplete(relationship) && isSharedKernelRelationship(relationship) &&
+            relationship.sharedKernel?.ref === sharedKernel &&
+            relationship.participants.some(participant => participant?.target?.ref?.name === contextName)
         ));
     }
 
@@ -1817,10 +1883,11 @@ export class ThinaiValidator {
             return true;
         }
         const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
-        return model.imports.some(declaration =>
-            UriUtils.equals(resolveImportUri(document, declaration), sharedKernelUri) &&
-            (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel))
-        );
+        return model.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, sharedKernelUri) &&
+                (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel));
+        });
     }
 
     private getOwningSharedKernel(node: AstNode): SharedKernel | undefined {
@@ -1849,6 +1916,9 @@ export class ThinaiValidator {
 
         for (const importDeclaration of model.imports) {
             const importedUri = resolveImportUri(document, importDeclaration);
+            if (!importedUri) {
+                continue;
+            }
             const importedKey = importedUri.toString();
             if (visited.has(importedKey)) {
                 return true;

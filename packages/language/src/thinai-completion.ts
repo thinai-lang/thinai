@@ -318,6 +318,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
             )[0];
         const allowedMethodClauses = activeMethod ? new Set(this.getSiblingKeywordLabels(activeMethod)) : undefined;
+        const transitionContinuationAllowed = this.isTransitionContinuationPosition(document, offset);
         const entityDeclarationsAllowed = braceOwners.at(-1) === 'aggregate';
         const rootEntityAlreadyDeclared = entityDeclarationsAllowed && innermostBlock?.$type === 'Aggregate' &&
             'members' in innermostBlock && Array.isArray(innermostBlock.members) &&
@@ -339,6 +340,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 }
                 if (['transition', 'projects', 'emits'].includes(item.label) && allowedMethodClauses &&
                     !allowedMethodClauses.has(item.label)) {
+                    return false;
+                }
+                if ((item.label === 'from' || item.label === 'to') &&
+                    this.isTransitionContinuationContext(document, offset) && !transitionContinuationAllowed) {
                     return false;
                 }
                 return true;
@@ -1203,6 +1208,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!match?.match) {
             return [];
         }
+        if ((match.keywords[0] === 'from' || match.keywords[0] === 'to') &&
+            this.isTransitionContinuationContext(document, offset) &&
+            !this.isTransitionContinuationPosition(document, offset)) {
+            return [];
+        }
         if (match.keywords[0] === 'map' && /\bbounded\s+context\s+[\p{L}_]*$/iu.test(prefix)) {
             return [];
         }
@@ -1220,6 +1230,43 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 start,
                 `${needsLeadingSpace ? ' ' : ''}${keyword}`
             ));
+    }
+
+    private isTransitionContinuationPosition(document: LangiumDocument, offset: number): boolean {
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        const method = AstUtils.streamAst(root)
+            .filter(isMethod)
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
+                offset <= candidate.$cstNode.end)
+            .toArray()
+            .sort((left, right) =>
+                (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
+            )[0];
+        if (!method || !this.getSiblingKeywordLabels(method).includes('transition')) {
+            return false;
+        }
+        const transition = AstUtils.streamAst(method)
+            .filter(isTransition)
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+        const field = transition?.changes.at(-1)?.field?.ref;
+        return isField(field) && isEnumType(field.type?.ref);
+    }
+
+    private isTransitionContinuationContext(document: LangiumDocument, offset: number): boolean {
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefix = text.slice(lineStart, offset);
+        const transitionPrefix = /\btransition\s+[_a-zA-Z][\w_]*\s+([\s\S]*)$/iu.exec(prefix);
+        const continuation = transitionPrefix?.[1];
+        return continuation !== undefined && (
+            /^[\p{L}_]*$/u.test(continuation) ||
+            /^from\s+[_a-zA-Z][\w_]*(?:\s+[\p{L}_]*)?$/iu.test(continuation)
+        );
     }
 
     private getPartialSameLineContinuations(document: LangiumDocument, position: Position): CompletionItem[] {
@@ -1634,15 +1681,28 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         let best: { end: number; prefix: string; keywords: string[]; needsLeadingSpace: boolean } | undefined;
+        const hasResolvedReference = (reference?: { ref?: AstNode }) => reference?.ref !== undefined;
         for (const node of AstUtils.streamAst(model)) {
+            const hasMethodTarget = (targets: Array<{ ref?: AstNode }>) =>
+                targets.length > 0 && isMethod(targets.at(-1)?.ref);
             const keywords = isJourneyStep(node)
-                ? [
-                    ...(!node.arguments ? ['with'] : []),
-                    ...(!node.guard ? ['when'] : [])
-                ]
-                : isTransition(node) || isEventEmission(node) || isMethodInvocation(node)
-                    ? (!node.guard ? ['when'] : [])
-                    : [];
+                ? hasMethodTarget(node.targets)
+                    ? [
+                        ...(!node.arguments ? ['with'] : []),
+                        ...(!node.guard ? ['when'] : [])
+                    ]
+                    : []
+                : isTransition(node)
+                    ? node.changes.length > 0 && node.changes.every(change =>
+                        hasResolvedReference(change.field) && hasResolvedReference(change.from) && hasResolvedReference(change.to)
+                    ) && !node.guard ? ['when'] : []
+                    : isEventEmission(node)
+                        ? node.events.length > 0 && node.events.every(event => hasResolvedReference(event.target)) && !node.guard
+                            ? ['when']
+                            : []
+                        : isMethodInvocation(node)
+                            ? hasMethodTarget(node.targets) && !node.guard ? ['when'] : []
+                            : [];
             if (keywords.length === 0) {
                 continue;
             }

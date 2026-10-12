@@ -52,9 +52,13 @@ export class ThinaiDefinitionProvider extends DefaultDefinitionProvider {
                 start: document.textDocument.positionAt(startOffset),
                 end: document.textDocument.positionAt(endOffset)
             };
+            const targetUri = resolveImportUri(document, importDeclaration);
+            if (!targetUri) {
+                return undefined;
+            }
             const fileStart = { line: 0, character: 0 };
             return LocationLink.create(
-                resolveImportUri(document, importDeclaration).toString(),
+                targetUri.toString(),
                 { start: fileStart, end: fileStart },
                 { start: fileStart, end: fileStart },
                 sourceRange

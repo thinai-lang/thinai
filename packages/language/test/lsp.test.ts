@@ -1214,6 +1214,7 @@ bounded context Second`;
             URI.file('/workspace/when-prefix-completion.tni'), partialText
         );
         documents.push(partialDocument);
+        await services.shared.workspace.DocumentBuilder.build([partialDocument], { validation: false });
         const partialOffset = partialText.indexOf('invokes validate w') + 'invokes validate w'.length;
         const partialCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(partialDocument, {
             textDocument: { uri: partialDocument.uri.toString() },
@@ -1227,6 +1228,103 @@ bounded context Second`;
                 end: partialDocument.textDocument.positionAt(partialOffset)
             }
         });
+    });
+
+    test('offers required transition and emission continuations before optional guards', async () => {
+        const marker = '__completion_position__';
+        const common = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method place() { CLAUSE }
+                    identifier id: OrderId
+                    status: OrderStatus
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+            event OrderPlaced
+        }`;
+        const cases = [
+            {
+                name: 'transition field requires from',
+                clause: `transition status ${marker}`,
+                expected: ['from'],
+                forbidden: ['when']
+            },
+            {
+                name: 'transition source state requires to',
+                clause: `transition status from Draft ${marker}`,
+                expected: ['to'],
+                forbidden: ['when']
+            },
+            {
+                name: 'emission requires an event before when',
+                clause: `emits ${marker}`,
+                expected: ['OrderPlaced'],
+                forbidden: ['when']
+            },
+            {
+                name: 'partial event name does not allow when',
+                clause: `emits OrderP${marker}`,
+                expected: ['OrderPlaced'],
+                forbidden: ['when']
+            },
+            {
+                name: 'complete emission allows when',
+                clause: `emits OrderPlaced ${marker}`,
+                expected: ['when'],
+                forbidden: []
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const text = common.replace('CLAUSE', completionCase.clause);
+            const offset = text.indexOf(marker);
+            const source = text.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/required-operation-continuation-${index}.tni`), source
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const label of completionCase.expected) {
+                expect(labels, completionCase.name).toContain(label);
+            }
+            for (const label of completionCase.forbidden) {
+                expect(labels, completionCase.name).not.toContain(label);
+            }
+        }
+    });
+
+    test('offers transition continuations only for enum fields in entity methods', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'application-service method',
+                source: `bounded context Ordering\nin bounded context Ordering { application service App { method run() { transition status f${marker} } } }`
+            },
+            {
+                name: 'non-enum entity field',
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method run() { transition status f${marker} } status: string } } }`
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.source.indexOf(marker);
+            const source = completionCase.source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/invalid-transition-continuation-${index}.tni`), source
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.map(item => item.label), completionCase.name).not.toContain('from');
+        }
     });
 
     test('inserts optional clauses with required spacing at a completed path', async () => {
@@ -1404,8 +1502,8 @@ bounded context Second`;
             ['import { Foo } f', 'from'],
             ['repository Orders m', 'manages'],
             ['query repository Orders s', 'serves'],
-            ['transition status f', 'from'],
-            ['transition status from Draft t', 'to'],
+            ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status f', 'from'],
+            ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status from Draft t', 'to'],
             ['sharedKernel Common { p', 'participants'],
             ['customer Ordering -> s', 'supplier'],
             ['partner Ordering <-> p', 'partner'],
@@ -1414,10 +1512,14 @@ bounded context Second`;
         ] as const;
 
         for (const [index, [source, expected]] of cases.entries()) {
+            const text = expected === 'from' || expected === 'to' ? `${source} } } }` : source;
             const document = services.shared.workspace.LangiumDocuments.createDocument(
-                URI.file(`/workspace/partial-keyword-${index}.tni`), source
+                URI.file(`/workspace/partial-keyword-${index}.tni`), text
             );
             documents.push(document);
+            if (expected === 'from' || expected === 'to') {
+                await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            }
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(source.length)
@@ -2531,6 +2633,27 @@ bounded context Billing realizes Payments`;
                 source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method place() { ${marker} } } } }`
             },
             {
+                name: 'partially typed emits keyword in aggregate root method',
+                expected: ['emits'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method place() { emi${marker} } } } }`
+            },
+            {
+                name: 'partially typed transition keyword in entity method',
+                expected: ['transition'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method place() { tran${marker} } } } }`
+            },
+            {
+                name: 'partially typed projects keyword in projector method',
+                expected: ['projects'],
+                source: `bounded context Ordering\nin bounded context Ordering { projector OrderProjector { method project() { pro${marker} } } }`
+            },
+            {
+                name: 'partially typed emits keyword is excluded from application service',
+                expected: [],
+                forbidden: ['emits'],
+                source: `bounded context Ordering\nin bounded context Ordering { application service App { method place() { emi${marker} } } }`
+            },
+            {
                 name: 'projector method body',
                 expected: ['projects'],
                 source: `bounded context Ordering\nin bounded context Ordering { projector OrderProjector { method project() { ${marker} } } }`
@@ -2591,7 +2714,7 @@ bounded context Billing realizes Payments`;
                 URI.file(`/workspace/block-completion-${index}.tni`), text
             );
             documents.push(document);
-            if (!completionCase.name.startsWith('unfinished')) {
+            if (!completionCase.name.startsWith('unfinished') && !completionCase.name.startsWith('partially typed')) {
                 expect(document.parseResult.parserErrors, completionCase.name).toHaveLength(0);
             }
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {

@@ -85,9 +85,10 @@ export class ThinaiCodeActionProvider {
             return [];
         }
 
-        const importedUris = new Set(model.imports.map(importDeclaration =>
-            resolveImportUri(document, importDeclaration).toString()
-        ));
+        const importedUris = new Set(model.imports.flatMap(importDeclaration => {
+            const uri = resolveImportUri(document, importDeclaration);
+            return uri ? [uri.toString()] : [];
+        }));
         const candidates = new Map<string, AstNodeDescription>();
         for (const description of this.services.shared.workspace.IndexManager.allElements()) {
             if (UriUtils.equals(description.documentUri, document.uri) || importedUris.has(description.documentUri.toString())) {
