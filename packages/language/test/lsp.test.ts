@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
+import { AstUtils, EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
 import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
 import { applyConfiguredIndentation, applyConfiguredIndentationToCompletions, createThinaiServices } from 'thinai-language';
@@ -91,6 +91,139 @@ describe('LSP services', () => {
             textDocument: { uri: formattedDocument.uri.toString() },
             options: { tabSize: 2, insertSpaces: true }
         })).toEqual([]);
+    });
+
+    test('indents multiline specification text without changing its content', async () => {
+        const source = `bounded context Formatting
+in bounded context Formatting {
+    aggregate OrderAggregate {
+        root entity Order {
+            constructor(id: OrderId) {
+                postcondition "Identifier [[id]] is retained.
+  The supplied identifier is non-empty.
+"
+            }
+            method place() {
+                behavior "
+Place the order using [[status]].
+  Preserve relative detail indentation.
+"
+                transition status from Draft to Placed
+                    when "
+The order is ready.
+"
+                emits OrderPlaced
+                    when "
+The order was accepted.
+"
+            }
+            identifier id: OrderId
+            status: OrderStatus initial Draft
+        }
+        value object OrderId { raw: string }
+        enum OrderStatus { Draft, Placed }
+    }
+    event OrderPlaced
+    application service OrderApplication {
+        method placeOrder() {
+            invokes OrderAggregate.Order.place when "
+The request was authorized.
+"
+        }
+    }
+}
+actor Customer
+journey PlaceOrder {
+    by Customer {
+        invoke Formatting.OrderApplication.placeOrder
+            with "
+The selected order identifier.
+"
+            when "
+The order is eligible.
+"
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multiline-specification-formatting.tni'), source
+        );
+        documents = [document];
+
+        const getSpecificationContents = (sourceDocument: LangiumDocument): string[] =>
+            AstUtils.streamAst(sourceDocument.parseResult.value)
+                .filter(node => node.$type === 'SpecificationText')
+                .map(node => {
+                    const specification = node as AstNode & {
+                        parts?: Array<{ text?: string; target?: { $refText: string }; targets?: Array<{ $refText: string }> }>
+                    };
+                    return (specification.parts ?? []).map(part => part.text ??
+                        `[[${part.target?.$refText ?? ''}${(part.targets ?? []).map(target => `.${target.$refText}`).join('')}]]`
+                    ).join('');
+                })
+                .toArray();
+        const originalSpecifications = getSpecificationContents(document);
+
+        const formatWith = async (tabSize: number, insertSpaces: boolean): Promise<string> => {
+            const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+                textDocument: { uri: document.uri.toString() },
+                options: { tabSize, insertSpaces }
+            });
+            return edits
+                .slice()
+                .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+                .reduce((formatted, edit) => {
+                    const start = document.textDocument.offsetAt(edit.range.start);
+                    const end = document.textDocument.offsetAt(edit.range.end);
+                    return formatted.slice(0, start) + edit.newText + formatted.slice(end);
+                }, source);
+        };
+
+        const formatted = await formatWith(2, true);
+        expect(formatted).toContain([
+            '        postcondition "',
+            '          Identifier [[id]] is retained.',
+            '            The supplied identifier is non-empty.',
+            '        "'
+        ].join('\n'));
+        expect(formatted).toContain([
+            '        behavior "',
+            '          Place the order using [[status]].',
+            '            Preserve relative detail indentation.',
+            '        "'
+        ].join('\n'));
+        expect(formatted).toContain([
+            '        transition status from Draft to Placed',
+            '          when "',
+            '            The order is ready.',
+            '          "'
+        ].join('\n'));
+        const journeyOutput = formatted.slice(formatted.indexOf('journey PlaceOrder'));
+        const journeyLines = journeyOutput.split('\n').filter(line =>
+            line.trim() === '"' ||
+                /(?:invoke Formatting\.OrderApplication\.placeOrder|with "|The selected order identifier\.|when "|The order is eligible\.)/u.test(line)
+        );
+        expect(journeyLines.map(line => [line.match(/^\s*/u)?.[0].length ?? 0, line.trim()])).toEqual([
+            [4, 'invoke Formatting.OrderApplication.placeOrder'],
+            [6, 'with "'],
+            [8, 'The selected order identifier.'],
+            [6, '"'],
+            [6, 'when "'],
+            [8, 'The order is eligible.'],
+            [6, '"']
+        ]);
+
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/formatted-multiline-specifications.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(getSpecificationContents(formattedDocument)).toEqual(originalSpecifications);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
+
+        const tabFormatted = await formatWith(4, false);
+        expect(tabFormatted).toContain('\t\t\t\tbehavior "\n\t\t\t\t\tPlace the order using [[status]].');
     });
 
     test('preserves field, method, and constructor source order when formatting', async () => {
@@ -1075,7 +1208,9 @@ bounded context Second`;
             const text = `bounded context Ordering in bounded context Ordering {
                 data object Request { orderId: string }
                 application service OrderApplication {
-                    method place(request: Request) { behavior "Use [[request.${prefix}]]" }
+                    method place(request: Request) { behavior "
+                        Use [[request.${prefix}]]
+                    " }
                 }
             }`;
             const document = services.shared.workspace.LangiumDocuments.createDocument(
@@ -1090,6 +1225,45 @@ bounded context Second`;
                 position: document.textDocument.positionAt(referenceStart + prefix.length)
             });
             expect(completion?.items.some(item => item.label === 'orderId' && item.kind === CompletionItemKind.Field)).toBe(true);
+        }
+    });
+
+    test('does not offer language keywords in multiline specification prose', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'closed double-quoted multiline specification',
+                source: `bounded context Ordering in bounded context Ordering {
+                    application service App {
+                        method run() { behavior "
+                            Place the order; literal \\[[ is not a reference.
+                            inv${marker}
+                        " }
+                    }
+                }`
+            },
+            {
+                name: 'open single-quoted multiline specification with an escaped quote',
+                source: String.raw`bounded context Ordering in bounded context Ordering {
+                    application service App {
+                        method run() { behavior '
+                            The order\'s status is still being described.
+                            tran${marker}`
+            }
+        ];
+
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.source.indexOf(marker);
+            const text = completionCase.source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/multiline-specification-keyword-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items ?? [], completionCase.name).toEqual([]);
         }
     });
 

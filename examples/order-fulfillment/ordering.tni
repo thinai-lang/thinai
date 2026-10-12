@@ -9,7 +9,7 @@ in bounded context Ordering {
         invariant "An order must have an owner; check [[Order.ensureOwner]]."
         precondition "The supplied identifier is non-empty."
         behavior "Normalize the identifier with [[OrderId.normalize]] before creating the order."
-        postcondition "The order has an identifier and owner."
+        postcondition "The order has an identifier and owner, and [[createdAt]] records its creation instant."
       }
 
       method ensureOwner() {

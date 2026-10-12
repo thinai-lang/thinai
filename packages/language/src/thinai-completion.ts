@@ -39,6 +39,7 @@ import {
     isModule,
     isParameter,
     isProjector,
+    isSpecificationText,
     isSpecificationTextPart,
     isTransition,
     isSubdomain,
@@ -180,6 +181,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const defaultCompletion = await super.getCompletion(document, params, cancelToken);
+        const specificationContext = this.getSpecificationTextCompletionContext(
+            document,
+            document.textDocument.offsetAt(params.position)
+        );
+        if (specificationContext === 'text') {
+            return { isIncomplete: false, items: [] };
+        }
+        if (specificationContext === 'reference') {
+            return defaultCompletion
+                ? { ...defaultCompletion, items: defaultCompletion.items.filter(item => item.kind !== CompletionItemKind.Keyword) }
+                : defaultCompletion;
+        }
         const optionalClauseCompletions = this.getOptionalClauseCompletions(document, params.position);
         if (optionalClauseCompletions.length > 0) {
             const optionalLabels = new Set(optionalClauseCompletions.map(item => item.label));
@@ -262,6 +275,43 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             items: [...completionItems, ...constrainedValueCompletions, ...importItems]
         }, sameLineKeywordContinuations);
         return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
+    }
+
+    private getSpecificationTextCompletionContext(
+        document: LangiumDocument,
+        offset: number
+    ): 'text' | 'reference' | undefined {
+        const model = document.parseResult.value;
+        if (!model) {
+            return undefined;
+        }
+        const specification = AstUtils.streamAst(model)
+            .filter(isSpecificationText)
+            .filter(node => {
+                const cstNode = node.$cstNode;
+                if (!cstNode || offset <= cstNode.offset) {
+                    return false;
+                }
+                if (offset < cstNode.end) {
+                    return true;
+                }
+                const delimiter = cstNode.text[0];
+                return offset === cstNode.end && (delimiter !== '"' && delimiter !== "'" || !cstNode.text.endsWith(delimiter));
+            })
+            .toArray()
+            .sort((left, right) =>
+                (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
+            )[0];
+        if (!specification) {
+            return undefined;
+        }
+        const inReference = specification.parts.some(part => {
+            if (!isSpecificationTextPart(part) || !part.target || !part.$cstNode) {
+                return false;
+            }
+            return part.$cstNode.offset <= offset && offset <= part.$cstNode.end;
+        });
+        return inReference ? 'reference' : 'text';
     }
 
     private filterContextSensitiveKeywordCompletions(

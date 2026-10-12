@@ -181,6 +181,11 @@ values, read models, events, and fields. A dotted reference such as
 are descriptive references, not expressions or executable calls. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
+Multiline specification text may start on the opening-quote line or the next
+line. Formatting normalizes it to block style: common line indentation is
+layout, while relative indentation, line breaks, and linked references are
+preserved. The formatter indents continuation text and aligns the closing quote
+with its specification clause.
 
 Journeys are top-level, actor-led timelines of user-invoked application-service
 commands that may cross bounded contexts. Declare each `actor` once at model
@@ -201,6 +206,9 @@ Primitive types include `string`, `number`, `boolean`, `date`, `time`, and
 a date or time zone, and `instant` for an exact point on the global timeline.
 `time` does not represent an elapsed duration; model richer temporal concepts,
 such as a time-zone-aware appointment, with a value object.
+Use `initial State` only on a non-optional enum field of an entity; it marks the
+starting point of that entity's state graph, not a default for arbitrary data.
+Describe other creation-time defaults as constructor postconditions or behavior.
 
 The language server provides keyword and cross-reference completion,
 navigation, diagnostics, import-path completion, document formatting, and quick

@@ -1,5 +1,7 @@
-import { CstUtils, isCompositeCstNode, isLeafCstNode, type AstNode } from 'langium';
+import { AstUtils, CstUtils, isCompositeCstNode, isLeafCstNode, type AstNode } from 'langium';
 import { AbstractFormatter, Formatting } from 'langium/lsp';
+import type { FormattingOptions, Range, TextEdit } from 'vscode-languageserver';
+import { isSpecificationText } from './generated/ast.js';
 import { getBlockNestingDepth, isBlockNodeType } from './thinai-layout.js';
 
 const commaSeparatedTypes = new Set([
@@ -51,7 +53,134 @@ export class ThinaiFormatter extends AbstractFormatter {
 
     protected override doDocumentFormat(...args: Parameters<AbstractFormatter['doDocumentFormat']>) {
         this.continuationColumns.clear();
-        return super.doDocumentFormat(...args);
+        const [document, options, range] = args;
+        const edits = super.doDocumentFormat(...args);
+        const specificationEdits = this.getMultilineSpecificationIndentationEdits(document, options, range);
+        const textDocument = document.textDocument;
+        return this.avoidOverlappingEdits(textDocument, [...edits, ...specificationEdits].sort((left, right) =>
+            textDocument.offsetAt(left.range.start) - textDocument.offsetAt(right.range.start)
+        ));
+    }
+
+    private getMultilineSpecificationIndentationEdits(
+        document: Parameters<AbstractFormatter['doDocumentFormat']>[0],
+        options: FormattingOptions,
+        range?: Range
+    ): TextEdit[] {
+        const model = document.parseResult.value;
+        if (!model) {
+            return [];
+        }
+        const textDocument = document.textDocument;
+        const sourceText = textDocument.getText();
+        const rangeStart = range ? textDocument.offsetAt(range.start) : 0;
+        const rangeEnd = range ? textDocument.offsetAt(range.end) : sourceText.length;
+        const safeTabSize = Number.isFinite(options.tabSize) && options.tabSize > 0 ? Math.floor(options.tabSize) : 2;
+        const indentUnit = options.insertSpaces ? ' '.repeat(safeTabSize) : '\t';
+        const edits: TextEdit[] = [];
+
+        for (const node of AstUtils.streamAst(model).filter(isSpecificationText)) {
+            const cstNode = node.$cstNode;
+            if (!cstNode || cstNode.offset < rangeStart || cstNode.end > rangeEnd) {
+                continue;
+            }
+            const source = cstNode.text;
+            if ((source[0] !== '"' && source[0] !== "'") || source.at(-1) !== source[0]) {
+                continue;
+            }
+            const openingNewline = source[1] === '\n' ? 1 : source.slice(1, 3) === '\r\n' ? 2 : 0;
+            const inlineFirstLine = openingNewline === 0;
+            if (inlineFirstLine && !/[\r\n]/u.test(source)) {
+                continue;
+            }
+            const newline = source.match(/\r\n|\r|\n/u)?.[0] ?? '\n';
+
+            const contentStart = 1 + openingNewline;
+            const closingQuote = source.length - 1;
+            const trailingWhitespaceLine = /\r?\n[ \t]*$/u.exec(source.slice(contentStart, closingQuote));
+            const contentEnd = trailingWhitespaceLine
+                ? closingQuote - trailingWhitespaceLine[0].length
+                : closingQuote;
+            const bodyLines: Array<{ start: number; text: string; indentation: string }> = [];
+            let lineStart = contentStart;
+            while (lineStart < contentEnd) {
+                let lineEnd = lineStart;
+                while (lineEnd < contentEnd && source[lineEnd] !== '\n' && source[lineEnd] !== '\r') {
+                    lineEnd++;
+                }
+                const line = source.slice(lineStart, lineEnd);
+                bodyLines.push({
+                    start: cstNode.offset + lineStart,
+                    text: line,
+                    indentation: /^[\t ]*/u.exec(line)?.[0] ?? ''
+                });
+                if (lineEnd >= contentEnd) {
+                    break;
+                }
+                lineStart = lineEnd + (source[lineEnd] === '\r' && source[lineEnd + 1] === '\n' ? 2 : 1);
+            }
+            const nonEmptyIndentations = bodyLines
+                .filter(line => line.text.trim().length > 0)
+                .map(line => line.indentation);
+            const commonIndent = nonEmptyIndentations.reduce((common, indentation) => {
+                let length = 0;
+                while (length < common.length && length < indentation.length && common[length] === indentation[length]) {
+                    length++;
+                }
+                return common.slice(0, length);
+            }, nonEmptyIndentations[0] ?? '');
+            const continuationDepth = getBlockNestingDepth(node) + (
+                ['JourneyStep', 'Transition', 'EventEmission', 'MethodInvocation'].includes(node.$container?.$type ?? '') ? 1 : 0
+            );
+            const statementIndent = indentUnit.repeat(continuationDepth);
+            const bodyIndent = `${statementIndent}${indentUnit}`;
+
+            for (const [index, line] of bodyLines.entries()) {
+                if (line.text.trim().length === 0 && !(inlineFirstLine && index === 0)) {
+                    continue;
+                }
+                const relativeIndent = line.text.trim().length > 0 && line.indentation.startsWith(commonIndent)
+                    ? line.indentation.slice(commonIndent.length)
+                    : line.text.trim().length > 0 ? line.indentation : '';
+                const desiredIndent = `${bodyIndent}${relativeIndent}`;
+                const newText = `${inlineFirstLine && index === 0 ? newline : ''}${desiredIndent}`;
+                if (line.indentation !== desiredIndent || inlineFirstLine && index === 0) {
+                    edits.push({
+                        range: {
+                            start: textDocument.positionAt(line.start),
+                            end: textDocument.positionAt(line.start + line.indentation.length)
+                        },
+                        newText
+                    });
+                }
+            }
+
+            if (trailingWhitespaceLine) {
+                const closingLineStart = closingQuote - trailingWhitespaceLine[0].length +
+                    (trailingWhitespaceLine[0].startsWith('\r\n') ? 2 : 1);
+                const closingIndent = source.slice(closingLineStart, closingQuote);
+                if (/^[\t ]*$/u.test(closingIndent) && closingIndent !== statementIndent) {
+                    const absoluteStart = cstNode.offset + closingLineStart;
+                    edits.push({
+                        range: {
+                            start: textDocument.positionAt(absoluteStart),
+                            end: textDocument.positionAt(absoluteStart + closingIndent.length)
+                        },
+                        newText: statementIndent
+                    });
+                }
+            } else {
+                const absoluteClosingQuote = cstNode.offset + closingQuote;
+                edits.push({
+                    range: {
+                        start: textDocument.positionAt(absoluteClosingQuote),
+                        end: textDocument.positionAt(absoluteClosingQuote)
+                    },
+                    newText: `${newline}${statementIndent}`
+                });
+            }
+        }
+        return edits;
     }
 
     protected override createLineTextEdit(...args: Parameters<AbstractFormatter['createLineTextEdit']>) {

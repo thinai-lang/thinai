@@ -42,7 +42,7 @@ function dedentBehaviorText(node: SpecificationText): void {
     }
 
     const openingNewline = source[1] === '\n' ? 1 : source.slice(1, 3) === '\r\n' ? 2 : 0;
-    if (openingNewline === 0) {
+    if (openingNewline === 0 && !/[\r\n]/u.test(source)) {
         return;
     }
 
@@ -57,7 +57,9 @@ function dedentBehaviorText(node: SpecificationText): void {
         `${markerStart}${index}${REFERENCE_MARKER_END}`
     ]));
     let content = node.parts.map(part => part.text ?? markers.get(part) ?? '').join('');
-    content = content.replace(/^\r?\n/, '');
+    if (openingNewline > 0) {
+        content = content.replace(/^\r?\n/, '');
+    }
     content = content.replace(/\r?\n[ \t]*$/, '');
     content = content.replace(/\r\n/g, '\n');
 

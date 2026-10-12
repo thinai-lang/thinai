@@ -456,8 +456,12 @@ export class ThinaiValidator {
         if (field.initialState !== undefined) {
             const stateType = field.type?.ref;
             const initialState = field.initialState.ref;
-            if (!isEntity(field.$container) || !stateType || !isEnumType(stateType) || field.optional ||
-                !isEnumValue(initialState) || initialState.$container !== stateType) {
+            if (!isEntity(field.$container) || !stateType || !isEnumType(stateType) || field.optional) {
+                accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
+                    node: field,
+                    keyword: 'initial'
+                });
+            } else if (!isEnumValue(initialState) || initialState.$container !== stateType) {
                 accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
                     node: field,
                     property: 'initialState'

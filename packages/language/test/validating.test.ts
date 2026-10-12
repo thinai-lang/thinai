@@ -468,6 +468,35 @@ in bounded context Ordering {
         )).toBe(true);
     });
 
+    test('underlines initial when it is used outside a required entity enum field', async () => {
+        const source = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    identifier id: OrderId
+                    optionalStatus?: OrderStatus initial Draft
+                    note: string initial Draft
+                    status: OrderStatus initial Draft
+                }
+                value object OrderId { raw: string }
+                value object StatusHolder { status: OrderStatus initial Draft }
+                enum OrderStatus { Draft }
+            }
+        }`;
+        const document = await parse(source);
+        const diagnostics = semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message) === 'An initial state must be a declared value of a non-optional enum field on an entity.'
+        );
+        const expectedOffsets = [
+            source.indexOf('initial Draft'),
+            source.indexOf('initial Draft', source.indexOf('initial Draft') + 1),
+            source.lastIndexOf('initial Draft')
+        ].sort((left, right) => left - right);
+
+        expect(diagnostics).toHaveLength(3);
+        expect(diagnostics.map(diagnostic => document.textDocument.offsetAt(diagnostic.range.start)).sort((left, right) => left - right))
+            .toEqual(expectedOffsets);
+    });
+
     test('allows the same transition in different methods', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
