@@ -1194,15 +1194,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from']],
             [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['serves']],
             [/\brepository\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['manages']],
-            [/\btransition\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['from']],
-            [/\btransition\s+[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu, ['to']],
             [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*([\p{L}_]*)$/iu, ['participants']],
             [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
             [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner']],
             [/\b(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*([\p{L}_]*)$/iu, ['integrationPatterns']]
         ];
 
-        const match = continuations
+        const match = this.getTransitionRequiredKeywordMatch(prefix) ?? continuations
             .map(([pattern, keywords]) => ({ match: pattern.exec(prefix), keywords }))
             .find(candidate => candidate.match !== null);
         if (!match?.match) {
@@ -1232,6 +1230,21 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ));
     }
 
+    private getTransitionRequiredKeywordMatch(prefix: string): { match: RegExpExecArray; keywords: string[] } | undefined {
+        const transitionStart = prefix.toLowerCase().lastIndexOf('transition');
+        if (transitionStart < 0) {
+            return undefined;
+        }
+        const transitionSource = prefix.slice(transitionStart + 'transition'.length);
+        const currentChange = transitionSource.slice(transitionSource.lastIndexOf(',') + 1).trimStart();
+        const toMatch = /^[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu.exec(currentChange);
+        if (toMatch) {
+            return { match: toMatch, keywords: ['to'] };
+        }
+        const fromMatch = /^[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/u.exec(currentChange);
+        return fromMatch ? { match: fromMatch, keywords: ['from'] } : undefined;
+    }
+
     private isTransitionContinuationPosition(document: LangiumDocument, offset: number): boolean {
         const root = document.parseResult.value;
         if (!root) {
@@ -1253,7 +1266,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
             .toArray()
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
-        const field = transition?.changes.at(-1)?.field?.ref;
+        const change = transition && AstUtils.streamAst(transition)
+            .filter(candidate => candidate.$type === 'TransitionChange')
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0] as
+                import('./generated/ast.js').TransitionChange | undefined;
+        const field = change?.field?.ref;
         return isField(field) && isEnumType(field.type?.ref);
     }
 
@@ -1261,12 +1280,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const text = document.textDocument.getText();
         const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
         const prefix = text.slice(lineStart, offset);
-        const transitionPrefix = /\btransition\s+[_a-zA-Z][\w_]*\s+([\s\S]*)$/iu.exec(prefix);
-        const continuation = transitionPrefix?.[1];
-        return continuation !== undefined && (
-            /^[\p{L}_]*$/u.test(continuation) ||
-            /^from\s+[_a-zA-Z][\w_]*(?:\s+[\p{L}_]*)?$/iu.test(continuation)
-        );
+        return this.getTransitionRequiredKeywordMatch(prefix) !== undefined;
     }
 
     private getPartialSameLineContinuations(document: LangiumDocument, position: Position): CompletionItem[] {
@@ -1325,7 +1339,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const text = document.textDocument.getText();
         const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
         const linePrefix = text.slice(lineStart, offset);
-        if (this.hasUnterminatedStringLiteral(linePrefix) || this.hasIncompleteStatementSuffix(linePrefix)) {
+        if (this.hasUnterminatedStringLiteral(linePrefix) || this.hasIncompleteStatementSuffix(linePrefix) ||
+            this.isAfterTransitionChangeComma(model, text, offset)) {
             return null;
         }
         let best: AstNode | undefined;
@@ -1361,6 +1376,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         return hasIncompleteStatement ? null : best;
+    }
+
+    private isAfterTransitionChangeComma(model: AstNode, text: string, offset: number): boolean {
+        return AstUtils.streamAst(model).filter(isTransition).some(transition => {
+            const cstNode = transition.$cstNode;
+            if (!cstNode || cstNode.offset > offset) {
+                return false;
+            }
+            const source = text.slice(cstNode.offset, offset);
+            return source.trimEnd().endsWith(',') && !this.hasUnterminatedStringLiteral(source);
+        });
     }
 
     private isOpenBlockContainerAtCursor(node: AstNode, source: string): boolean {
@@ -1681,8 +1707,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         let best: { end: number; prefix: string; keywords: string[]; needsLeadingSpace: boolean } | undefined;
-        const hasResolvedReference = (reference?: { ref?: AstNode }) => reference?.ref !== undefined;
-        const hasCompletedEventReference = (reference?: {
+        const hasCompletedReference = (reference?: {
             ref?: AstNode;
             $refText?: string;
             $refNode?: { end: number };
@@ -1703,10 +1728,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     : []
                 : isTransition(node)
                     ? node.changes.length > 0 && node.changes.every(change =>
-                        hasResolvedReference(change.field) && hasResolvedReference(change.from) && hasResolvedReference(change.to)
-                    ) && !node.guard && !whenAlreadyTyped ? ['when'] : []
+                        hasCompletedReference(change.field) && hasCompletedReference(change.from) && hasCompletedReference(change.to)
+                    ) && !node.guard && !whenAlreadyTyped && !nodeSource.trimEnd().endsWith(',') ? ['when'] : []
                     : isEventEmission(node)
-                        ? node.events.length > 0 && node.events.every(event => hasCompletedEventReference(event.target)) &&
+                        ? node.events.length > 0 && node.events.every(event => hasCompletedReference(event.target)) &&
                             !node.guard && !whenAlreadyTyped
                             ? ['when']
                             : []

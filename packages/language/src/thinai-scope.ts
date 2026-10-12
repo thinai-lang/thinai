@@ -277,7 +277,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
         return stream(candidates).filter(description =>
-            this.isSupportedCandidate(context, this.getDescriptionNode(description))
+            this.isSupportedCandidate(context, this.getDescriptionNode(description)) &&
+            this.isAvailableTransitionField(context, this.getDescriptionNode(description)) &&
+            this.isAvailableTransitionState(context, this.getDescriptionNode(description))
         );
     }
 
@@ -349,14 +351,56 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         while (current && !isEntity(current)) {
             current = current.$container;
         }
-        const fields = current && isEntity(current) ? current.fields : [];
+        const aggregate = current && isEntity(current) ? this.getOwningAggregateNode(current) : undefined;
+        const fields = current && isEntity(current)
+            ? current.fields.filter(field => {
+                const stateType = field.type?.ref;
+                const enumField = isEnumType(stateType) || aggregate?.members.some(member =>
+                    isEnumType(member) && member.name === field.type?.$refText
+                ) === true;
+                return enumField;
+            })
+            : [];
         return this.createScope(fields.map(field =>
             this.descriptions.createDescription(field, field.name, AstUtils.getDocument(field))
         ));
     }
 
+    private isAvailableTransitionField(context: ReferenceInfo, target: AstNode | undefined): boolean {
+        if (!isTransitionChange(context.container) || context.property !== 'field' || !isField(target)) {
+            return true;
+        }
+        const transition = context.container.$container;
+        if (transition?.$type !== 'Transition') {
+            return true;
+        }
+        return !(transition as import('./generated/ast.js').Transition).changes.some(change =>
+            change !== context.container && change.field?.$refText === target.name
+        );
+    }
+
+    private isAvailableTransitionState(context: ReferenceInfo, target: AstNode | undefined): boolean {
+        if (!isTransitionChange(context.container) || context.property !== 'to' || !isEnumValue(target)) {
+            return true;
+        }
+        return context.container.from?.ref !== target;
+    }
+
     private getTransitionStateScope(transition: TransitionChange): Scope {
-        const enumType = transition.field.ref?.type?.ref;
+        const fieldTarget = transition.field?.ref;
+        let current: AstNode | undefined = transition.$container;
+        while (current && !isEntity(current)) {
+            current = current.$container;
+        }
+        const entity = isEntity(current) ? current : undefined;
+        const field = isField(fieldTarget)
+            ? fieldTarget
+            : entity?.fields.find(candidate => candidate.name === transition.field?.$refText);
+        const aggregate = entity ? this.getOwningAggregateNode(entity) : undefined;
+        const stateType = field?.type?.ref;
+        const enumType = isEnumType(stateType)
+            ? stateType
+            : aggregate?.members.find(member => isEnumType(member) && member.name === field?.type?.$refText);
         if (!isEnumType(enumType)) {
             return this.createScope([]);
         }

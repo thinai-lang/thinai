@@ -1123,7 +1123,7 @@ bounded context Second`;
         const transition = text.indexOf('transition status');
         const fieldItems = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
             textDocument: { uri: document.uri.toString() },
-            position: document.textDocument.positionAt(transition + 'transition '.length)
+            position: document.textDocument.positionAt(transition + 'transition sta'.length)
         });
         expect(fieldItems?.items.find(item => item.label === 'status')).toMatchObject({
             kind: CompletionItemKind.Field,
@@ -1141,6 +1141,64 @@ bounded context Second`;
         });
     });
 
+    test('completes each transition change from its own enum field', async () => {
+        const fieldText = `bounded context Shipping in bounded context Shipping {
+            aggregate Shipment {
+                root entity Shipment {
+                    method ship() {
+                        transition status from Open to Shipped,  from Pending to Confirmed
+                    }
+                    identifier id: ShipmentId
+                    status: ShipmentStatus
+                    paymentStatus: PaymentStatus
+                }
+                value object ShipmentId { raw: string }
+                enum ShipmentStatus { Open, Shipped }
+                enum PaymentStatus { Pending, Confirmed }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multiple-transition-change-completion.tni'), fieldText
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const secondFieldOffset = fieldText.indexOf('Shipped,  ') + 'Shipped,  '.length;
+        const fieldCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(secondFieldOffset)
+        });
+        expect(fieldCompletion?.items.map(item => item.label)).toContain('paymentStatus');
+        expect(fieldCompletion?.items.map(item => item.label)).not.toContain('status');
+        expect(fieldCompletion?.items.map(item => item.label)).not.toContain('id');
+        for (const sibling of ['when', 'invariant', 'precondition', 'postcondition', 'behavior', 'invokes', 'transition', 'emits', 'projects']) {
+            expect(fieldCompletion?.items.map(item => item.label), `after transition comma: ${sibling}`).not.toContain(sibling);
+        }
+
+        const stateText = fieldText.replace('Shipped,  from', 'Shipped, paymentStatus from');
+        const stateDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multiple-transition-change-state-completion.tni'), stateText
+        );
+        documents.push(stateDocument);
+        await services.shared.workspace.DocumentBuilder.build([stateDocument], { validation: false });
+        const secondFromOffset = stateText.indexOf('paymentStatus from ') + 'paymentStatus from '.length;
+        const fromCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(stateDocument, {
+            textDocument: { uri: stateDocument.uri.toString() },
+            position: stateDocument.textDocument.positionAt(secondFromOffset)
+        });
+        expect(fromCompletion?.items.map(item => item.label)).toContain('Pending');
+        expect(fromCompletion?.items.map(item => item.label)).not.toContain('Open');
+        expect(fromCompletion?.items.map(item => item.label)).not.toContain('Shipped');
+
+        const toOffset = stateText.indexOf('paymentStatus from Pending to ') + 'paymentStatus from Pending to '.length;
+        const toCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(stateDocument, {
+            textDocument: { uri: stateDocument.uri.toString() },
+            position: stateDocument.textDocument.positionAt(toOffset)
+        });
+        expect(toCompletion?.items.map(item => item.label)).toContain('Confirmed');
+        expect(toCompletion?.items.map(item => item.label)).not.toContain('Pending');
+    });
+
     test('suggests when guards after transitions, emissions, method invocations, and journey steps', async () => {
         const marker = '__completion_position__';
         const common = `bounded context Ordering in bounded context Ordering {
@@ -1150,9 +1208,11 @@ bounded context Second`;
                     method place() { CLAUSE }
                     identifier id: OrderId
                     status: OrderStatus
+                    paymentStatus: PaymentStatus
                 }
                 value object OrderId { raw: string }
                 enum OrderStatus { Draft, Placed }
+                enum PaymentStatus { Pending, Confirmed }
             }
             event OrderPlaced
             application service OrderApplication {
@@ -1238,9 +1298,11 @@ bounded context Second`;
                     method place() { CLAUSE }
                     identifier id: OrderId
                     status: OrderStatus
+                    paymentStatus: PaymentStatus
                 }
                 value object OrderId { raw: string }
                 enum OrderStatus { Draft, Placed }
+                enum PaymentStatus { Pending, Confirmed }
             }
             event OrderPlaced
         }`;
@@ -1255,6 +1317,24 @@ bounded context Second`;
                 name: 'transition source state requires to',
                 clause: `transition status from Draft ${marker}`,
                 expected: ['to'],
+                forbidden: ['when']
+            },
+            {
+                name: 'partial destination state does not allow when',
+                clause: `transition status from Draft to Pl${marker}`,
+                expected: ['Placed'],
+                forbidden: ['when']
+            },
+            {
+                name: 'partial when after a forward-declared transition field and state',
+                clause: `transition status from Draft to Placed w${marker}`,
+                expected: ['when'],
+                forbidden: []
+            },
+            {
+                name: 'transition comma requires another field before when',
+                clause: `transition status from Draft to Placed, ${marker}`,
+                expected: ['paymentStatus'],
                 forbidden: ['when']
             },
             {
@@ -1307,6 +1387,16 @@ bounded context Second`;
             }
             for (const label of completionCase.forbidden) {
                 expect(labels, completionCase.name).not.toContain(label);
+            }
+            if (completionCase.name === 'partial when after a forward-declared transition field and state') {
+                const whenItem = completion?.items.find(item => item.label === 'when');
+                expect(whenItem?.textEdit).toMatchObject({
+                    newText: 'when',
+                    range: {
+                        start: document.textDocument.positionAt(offset - 1),
+                        end: document.textDocument.positionAt(offset)
+                    }
+                });
             }
             if (completionCase.name === 'partially typed when after a forward-declared event') {
                 const whenItem = completion?.items.find(item => item.label === 'when');

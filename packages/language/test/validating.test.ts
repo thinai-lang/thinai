@@ -502,6 +502,23 @@ in bounded context Ordering {
         )).toBe(true);
     });
 
+    test('rejects transitions that leave a field in the same state', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method place() { transition status from Draft to Draft }
+                    identifier id: OrderId
+                    status: OrderStatus initial Draft
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+        }`);
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A transition must move to a different state.')
+        )).toBe(true);
+    });
+
     test('warns when a method repeats the same transition', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

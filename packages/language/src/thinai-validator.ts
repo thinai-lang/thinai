@@ -1059,6 +1059,12 @@ export class ThinaiValidator {
             const from = change.from?.ref;
             const to = change.to?.ref;
             const states = new Set(stateType.values);
+            if (from && from === to) {
+                accept('error', 'A transition must move to a different state.', {
+                    node: change,
+                    property: 'to'
+                });
+            }
             if (!from || !to || !states.has(from) || !states.has(to)) {
                 accept('error', `Transition states must be values of ${stateType.name}.`, {
                     node: change,
