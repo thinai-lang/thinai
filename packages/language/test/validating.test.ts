@@ -467,6 +467,41 @@ in bounded context Ordering {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Duplicate state transition'))).toBe(false);
     });
 
+    test('allows repeated transition fields across statements but rejects them within one statement', async () => {
+        const separateStatements = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method advance() {
+                        transition status from Draft to Placed
+                        transition status from Placed to Shipped
+                    }
+                    identifier id: OrderId
+                    status: OrderStatus initial Draft
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed, Shipped }
+            }
+        }`);
+        expect(semanticDiagnostics(separateStatements).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+
+        const repeatedInStatement = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method advance() {
+                        transition status from Draft to Placed, status from Placed to Shipped
+                    }
+                    identifier id: OrderId
+                    status: OrderStatus initial Draft
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed, Shipped }
+            }
+        }`);
+        expect(repeatedInStatement.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("A transition may change field 'status' only once per statement.")
+        )).toBe(true);
+    });
+
     test('warns when a method repeats the same transition', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

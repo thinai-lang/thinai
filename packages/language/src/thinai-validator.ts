@@ -1038,6 +1038,7 @@ export class ThinaiValidator {
             });
             return;
         }
+        const changedFields = new Set<Field>();
         for (const change of transition.changes) {
             const field = change.field?.ref;
             const stateType = field?.type?.ref;
@@ -1048,6 +1049,13 @@ export class ThinaiValidator {
                 });
                 continue;
             }
+            if (changedFields.has(field)) {
+                accept('error', `A transition may change field '${field.name}' only once per statement.`, {
+                    node: change,
+                    property: 'field'
+                });
+            }
+            changedFields.add(field);
             const from = change.from?.ref;
             const to = change.to?.ref;
             const states = new Set(stateType.values);

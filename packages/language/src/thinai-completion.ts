@@ -1682,11 +1682,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const text = document.textDocument.getText();
         let best: { end: number; prefix: string; keywords: string[]; needsLeadingSpace: boolean } | undefined;
         const hasResolvedReference = (reference?: { ref?: AstNode }) => reference?.ref !== undefined;
+        const hasCompletedEventReference = (reference?: {
+            ref?: AstNode;
+            $refText?: string;
+            $refNode?: { end: number };
+        }) => reference?.ref !== undefined ||
+            typeof reference?.$refText === 'string' && reference.$refText.length > 0 &&
+            reference.$refNode !== undefined && reference.$refNode.end < offset;
         for (const node of AstUtils.streamAst(model)) {
+            const nodeSource = node.$cstNode?.text ?? '';
+            const whenAlreadyTyped = /\bwhen\b/iu.test(nodeSource);
             const hasMethodTarget = (targets: Array<{ ref?: AstNode }>) =>
                 targets.length > 0 && isMethod(targets.at(-1)?.ref);
             const keywords = isJourneyStep(node)
-                ? hasMethodTarget(node.targets)
+                ? hasMethodTarget(node.targets) && !whenAlreadyTyped
                     ? [
                         ...(!node.arguments ? ['with'] : []),
                         ...(!node.guard ? ['when'] : [])
@@ -1695,13 +1704,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 : isTransition(node)
                     ? node.changes.length > 0 && node.changes.every(change =>
                         hasResolvedReference(change.field) && hasResolvedReference(change.from) && hasResolvedReference(change.to)
-                    ) && !node.guard ? ['when'] : []
+                    ) && !node.guard && !whenAlreadyTyped ? ['when'] : []
                     : isEventEmission(node)
-                        ? node.events.length > 0 && node.events.every(event => hasResolvedReference(event.target)) && !node.guard
+                        ? node.events.length > 0 && node.events.every(event => hasCompletedEventReference(event.target)) &&
+                            !node.guard && !whenAlreadyTyped
                             ? ['when']
                             : []
                         : isMethodInvocation(node)
-                            ? hasMethodTarget(node.targets) && !node.guard ? ['when'] : []
+                            ? hasMethodTarget(node.targets) && !node.guard && !whenAlreadyTyped ? ['when'] : []
                             : [];
             if (keywords.length === 0) {
                 continue;

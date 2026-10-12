@@ -1274,6 +1274,18 @@ bounded context Second`;
                 clause: `emits OrderPlaced ${marker}`,
                 expected: ['when'],
                 forbidden: []
+            },
+            {
+                name: 'partially typed when after a forward-declared event',
+                clause: `emits OrderPlaced w${marker}`,
+                expected: ['when'],
+                forbidden: []
+            },
+            {
+                name: 'does not repeat a fully typed when keyword',
+                clause: `emits OrderPlaced when${marker}`,
+                expected: [],
+                forbidden: ['when']
             }
         ];
         for (const [index, completionCase] of cases.entries()) {
@@ -1295,6 +1307,16 @@ bounded context Second`;
             }
             for (const label of completionCase.forbidden) {
                 expect(labels, completionCase.name).not.toContain(label);
+            }
+            if (completionCase.name === 'partially typed when after a forward-declared event') {
+                const whenItem = completion?.items.find(item => item.label === 'when');
+                expect(whenItem?.textEdit).toMatchObject({
+                    newText: 'when',
+                    range: {
+                        start: document.textDocument.positionAt(offset - 1),
+                        end: document.textDocument.positionAt(offset)
+                    }
+                });
             }
         }
     });
