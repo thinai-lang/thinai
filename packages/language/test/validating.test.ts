@@ -1293,6 +1293,112 @@ in bounded context Ordering {
         expect(errors).toContain('The projects clause is allowed only in projector methods.');
     });
 
+    test('underlines method effects that are not allowed for their owner', async () => {
+        const source = `bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order {
+                    method place() { transition status from Draft to Placed }
+                    identifier id: OrderId
+                    status: OrderStatus
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+            event OrderPlaced
+            read model OrderSummary { status: OrderStatus }
+            application service Commands {
+                method publish() { emits OrderPlaced }
+                method project() { projects OrderSummary }
+                method changeStatus() { transition status from Draft to Placed }
+            }
+            query service Queries {
+                method find() returns string { emits OrderPlaced }
+            }
+            domain service Pricing { method calculate() returns number }
+            projector OrderProjector {
+                method project(source: OrderPlaced) { invokes Pricing.calculate }
+                method returnValue(source: OrderPlaced) returns string { projects OrderSummary }
+            }
+        }`;
+        const document = await parse(source);
+        const assertKeywordUnderline = (message: string, clause: string, keyword: string) => {
+            const diagnostic = semanticDiagnostics(document).find(candidate => String(candidate.message) === message);
+            expect(diagnostic, message).toBeDefined();
+            expect(document.textDocument.offsetAt(diagnostic!.range.start)).toBe(source.indexOf(keyword, source.indexOf(clause)));
+        };
+
+        assertKeywordUnderline(
+            'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.',
+            'method publish()',
+            'emits'
+        );
+        assertKeywordUnderline(
+            'The projects clause is allowed only in projector methods.',
+            'method project() { projects',
+            'projects'
+        );
+        assertKeywordUnderline(
+            'A state transition must be declared in an entity method inside an aggregate.',
+            'method changeStatus()',
+            'transition'
+        );
+        assertKeywordUnderline(
+            'A query cannot emit events.',
+            'method find()',
+            'emits'
+        );
+        assertKeywordUnderline(
+            'Projector methods cannot invoke other methods.',
+            'method project(source: OrderPlaced)',
+            'invokes'
+        );
+        assertKeywordUnderline(
+            'A projector handler does not return a value.',
+            'method returnValue',
+            'returns'
+        );
+
+        const incompleteQueryEmission = await parse(`bounded context Ordering in bounded context Ordering {
+            query service Queries {
+                method find() returns string { emits
+            }
+        }`);
+        const incompleteEmissionDiagnostic = semanticDiagnostics(incompleteQueryEmission).find(diagnostic =>
+            String(diagnostic.message) === 'A query cannot emit events.'
+        );
+        expect(incompleteEmissionDiagnostic).toBeDefined();
+        expect(incompleteQueryEmission.textDocument.offsetAt(incompleteEmissionDiagnostic!.range.start)).toBe(
+            incompleteQueryEmission.textDocument.getText().indexOf('emits')
+        );
+    });
+
+    test('allows domain services to invoke only other domain services', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            factory OrderFactory { method create() returns Order }
+            query service Queries { method find() returns string }
+            domain service Pricing {
+                method calculate() { invokes Queries.find }
+                method createOrder() { invokes OrderFactory.create }
+            }
+        }`);
+
+        const domainServiceInvocationErrors = semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message) === 'A domain service may invoke only another domain service.'
+        );
+        expect(domainServiceInvocationErrors).toHaveLength(2);
+        const source = document.textDocument.getText();
+        expect(domainServiceInvocationErrors.map(diagnostic =>
+            document.textDocument.offsetAt(diagnostic.range.start)
+        )).toEqual(expect.arrayContaining([
+            source.indexOf('Queries.find'),
+            source.indexOf('OrderFactory.create')
+        ]));
+    });
+
     test('rejects more than one write repository for an aggregate', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

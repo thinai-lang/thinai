@@ -518,13 +518,18 @@ bounded context Second`;
         const spaces = '   ';
         const text = `bounded context Ordering
         in bounded context Ordering {
-            value object OrderId { raw: string }
+            aggregate Order {
+                root entity Root { identifier id: AggregateId }
+                value object AggregateId { raw: string }
+                value object${spaces}
+            }
+            value object OutsideId { raw: string }
             module Api {
                 exposes${spaces}
+                value object OrderId { raw: string }
             }
-            aggregate Order {
-                root entity Root { identifier id: OrderId }
-                value object${spaces}
+            module Sibling {
+                value object SiblingId { raw: string }
             }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
@@ -540,8 +545,11 @@ bounded context Second`;
         });
         expect(exposesCompletion?.items.find(item => item.label === 'OrderId')).toMatchObject({
             kind: CompletionItemKind.Struct,
-            detail: expect.stringMatching(/^ValueObject .*OrderId$/)
+            detail: expect.stringMatching(/^ValueObject .*Api\.OrderId$/)
         });
+        for (const inaccessible of ['AggregateId', 'OutsideId', 'SiblingId']) {
+            expect(exposesCompletion?.items.map(item => item.label)).not.toContain(inaccessible);
+        }
 
         const sharedKernelText = `shared kernel CommonTypes {
             module SharedContracts {
@@ -1169,6 +1177,7 @@ bounded context Second`;
             kind: CompletionItemKind.EnumMember,
             detail: expect.stringContaining('.Open')
         });
+        expect(valueItems?.items.map(item => item.label)).not.toContain('Shipped');
     });
 
     test('completes each transition change from its own enum field', async () => {
@@ -1318,6 +1327,59 @@ bounded context Second`;
                 end: partialDocument.textDocument.positionAt(partialOffset)
             }
         });
+    });
+
+    test('does not offer optional clauses after method effects disallowed for their owner', async () => {
+        const marker = '__completion_position__';
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order {
+                    identifier id: OrderId
+                    status: OrderStatus
+                }
+                value object OrderId { raw: string }
+                enum OrderStatus { Draft, Placed }
+            }
+            event OrderPlaced
+            query service OrderQueries {
+                method findOrder() returns string { emits OrderPlaced ${marker} }
+            }
+            domain service Pricing { method calculate() returns number }
+            projector OrderProjector {
+                method onOrderPlaced(source: OrderPlaced) { invokes Pricing.calculate ${marker} }
+            }
+            application service OrderCommands {
+                method place() { transition status from Draft to Placed ${marker} }
+            }
+        }
+        actor Customer
+        journey ReadOrder {
+            by Customer { invoke Ordering.OrderQueries.findOrder ${marker} }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/disallowed-optional-specification-clauses.tni'), text.split(marker).join('')
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        let searchFrom = 0;
+        for (const source of [
+            'emits OrderPlaced ',
+            'invokes Pricing.calculate ',
+            'transition status from Draft to Placed ',
+            'invoke Ordering.OrderQueries.findOrder '
+        ]) {
+            const offset = text.indexOf(source, searchFrom) + source.length;
+            searchFrom = offset;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.map(item => item.label), source).not.toContain('when');
+            if (source.startsWith('invoke ')) {
+                expect(completion?.items.map(item => item.label), source).not.toContain('with');
+            }
+        }
     });
 
     test('offers required transition and emission continuations before optional guards', async () => {
@@ -1771,7 +1833,7 @@ bounded context Second`;
             });
             const labels = completion?.items.map(item => item.label) ?? [];
 
-            expect(labels, completionCase.name).toContain('Alpha');
+            expect(labels, completionCase.name).not.toContain('Alpha');
             expect(labels, completionCase.name).toContain('Beta');
             expect(completion?.items.every(item => item.detail?.startsWith('BoundedContext ')), completionCase.name)
                 .toBe(true);
@@ -1957,13 +2019,14 @@ bounded context Second`;
             textDocument: { uri: separateWays.uri.toString() },
             position: separateWaysPosition
         });
-        expect(contextCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
-        expect(contextCompletion?.items.find(item => item.label === 'Alpha')).toMatchObject({
+        expect(contextCompletion?.items.map(item => item.label)).toContain('Beta');
+        expect(contextCompletion?.items.map(item => item.label)).not.toContain('Alpha');
+        expect(contextCompletion?.items.find(item => item.label === 'Beta')).toMatchObject({
             kind: CompletionItemKind.Module,
-            detail: 'BoundedContext Alpha',
+            detail: 'BoundedContext Beta',
             textEdit: {
                 range: { start: separateWaysPosition, end: separateWaysPosition },
-                newText: ' Alpha'
+                newText: ' Beta'
             }
         });
         expect(contextCompletion?.items.map(item => item.label)).not.toContain('customer');
@@ -1986,7 +2049,8 @@ bounded context Second`;
                 textDocument: { uri: document.uri.toString() },
                 position
             });
-            expect(completion?.items.map(item => item.label), relationship).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
+            expect(completion?.items.map(item => item.label), relationship).toContain('Beta');
+            expect(completion?.items.map(item => item.label), relationship).not.toContain('Alpha');
         }
 
         const multilineRightContexts = [
@@ -2006,7 +2070,8 @@ bounded context Second`;
                 textDocument: { uri: document.uri.toString() },
                 position
             });
-            expect(completion?.items.map(item => item.label), relationship).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
+            expect(completion?.items.map(item => item.label), relationship).toContain('Beta');
+            expect(completion?.items.map(item => item.label), relationship).not.toContain('Alpha');
         }
     });
 
@@ -2811,7 +2876,13 @@ bounded context Billing realizes Payments`;
             {
                 name: 'projector method body',
                 expected: ['projects'],
+                forbidden: ['invokes', 'transition', 'emits', 'returns'],
                 source: `bounded context Ordering\nin bounded context Ordering { projector OrderProjector { method project() { ${marker} } } }`
+            },
+            {
+                name: 'query-service method body allows read-helper invocation',
+                expected: ['invokes'],
+                source: `bounded context Ordering\nin bounded context Ordering { query service Queries { method find() returns string { ${marker} } } }`
             },
             {
                 name: 'constructor body',
@@ -2883,6 +2954,106 @@ bounded context Billing realizes Payments`;
             for (const keyword of completionCase.forbidden ?? []) {
                 expect(labels, completionCase.name).not.toContain(keyword);
             }
+        }
+    });
+
+    test('constrains projector and factory method specification completions', async () => {
+        const model = `bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            value object Price { amount: number }
+            enum OrderStatus { Draft, Placed }
+            event OrderPlaced
+            read model OrderSummary { status: OrderStatus }
+            domain service Pricing { method calculate() returns number }
+            factory OrderFactory { method create() returns Order }
+            projector OrderProjector {
+                method project(source: OrderPlaced) { projects OrderSummary }
+            }
+        }`;
+        const signaturePosition = model.indexOf(') { projects') + 1;
+        const signatureDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/projector-returns-keyword.tni'), model
+        );
+        documents.push(signatureDocument);
+        const signatureCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(signatureDocument, {
+            textDocument: { uri: signatureDocument.uri.toString() },
+            position: signatureDocument.textDocument.positionAt(signaturePosition)
+        });
+        expect(signatureCompletion?.items.map(item => item.label)).not.toContain('returns');
+
+        const projectorParameterText = model.replace(
+            'method project(source: OrderPlaced)',
+            'method project(source: )'
+        );
+        const projectorParameterDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/projector-event-parameter-type.tni'), projectorParameterText
+        );
+        documents.push(projectorParameterDocument);
+        await services.shared.workspace.DocumentBuilder.build([projectorParameterDocument], { validation: false });
+        const parameterOffset = projectorParameterText.indexOf('source: ') + 'source: '.length;
+        const parameterCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(projectorParameterDocument, {
+            textDocument: { uri: projectorParameterDocument.uri.toString() },
+            position: projectorParameterDocument.textDocument.positionAt(parameterOffset)
+        });
+        const parameterLabels = parameterCompletion?.items.map(item => item.label) ?? [];
+        expect(parameterLabels).toContain('OrderPlaced');
+        for (const invalid of ['Order', 'OrderId', 'Price', 'string', 'List']) {
+            expect(parameterLabels).not.toContain(invalid);
+        }
+
+        const projectorReturnText = model.replace(
+            'method project(source: OrderPlaced) { projects OrderSummary }',
+            'method project(source: OrderPlaced) returns '
+        );
+        const projectorReturnDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/projector-return-type.tni'), projectorReturnText
+        );
+        documents.push(projectorReturnDocument);
+        await services.shared.workspace.DocumentBuilder.build([projectorReturnDocument], { validation: false });
+        const returnOffset = projectorReturnText.indexOf('returns ', projectorReturnText.indexOf('projector OrderProjector')) + 'returns '.length;
+        const projectorReturnCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(projectorReturnDocument, {
+            textDocument: { uri: projectorReturnDocument.uri.toString() },
+            position: projectorReturnDocument.textDocument.positionAt(returnOffset)
+        });
+        const projectorReturnLabels = projectorReturnCompletion?.items.map(item => item.label) ?? [];
+        for (const invalid of ['string', 'List', 'Order', 'OrderId', 'Price', 'OrderStatus']) {
+            expect(projectorReturnLabels).not.toContain(invalid);
+        }
+
+        const projectorInvocationText = model.replace(
+            'projects OrderSummary',
+            'invokes OrderFactory.cr'
+        );
+        const projectorInvocationDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/projector-invocation-target.tni'), projectorInvocationText
+        );
+        documents.push(projectorInvocationDocument);
+        await services.shared.workspace.DocumentBuilder.build([projectorInvocationDocument], { validation: false });
+        const invocationOffset = projectorInvocationText.indexOf('OrderFactory.cr') + 'OrderFactory.cr'.length;
+        const invocationCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(projectorInvocationDocument, {
+            textDocument: { uri: projectorInvocationDocument.uri.toString() },
+            position: projectorInvocationDocument.textDocument.positionAt(invocationOffset)
+        });
+        expect(invocationCompletion?.items.map(item => item.label)).not.toContain('create');
+
+        const factoryText = model.replace('method create() returns Order', 'method create() returns ');
+        const factoryDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/factory-return-type.tni'), factoryText
+        );
+        documents.push(factoryDocument);
+        await services.shared.workspace.DocumentBuilder.build([factoryDocument], { validation: false });
+        const factoryOffset = factoryText.indexOf('method create() returns ') + 'method create() returns '.length;
+        const factoryCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(factoryDocument, {
+            textDocument: { uri: factoryDocument.uri.toString() },
+            position: factoryDocument.textDocument.positionAt(factoryOffset)
+        });
+        const factoryLabels = factoryCompletion?.items.map(item => item.label) ?? [];
+        expect(factoryLabels).toContain('Order');
+        for (const invalid of ['string', 'List', 'Price', 'OrderId', 'OrderStatus', 'OrderSummary']) {
+            expect(factoryLabels).not.toContain(invalid);
         }
     });
 
@@ -3032,6 +3203,68 @@ bounded context Billing realizes Payments`;
         });
         expect(patternCompletion?.items.some(item => item.label === 'AntiCorruptionLayer')).toBe(true);
         expect(patternCompletion?.items.some(item => item.label === 'Conformist')).toBe(false);
+    });
+
+    test('does not offer initial-state values on optional or non-entity fields', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    identifier id: OrderId
+                    optionalStatus?: Status initial Dr
+                }
+                value object OrderId { raw: string }
+                value object StatusHolder { status: Status initial Dr }
+                enum Status { Draft, Placed }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invalid-initial-state-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        for (const marker of ['optionalStatus?: Status initial Dr', 'status: Status initial Dr']) {
+            const offset = text.indexOf(marker) + marker.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.map(item => item.label)).not.toContain('Draft');
+            expect(completion?.items.map(item => item.label)).not.toContain('Placed');
+        }
+    });
+
+    test('excludes the already-selected context from context-map endpoint and participant completions', async () => {
+        const marker = '__completion_position__';
+        const text = `bounded context Ordering
+            bounded context Shipping
+            bounded context Billing
+            shared kernel Common
+            context map Fulfillment {
+                customer Ordering -> supplier ${marker}
+                partner Ordering <-> partner ${marker}
+                separateWays Ordering -x- ${marker}
+                sharedKernel Common { participants: [Ordering, ${marker}] }
+            }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/distinct-context-map-candidates.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const markers = [...text.matchAll(new RegExp(marker, 'gu'))];
+        for (const [index, match] of markers.entries()) {
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(match.index)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            expect(labels, `completion ${index}`).not.toContain('Ordering');
+            expect(labels, `completion ${index}`).toEqual(expect.arrayContaining(['Shipping', 'Billing']));
+            for (const contextName of ['Shipping', 'Billing']) {
+                expect(labels.filter(label => label === contextName), `completion ${index}: ${contextName}`).toHaveLength(1);
+            }
+        }
     });
 
     test('hides declarations in sibling modules unless exposed through a dependency', async () => {
@@ -3362,6 +3595,48 @@ bounded context Billing realizes Payments`;
             position: document.textDocument.positionAt(applicationAggregateOffset)
         });
         expect(applicationAggregateCompletion?.items.some(item => item.label === 'Order')).toBe(true);
+    });
+
+    test('limits domain-service invocation targets to other domain services', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            domain service Policy { method calculate() returns number }
+            query service Queries { method find() returns string }
+            factory OrderFactory { method create() returns Order }
+            domain service Pricing {
+                method calculate() { invokes Policy.ca }
+                method read() { invokes Queries.fi }
+                method create() { invokes OrderFactory.cr }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/domain-service-invocation-targets.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const cases = [
+            { source: 'invokes Policy.ca', expected: 'calculate', forbidden: ['find', 'create'] },
+            { source: 'invokes Queries.fi', expected: undefined, forbidden: ['find'] },
+            { source: 'invokes OrderFactory.cr', expected: undefined, forbidden: ['create'] }
+        ];
+        for (const completionCase of cases) {
+            const offset = text.indexOf(completionCase.source) + completionCase.source.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            if (completionCase.expected) {
+                expect(labels).toContain(completionCase.expected);
+            }
+            for (const forbidden of completionCase.forbidden) {
+                expect(labels).not.toContain(forbidden);
+            }
+        }
     });
 
     test('completes shared-kernel domain services only for participating contexts', async () => {

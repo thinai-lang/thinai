@@ -44,6 +44,7 @@ import {
     isEventReference,
     isPartnershipRelationship,
     isCustomerSupplierRelationship,
+    isSeparateWaysRelationship,
     isSharedKernelRelationship,
     isModel,
     isMethod,
@@ -384,10 +385,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private isAvailableTransitionState(context: ReferenceInfo, target: AstNode | undefined): boolean {
-        if (!isTransitionChange(context.container) || context.property !== 'to' || !isEnumValue(target)) {
+        if (!isTransitionChange(context.container) || !isEnumValue(target)) {
             return true;
         }
-        return context.container.from?.ref !== target;
+        const otherState = context.property === 'to'
+            ? context.container.from?.ref
+            : context.property === 'from'
+                ? context.container.to?.ref
+                : undefined;
+        return otherState !== target;
     }
 
     private getTransitionStateScope(transition: TransitionChange): Scope {
@@ -415,6 +421,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private getInitialStateScope(field: Field): Scope {
+        if (!isEntity(field.$container) || field.optional) {
+            return this.createScope([]);
+        }
         const stateType = field.type?.ref;
         let current: AstNode | undefined = field.$container;
         while (current && !isEntity(current)) {
@@ -678,6 +687,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         );
     }
 
+    canInvokeMethod(context: AstNode, target: Method): boolean {
+        return this.isSupportedInvocationTarget(context, target);
+    }
+
     private isJourneyCommand(method: Method): boolean {
         return isApplicationService(method.$container) && !method.parameters.some(parameter =>
             isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
@@ -694,12 +707,19 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         )) {
             return false;
         }
+        if (isProjector(source.$container)) {
+            return false;
+        }
         const targetSharedKernel = this.getOwningSharedKernel(target);
         const sharedKernelServiceCall = targetSharedKernel !== undefined && isDomainService(target.$container) &&
             (isApplicationService(source.$container) || isDomainService(source.$container)) &&
             this.hasVisibleSharedKernel(source, targetSharedKernel) &&
             this.hasSharedKernelRelationship(source, targetSharedKernel);
         if (this.isCrossContext(source, target) && !sharedKernelServiceCall) {
+            return false;
+        }
+
+        if (isDomainService(source.$container) && !isDomainService(target.$container)) {
             return false;
         }
 
@@ -1007,6 +1027,20 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
 
+        const exposure = context.container.$type === 'Exposure'
+            ? context.container
+            : context.container.$container?.$type === 'Exposure'
+                ? context.container.$container
+                : undefined;
+        if (exposure && (context.property === 'declarations' || context.property === 'target')) {
+            const owningModule = getOwningModule(exposure);
+            return owningModule !== undefined && getOwningModule(target) === owningModule;
+        }
+
+        if (!this.isAvailableContextMapContext(context, target)) {
+            return false;
+        }
+
         const sourceModule = getOwningModule(context.container);
         const targetModule = getOwningModule(target);
         if (isModuleReference(context.container) && context.property === 'target') {
@@ -1103,6 +1137,36 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return false;
     }
 
+    private isAvailableContextMapContext(context: ReferenceInfo, target: AstNode): boolean {
+        if (!isBoundedContext(target)) {
+            return true;
+        }
+        const container = context.container;
+        if (container.$type === 'ContextMapEndpoint' && context.property === 'context') {
+            const relationship = container.$container;
+            if (isCustomerSupplierRelationship(relationship)) {
+                const otherEndpoint = relationship.customer === container ? relationship.supplier : relationship.customer;
+                return otherEndpoint.context?.ref !== target;
+            }
+            if (isPartnershipRelationship(relationship)) {
+                const otherEndpoint = relationship.left === container ? relationship.right : relationship.left;
+                return otherEndpoint.context?.ref !== target;
+            }
+        }
+        if (isSeparateWaysRelationship(container) && (context.property === 'left' || context.property === 'right')) {
+            const otherContext = context.property === 'left' ? container.right?.ref : container.left?.ref;
+            return otherContext !== target;
+        }
+        if (container.$type === 'BoundedContextReference' && context.property === 'target' &&
+            isSharedKernelRelationship(container.$container)) {
+            const relationship = container.$container;
+            return !relationship.participants.some(participant =>
+                participant !== container && participant.target?.ref === target
+            );
+        }
+        return true;
+    }
+
     private isValidTypeCandidate(context: ReferenceInfo, target: AstNode): boolean {
         let current: AstNode | undefined = context.container;
         let field: import('./generated/ast.js').Field | undefined;
@@ -1172,6 +1236,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (parameter) {
             const parent = parameter.$container;
             const methodOwner = isMethod(parent) ? parent.$container : undefined;
+            if (isProjector(methodOwner) && (!isMethod(parent) || parent.parameters.length !== 1 ||
+                parent.parameters[0] !== parameter || parameter.collection ||
+                !isDomainEvent(target) && !isIntegrationEvent(target))) {
+                return false;
+            }
             if (isReadModel(target)) {
                 return false;
             }
@@ -1200,6 +1269,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         if (method) {
             const owner = method.$container;
+            if (isProjector(owner)) {
+                return false;
+            }
+            if (isFactory(owner)) {
+                return context.property === 'returnType' && !method.returnCollection && isEntity(target) &&
+                    target.root && getOwningContextName(target) === getOwningContextName(method);
+            }
             if (isEntity(target) && (isDomainService(owner) || isApplicationService(owner) || isQueryService(owner))) {
                 return false;
             }

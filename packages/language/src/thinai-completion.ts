@@ -20,14 +20,16 @@ import {
 } from 'vscode-languageserver';
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
-import type { ContextMap } from './generated/ast.js';
+import type { ContextMap, Method } from './generated/ast.js';
 import {
+    isApplicationService,
     isEnumType,
     isBoundedContext,
     isDomainEvent,
     isEventEmission,
     isEnumValue,
     isEntity,
+    isFactory,
     isField,
     isIntegrationEvent,
     isJourneyStep,
@@ -36,6 +38,7 @@ import {
     isMethodInvocation,
     isModule,
     isParameter,
+    isProjector,
     isSpecificationTextPart,
     isTransition,
     isSubdomain,
@@ -331,13 +334,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (item.label === 'identifier' && !isEntity(identifierOwner)) {
                     return false;
                 }
+                if (item.label === 'returns' && activeMethod && isProjector(activeMethod.$container)) {
+                    return false;
+                }
                 if ((item.label === 'entity' || item.label === 'root entity') && !entityDeclarationsAllowed) {
                     return false;
                 }
                 if (item.label === 'root entity' && rootEntityAlreadyDeclared) {
                     return false;
                 }
-                if (['transition', 'projects', 'emits'].includes(item.label) && allowedMethodClauses &&
+                if (['invokes', 'transition', 'projects', 'emits'].includes(item.label) && allowedMethodClauses &&
                     !allowedMethodClauses.has(item.label)) {
                     return false;
                 }
@@ -543,9 +549,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
         const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
         const rightContextPatterns = [
-            new RegExp(String.raw`^\s*customer\s+${endpoint}(?:\s*${integrationPatterns})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
-            new RegExp(String.raw`^\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
-            new RegExp(String.raw`^\s*separateWays\s+${endpoint}\s+-x-\s*([\w.]*)$`, 'i')
+            new RegExp(String.raw`^\s*customer\s+(${endpoint})(?:\s*${integrationPatterns})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*partner\s+(${endpoint})(?:\s*${integrationPatterns})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
+            new RegExp(String.raw`^\s*separateWays\s+(${endpoint})\s+-x-\s*([\w.]*)$`, 'i')
         ];
         const contextMap = AstUtils.streamAst(root)
             .filter(candidate => candidate.$type === 'ContextMap')
@@ -573,12 +579,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return [];
         }
 
-        const typedPrefix = match[1] ?? '';
+        const leftContextName = match[1] ?? '';
+        const typedPrefix = match[2] ?? '';
         const prefixStart = offset - typedPrefix.length;
         const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         const completionContext = this.getLangiumCompletionContext(document, position);
-        return scopeProvider.getContextMapBoundedContextCandidates(contextMap)
+        const contextCandidates = scopeProvider.getContextMapBoundedContextCandidates(contextMap);
+        const leftContext = contextCandidates.find(description => description.name === leftContextName)?.node;
+        return contextCandidates
+            .filter(description => !leftContext || description.node !== leftContext)
             .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
             .map(description => {
                 const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
@@ -788,9 +798,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     }
 
     private getSiblingKeywordLabels(container: AstNode): readonly string[] {
-        const labels = getSiblingCompletionKeywords(container.$type, isModule(container) && isInSharedKernel(container));
+        let labels = getSiblingCompletionKeywords(container.$type, isModule(container) && isInSharedKernel(container));
         if (!isMethod(container)) {
             return labels;
+        }
+        if (isProjector(container.$container)) {
+            labels = labels.filter(label => label !== 'invokes');
         }
         return [
             ...labels,
@@ -946,9 +959,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 return false;
             }
             const cstNode = node.$cstNode;
-            return cstNode !== undefined && cstNode.offset <= offset && cstNode.end <= offset &&
-                cstNode.range.end.line === position.line && !/[\r\n]/.test(text.slice(cstNode.end, offset)) &&
-                this.isInIncompleteTypePosition(node, document, position);
+            if (cstNode === undefined || cstNode.offset > offset || cstNode.end > offset ||
+                cstNode.range.end.line !== position.line || /[\r\n]/.test(text.slice(cstNode.end, offset)) ||
+                !this.isInIncompleteTypePosition(node, document, position)) {
+                return false;
+            }
+            if (isMethod(node) && (isProjector(node.$container) || isFactory(node.$container))) {
+                return false;
+            }
+            return !(isParameter(node) && isMethod(node.$container) && isProjector(node.$container.$container));
         });
     }
 
@@ -1683,7 +1702,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (isField(node) && isEntity(node.$container) && !node.optional && !this.hasReferenceText(node.initialState) && isEnumType(node.type?.ref)) {
             return ['initial'];
         }
-        if (isMethod(node) && !node.returnPrimitive && !node.returnType && !node.returnCollection) {
+        if (isMethod(node) && !isProjector(node.$container) && !node.returnPrimitive && !node.returnType && !node.returnCollection) {
             const start = node.$cstNode?.offset;
             if (start === undefined) {
                 return [];
@@ -1713,30 +1732,54 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }) => reference?.ref !== undefined ||
             typeof reference?.$refText === 'string' && reference.$refText.length > 0 &&
             reference.$refNode !== undefined && reference.$refNode.end < offset;
+        const getEnclosingMethod = (node: AstNode): Method | undefined => {
+            let current = node.$container;
+            while (current && !isMethod(current)) {
+                current = current.$container;
+            }
+            return isMethod(current) ? current : undefined;
+        };
+        const isJourneyCommand = (targets: Array<{ ref?: AstNode }>): boolean => {
+            const target = targets.at(-1)?.ref;
+            return isMethod(target) && isApplicationService(target.$container) && !target.parameters.some(parameter =>
+                isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+            );
+        };
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         for (const node of AstUtils.streamAst(model)) {
             const nodeSource = node.$cstNode?.text ?? '';
             const whenAlreadyTyped = /\bwhen\b/iu.test(nodeSource);
-            const hasMethodTarget = (targets: Array<{ ref?: AstNode }>) =>
-                targets.length > 0 && isMethod(targets.at(-1)?.ref);
-            const keywords = isJourneyStep(node)
-                ? hasMethodTarget(node.targets) && !whenAlreadyTyped
-                    ? [
-                        ...(!node.arguments ? ['with'] : []),
-                        ...(!node.guard ? ['when'] : [])
-                    ]
-                    : []
-                : isTransition(node)
-                    ? node.changes.length > 0 && node.changes.every(change =>
-                        hasCompletedReference(change.field) && hasCompletedReference(change.from) && hasCompletedReference(change.to)
-                    ) && !node.guard && !whenAlreadyTyped && !nodeSource.trimEnd().endsWith(',') ? ['when'] : []
-                    : isEventEmission(node)
-                        ? node.events.length > 0 && node.events.every(event => hasCompletedReference(event.target)) &&
-                            !node.guard && !whenAlreadyTyped
-                            ? ['when']
-                            : []
-                        : isMethodInvocation(node)
-                            ? hasMethodTarget(node.targets) && !node.guard && !whenAlreadyTyped ? ['when'] : []
-                            : [];
+            let keywords: string[] = [];
+            if (isJourneyStep(node) && isJourneyCommand(node.targets) && !whenAlreadyTyped) {
+                keywords = [
+                    ...(!node.arguments ? ['with'] : []),
+                    ...(!node.guard ? ['when'] : [])
+                ];
+            } else if (isTransition(node)) {
+                const method = getEnclosingMethod(node);
+                if (method && canDeclareTransition(method) && node.changes.length > 0 && node.changes.every(change =>
+                    hasCompletedReference(change.field) && hasCompletedReference(change.from) && hasCompletedReference(change.to)
+                ) && !node.guard && !whenAlreadyTyped && !nodeSource.trimEnd().endsWith(',')) {
+                    keywords = ['when'];
+                }
+            } else if (isEventEmission(node)) {
+                const method = getEnclosingMethod(node);
+                const emissionMode = method ? getEventEmissionMode(method) : undefined;
+                const hasAllowedEvents = emissionMode !== undefined && node.events.length > 0 && node.events.every(event => {
+                    const target = event.target?.ref;
+                    return target
+                        ? emissionMode === 'domain' ? isDomainEvent(target) : isIntegrationEvent(target)
+                        : hasCompletedReference(event.target);
+                });
+                if (hasAllowedEvents && !node.guard && !whenAlreadyTyped) {
+                    keywords = ['when'];
+                }
+            } else if (isMethodInvocation(node)) {
+                const target = node.targets.at(-1)?.ref;
+                if (isMethod(target) && scopeProvider.canInvokeMethod(node, target) && !node.guard && !whenAlreadyTyped) {
+                    keywords = ['when'];
+                }
+            }
             if (keywords.length === 0) {
                 continue;
             }

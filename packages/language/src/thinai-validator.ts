@@ -693,10 +693,10 @@ export class ThinaiValidator {
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
         const emissionMode = getEventEmissionMode(method);
-        if (method.projects.some(project => this.isSyntacticallyComplete(project)) && !canDeclareProjects(method)) {
+        if (method.projects.length > 0 && !canDeclareProjects(method)) {
             accept('error', 'The projects clause is allowed only in projector methods.', {
                 node: method,
-                property: 'projects'
+                keyword: 'projects'
             });
         }
         if (queryService) {
@@ -707,10 +707,10 @@ export class ThinaiValidator {
                     property: 'returnType'
                 });
             }
-            if (eventParameters.length > 0 || method.emissions.some(emission => this.isSyntacticallyComplete(emission))) {
-                accept('error', 'A query cannot handle events or emit events.', {
-                    node: method,
-                    property: 'returnType'
+            if (eventParameters.length > 0) {
+                accept('error', 'A query cannot handle events.', {
+                    node: eventParameters[0]!,
+                    property: 'type'
                 });
             }
         }
@@ -756,14 +756,21 @@ export class ThinaiValidator {
             }
         }
         for (const invocation of method.invocations) {
+            if (projectorService) {
+                accept('error', 'Projector methods cannot invoke other methods.', {
+                    node: invocation,
+                    keyword: 'invokes'
+                });
+                continue;
+            }
             if (!this.isSyntacticallyComplete(invocation)) {
                 continue;
             }
             const target = getInvokedMethod(invocation);
             if (!target) {
                 accept('error', 'An invokes path must end at a method.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
                 continue;
             }
@@ -774,28 +781,28 @@ export class ThinaiValidator {
                 this.hasSharedKernelRelationship(method, targetSharedKernel);
             if (this.isCrossContextOwned(method, target) && !allowedSharedKernelService) {
                 accept('error', 'A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (target.parameters.some(parameter => this.isEventParameter(parameter))) {
                 accept('error', 'An event-triggered method cannot be invoked directly; invoke an ordinary command method instead.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (isApplicationService(target.$container) && !applicationService) {
                 accept('error', 'Domain behavior cannot invoke an application-service method.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             const reachable = getReachableMethods(target);
             if (!applicationService && !isApplicationService(target.$container) &&
                 reachable.some(candidate => isApplicationService(candidate.$container))) {
                 accept('error', 'Domain behavior cannot transitively invoke an application-service method.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             const targetAggregate = this.getOwningAggregate(target);
@@ -805,24 +812,33 @@ export class ThinaiValidator {
                 this.getOwningAggregate(candidate) !== undefined
             ))) {
                 accept('error', 'A domain service must not invoke aggregate-owned methods; application services should invoke aggregate roots directly.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
+                });
+            }
+            if (isDomainService(method.$container) && !isDomainService(target.$container) &&
+                !isApplicationService(target.$container) && targetAggregate === undefined &&
+                !reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined) &&
+                !target.parameters.some(parameter => this.isEventParameter(parameter))) {
+                accept('error', 'A domain service may invoke only another domain service.', {
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (sourceAggregate && (isDomainService(target.$container) || reachable.some(candidate =>
                 isDomainService(candidate.$container)
             ))) {
                 accept('error', 'Aggregate-owned methods must not invoke domain services, directly or transitively; application services coordinate both.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (applicationService && !isApplicationService(target.$container) &&
                 (reachable.some(candidate => isApplicationService(candidate.$container)) ||
                     (!targetIsAggregateRoot && reachable.some(candidate => this.getOwningAggregate(candidate) !== undefined)))) {
                 accept('error', 'Application services must invoke aggregate-root behavior directly, not through another method call chain.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             const targetFactory = isFactory(target.$container) ? target.$container : undefined;
@@ -832,14 +848,14 @@ export class ThinaiValidator {
             if (targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) &&
                 !isEntity(method.$container) && !isAssociatedFactoryMethod) {
                 accept('error', 'Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (sourceAggregate && targetAggregate && targetAggregate !== sourceAggregate) {
                 accept('error', 'Domain behavior must not invoke another aggregate directly.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (!applicationService && sourceAggregate && reachable.some(candidate => {
@@ -847,33 +863,33 @@ export class ThinaiValidator {
                 return candidateAggregate !== undefined && candidateAggregate !== sourceAggregate;
             })) {
                 accept('error', 'Domain behavior must not transitively invoke another aggregate.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (applicationService && isApplicationService(target.$container) && target.$container !== applicationService &&
                 (eventParameters.length !== 1 || target.parameters.some(parameter => this.isEventParameter(parameter)))) {
                 accept('error', 'Only an event handler may dispatch to a command in another application service.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (queryService && (target.$container !== queryService || hasBehaviorSideEffects(target))) {
                 accept('error', 'A query service may invoke only read-only query helpers in the same query service.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
         }
         if (queryService && this.getOwningAggregate(target)) {
                 accept('error', 'A query service must not invoke aggregate methods.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
             if (applicationService && targetAggregate && !this.isAggregateRootMethod(target, targetAggregate) && !isAssociatedFactoryMethod) {
                 accept('error', 'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.', {
-                    node: method,
-                    property: 'invocations'
+                    node: invocation,
+                    property: 'targets'
                 });
             }
         }
@@ -884,6 +900,20 @@ export class ThinaiValidator {
             this.checkProjectorMethod(method, projectorService!, accept);
         }
         for (const emission of method.emissions) {
+            if (queryService) {
+                accept('error', 'A query cannot emit events.', {
+                    node: emission,
+                    keyword: 'emits'
+                });
+                continue;
+            }
+            if (emissionMode === undefined) {
+                accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
+                    node: emission,
+                    keyword: 'emits'
+                });
+                continue;
+            }
             if (!this.isSyntacticallyComplete(emission)) {
                 continue;
             }
@@ -894,33 +924,24 @@ export class ThinaiValidator {
                 }
                 if (this.isCrossContextOwned(method, emittedEvent)) {
                     accept('error', 'A method may emit only events owned by its bounded context.', {
-                        node: emission,
-                        property: 'events'
+                        node: emitted,
+                        property: 'target'
                     });
                 }
-                if (queryService) {
-                    accept('error', 'A query cannot emit events.', { node: emission, property: 'events' });
-                    continue;
-                }
-            if (emissionMode === 'domain') {
-                if (!isDomainEvent(emittedEvent)) {
+                if (emissionMode === 'domain') {
+                    if (!isDomainEvent(emittedEvent)) {
                         accept('error', 'Aggregate-root behavior may emit only domain events.', {
-                            node: emission,
-                            property: 'events'
+                            node: emitted,
+                            property: 'target'
                         });
                     }
-            } else if (emissionMode === 'integration') {
+                } else if (emissionMode === 'integration') {
                     if (!isIntegrationEvent(emittedEvent)) {
                         accept('error', 'A domain-event handler may emit only integration events.', {
-                            node: emission,
-                            property: 'events'
+                            node: emitted,
+                            property: 'target'
                         });
                     }
-                } else {
-                    accept('error', 'Only aggregate-root behavior may emit domain events, and only a domain-event handler may emit integration events.', {
-                        node: emission,
-                        property: 'events'
-                    });
                 }
             }
         }
@@ -974,8 +995,8 @@ export class ThinaiValidator {
         for (const project of method.projects) {
             if (project.target?.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
                 accept('error', 'A projector and its read models must belong to the same bounded context.', {
-                    node: method,
-                    property: 'projects'
+                    node: project,
+                    property: 'target'
                 });
             }
         }
@@ -986,18 +1007,15 @@ export class ThinaiValidator {
                 property: 'parameters'
             });
         }
-        if (method.returnPrimitive || method.returnType || method.returnCollection) {
+        const returnsKeyword = cstNode ? findCstTokenOffset(cstNode, 'returns') : undefined;
+        const openingBrace = cstNode ? findCstTokenOffset(cstNode, '{') : undefined;
+        const hasReturnsClause = method.returnPrimitive !== undefined || method.returnType !== undefined ||
+            method.returnCollection !== undefined || returnsKeyword !== undefined &&
+            (openingBrace === undefined || returnsKeyword < openingBrace);
+        if (hasReturnsClause) {
             accept('error', 'A projector handler does not return a value.', {
                 node: method,
-                property: 'returnType'
-            });
-        }
-        if (method.invocations.some(invocation => this.isSyntacticallyComplete(invocation)) ||
-            method.emissions.some(emission => this.isSyntacticallyComplete(emission)) ||
-            method.transitions.some(transition => this.isSyntacticallyComplete(transition))) {
-            accept('error', 'A projector describes a read-model projection and cannot invoke domain/application methods, emit events, or transition aggregate state.', {
-                node: method,
-                property: 'invocations'
+                keyword: 'returns'
             });
         }
         for (const repository of this.getReadRepositoryReferences(method)) {
@@ -1027,9 +1045,6 @@ export class ThinaiValidator {
     }
 
     checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
-        if (!this.isSyntacticallyComplete(transition)) {
-            return;
-        }
         const aggregate = this.getOwningAggregate(transition);
         const method = transition.$container;
         const entity = method.$container;
@@ -1038,6 +1053,9 @@ export class ThinaiValidator {
                 node: transition,
                 keyword: 'transition'
             });
+            return;
+        }
+        if (!this.isSyntacticallyComplete(transition)) {
             return;
         }
         const changedFields = new Set<Field>();

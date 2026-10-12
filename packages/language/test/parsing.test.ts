@@ -47,6 +47,23 @@ describe('Parsing tests', () => {
         )).toHaveLength(2);
     });
 
+    test('explains that event names in emits clauses cannot be quoted', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order {
+                    method place() { emits "OrderPlaced" }
+                    identifier id: OrderId
+                }
+                value object OrderId { raw: string }
+                event OrderPlaced
+            }
+        }`);
+
+        expect(document.parseResult.parserErrors.some(error =>
+            error.message === 'Event names must be unquoted identifiers declared in the model.'
+        )).toBe(true);
+    });
+
     test('rejects entity inheritance syntax', async () => {
         const document = await parse('bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order {} entity SpecialOrder extends Order {} } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
