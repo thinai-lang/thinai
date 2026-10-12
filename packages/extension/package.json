@@ -47,6 +47,7 @@
         "watch": "npm run build:prepare && concurrently -n tsc,esbuild -c blue,yellow \"tsc -b tsconfig.json --watch\" \"node esbuild.mjs --watch\""
     },
     "dependencies": {
+        "langium": "~4.4.0",
         "thinai-language": "0.0.1",
         "vscode-languageclient": "~10.1.0",
         "vscode-languageserver": "~10.1.0"

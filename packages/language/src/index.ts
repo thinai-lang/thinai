@@ -5,6 +5,7 @@ export * from './thinai-scope.js';
 export * from './thinai-validator.js';
 export * from './thinai-indentation.js';
 export * from './thinai-operation-utils.js';
+export * from './thinai-selection-range.js';
 export * from './generated/ast.js';
 export * from './generated/grammar.js';
 export * from './generated/module.js';

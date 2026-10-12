@@ -1,13 +1,15 @@
 import type { LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { EmptyFileSystem, URI } from 'langium';
 import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
-import { applyConfiguredIndentationToCompletions } from 'thinai-language';
+import { createThinaiServices, createThinaiSelectionRange, applyConfiguredIndentationToCompletions } from 'thinai-language';
 
 let client: LanguageClient;
 
 // This function is called when the extension is activated.
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    registerThinaiSelectionRanges(context);
     client = await startLanguageClient(context);
 }
 
@@ -17,6 +19,38 @@ export function deactivate(): Thenable<void> | undefined {
         return client.stop();
     }
     return undefined;
+}
+
+function registerThinaiSelectionRanges(context: vscode.ExtensionContext): void {
+    const { shared } = createThinaiServices(EmptyFileSystem);
+    context.subscriptions.push(vscode.languages.registerSelectionRangeProvider('thinai', {
+        provideSelectionRanges(document, positions) {
+            const langiumDocument = shared.workspace.LangiumDocumentFactory.fromString(
+                document.getText(),
+                URI.parse(document.uri.toString())
+            );
+            const ranges = positions.map(position => createThinaiSelectionRange(langiumDocument, position));
+            if (ranges.some(range => !range)) {
+                return undefined;
+            }
+            return ranges.map(range => toVscodeSelectionRange(range!));
+        }
+    }));
+}
+
+function toVscodeSelectionRange(
+    range: import('vscode-languageserver-types').SelectionRange
+): vscode.SelectionRange {
+    const parent = range.parent ? toVscodeSelectionRange(range.parent) : undefined;
+    return new vscode.SelectionRange(
+        new vscode.Range(
+            range.range.start.line,
+            range.range.start.character,
+            range.range.end.line,
+            range.range.end.character
+        ),
+        parent
+    );
 }
 
 async function startLanguageClient(context: vscode.ExtensionContext): Promise<LanguageClient> {

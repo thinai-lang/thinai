@@ -6,6 +6,7 @@ import { clearDocuments } from 'langium/test';
 import { applyConfiguredIndentation, applyConfiguredIndentationToCompletions, createThinaiServices } from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
+import { createThinaiSelectionRange } from '../src/thinai-selection-range.js';
 import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
@@ -21,6 +22,140 @@ afterEach(async () => {
 });
 
 describe('LSP services', () => {
+    test('provides quoted-string-first selection ranges across Thinai string constructs', () => {
+        const source = `import "./external.tni"
+context map Channels {
+    customer Ordering { integrationPatterns: ["ACL"] } -> supplier Shipping
+}
+bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        invariant "aggregate invariant"
+        root entity Order {
+            constructor() {
+                invariant "constructor invariant"
+                precondition "constructor precondition"
+                postcondition "constructor postcondition"
+                behavior "constructor behavior"
+            }
+            method place() {
+                invariant "method invariant"
+                precondition "method precondition"
+                postcondition "method postcondition"
+                behavior "method behavior [[Order.place]]"
+                invokes Order.place when "invoke guard"
+                transition state from Draft to Placed when "transition guard"
+                emits OrderPlaced when "emission guard"
+            }
+        }
+    }
+}
+journey Checkout {
+    by Customer {
+        invoke Order.place with "journey arguments" when "journey guard"
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/selection-ranges.tni'), source
+        );
+        documents = [document];
+
+        const cases = [
+            ['"./external.tni"', 'import'],
+            ['"ACL"', 'integrationPatterns'],
+            ['"aggregate invariant"', 'invariant'],
+            ['"constructor invariant"', 'invariant'],
+            ['"constructor precondition"', 'precondition'],
+            ['"constructor postcondition"', 'postcondition'],
+            ['"constructor behavior"', 'behavior'],
+            ['"method invariant"', 'invariant'],
+            ['"method precondition"', 'precondition'],
+            ['"method postcondition"', 'postcondition'],
+            ['"method behavior [[Order.place]]"', 'behavior'],
+            ['"invoke guard"', 'invokes'],
+            ['"transition guard"', 'transition'],
+            ['"emission guard"', 'emits'],
+            ['"journey arguments"', 'with'],
+            ['"journey guard"', 'when']
+        ] as const;
+
+        for (const [quotedText, enclosingKeyword] of cases) {
+            const offset = source.indexOf(quotedText) + 1;
+            const position = document.textDocument.positionAt(offset);
+            const selection = createThinaiSelectionRange(document, position);
+
+            expect(selection, quotedText).toBeDefined();
+            expect(document.textDocument.getText(selection!.range), quotedText).toBe(quotedText);
+            expect(selection!.parent, quotedText).toBeDefined();
+            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toContain(enclosingKeyword);
+        }
+
+        const statementCases = [
+            ['"invoke guard"', 'invokes Order.place when "invoke guard"'],
+            ['"transition guard"', 'transition state from Draft to Placed when "transition guard"'],
+            ['"emission guard"', 'emits OrderPlaced when "emission guard"'],
+            ['"journey arguments"', 'invoke Order.place with "journey arguments" when "journey guard"'],
+            ['"journey guard"', 'invoke Order.place with "journey arguments" when "journey guard"']
+        ] as const;
+        for (const [quotedText, expectedStatement] of statementCases) {
+            const position = document.textDocument.positionAt(source.indexOf(quotedText) + 1);
+            const selection = createThinaiSelectionRange(document, position);
+            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toBe(expectedStatement);
+        }
+    });
+
+    test('selects complete method statements before expanding to their method', () => {
+        const source = `bounded context Ordering
+context map Relations {
+    customer Ordering -> supplier Shipping
+    partner Ordering <-> partner Returns
+    separateWays Ordering -x- Returns
+    sharedKernel Common { participants: [Ordering, Shipping] }
+}
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            method place() {
+                invokes Order.place
+                transition state from Draft to Placed
+                emits OrderPlaced
+                projects OrderSummary, OrderDetails
+            }
+        }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/statement-selection-ranges.tni'), source
+        );
+        documents = [document];
+
+        const cases = [
+            ['invokes Order.place', 'invokes'],
+            ['transition state from Draft to Placed', 'transition'],
+            ['emits OrderPlaced', 'emits'],
+            ['projects OrderSummary, OrderDetails', 'projects'],
+            ['customer Ordering -> supplier Shipping', 'customer'],
+            ['partner Ordering <-> partner Returns', 'partner'],
+            ['separateWays Ordering -x- Returns', 'separateWays'],
+            ['sharedKernel Common { participants: [Ordering, Shipping] }', 'sharedKernel']
+        ] as const;
+
+        for (const [statement, startToken] of cases) {
+            const offset = source.indexOf(startToken) + 1;
+            const selection = createThinaiSelectionRange(document, document.textDocument.positionAt(offset));
+
+            expect(selection, statement).toBeDefined();
+            expect(document.textDocument.getText(selection!.range), statement).toBe(statement);
+            expect(selection!.parent, statement).toBeDefined();
+            expect(document.textDocument.getText(selection!.parent!.range), statement).toContain(
+                statement.startsWith('customer') || statement.startsWith('partner')
+                    || statement.startsWith('separateWays') || statement.startsWith('sharedKernel')
+                    ? 'context map'
+                    : 'method place'
+            );
+        }
+    });
+
     test('applies configured indentation to structurally indented completion edits', () => {
         const completionText = '\n  method\n  }';
         expect(applyConfiguredIndentation(completionText, 2, 2, true)).toBe('\n    method\n  }');
