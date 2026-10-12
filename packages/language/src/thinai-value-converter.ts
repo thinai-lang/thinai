@@ -6,11 +6,13 @@ export class ThinaiValueConverter extends DefaultValueConverter {
         input: string,
         cstNode: Parameters<DefaultValueConverter['runConverter']>[2]
     ): ReturnType<DefaultValueConverter['runConverter']> {
-        if (rule.name === 'DOUBLE_STRING_START' || rule.name === 'DOUBLE_STRING_END'
+        if (rule.name === 'TRIPLE_DOUBLE_STRING_START' || rule.name === 'TRIPLE_DOUBLE_STRING_END'
+            || rule.name === 'DOUBLE_STRING_START' || rule.name === 'DOUBLE_STRING_END'
             || rule.name === 'SINGLE_STRING_START' || rule.name === 'SINGLE_STRING_END') {
             return '';
         }
-        if (rule.name === 'DOUBLE_STRING_TEXT' || rule.name === 'SINGLE_STRING_TEXT') {
+        if (rule.name === 'TRIPLE_DOUBLE_STRING_TEXT' || rule.name === 'DOUBLE_STRING_TEXT'
+            || rule.name === 'SINGLE_STRING_TEXT') {
             return this.convertText(input);
         }
         return super.runConverter(rule, input, cstNode);

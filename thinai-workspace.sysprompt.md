@@ -125,13 +125,18 @@ In particular, put `Order` and `OrderId` as sibling members of `Order`; do not n
 
 ## Behavior specifications
 
-Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Plain quoted text is valid; use an interpolated template string to link a method inline:
+Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Use ordinary single or double quotes for one-line text, and triple double quotes for multiline text. Both forms support inline links:
 
 ```thinai
 behavior "Check [[Order.Order.ensureOwner]], then calculate the total with [[Pricing.calculateTotal]]."
+
+behavior """
+  Check [[Order.Order.ensureOwner]], then calculate the total
+  with [[Pricing.calculateTotal]].
+"""
 ```
 
-Each `[[...]]` reference must name a visible declaration, method, parameter, repository, type, enum value, or field. A dotted path such as `[[input.address.street]]` is one linked reference with independently navigable segments: `input` targets the parameter, `address` its field, and `street` the nested field. Method and Journey text refer to parameters by local name, not by qualifying them with their method. Method text can link its parameters and `result` fields; Journey `with`/`when` text can link the invoked method's parameters and relevant fields. Query-result paths use `[[Context.QueryService.method.result.field]]`. These links are navigable references, not expressions or executable calls. Use fully qualified paths when names collide, e.g. `[[Ordering.Order]]` for an aggregate and `[[Ordering.Order.Order]]` for a same-named root entity. Escape `[[` as `\[[` for a literal marker. Multiline specification text dedents common indentation. Do not model assignments, returns, loops, or general-purpose control flow in prose.
+Each `[[...]]` reference must name a visible declaration, method, parameter, repository, type, enum value, or field. A dotted path such as `[[input.address.street]]` is one linked reference with independently navigable segments: `input` targets the parameter, `address` its field, and `street` the nested field. Method and Journey text refer to parameters by local name, not by qualifying them with their method. Method text can link its parameters and `result` fields; Journey `with`/`when` text can link the invoked method's parameters and relevant fields. Query-result paths use `[[Context.QueryService.method.result.field]]`. These links are navigable references, not expressions or executable calls. Use fully qualified paths when names collide, e.g. `[[Ordering.Order]]` for an aggregate and `[[Ordering.Order.Order]]` for a same-named root entity. Escape `[[` as `\[[` for a literal marker. Multiline specification text dedents common indentation; use triple double quotes and put the opening and closing delimiters on their own lines. Do not model assignments, returns, loops, or general-purpose control flow in prose.
 
 An invariant describes a domain rule; a precondition states what must hold before an operation; a postcondition states what is guaranteed after it succeeds; behavior describes the operation in human language. Attach these optional clauses to the relevant type, constructor, or method. Inside a method body, optional `invokes Method` and `emits Event` clauses provide navigable relationships, while `transition` models an entity's state change. Effect-level `when "..."` guards document when a grouped transition or emission applies; they are not evaluated. None of these statements is a required workflow or executable instruction; behavior text remains descriptive.
 

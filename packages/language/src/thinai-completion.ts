@@ -1582,6 +1582,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private getSourceStructure(source: string): { openBraces: number; unterminatedString: boolean } {
         let quote: '"' | "'" | undefined;
+        let tripleQuoted = false;
         let escaped = false;
         let blockComment = false;
         let lineComment = false;
@@ -1606,6 +1607,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 escaped = false;
             } else if (quote && character === '\\') {
                 escaped = true;
+            } else if (quote && tripleQuoted) {
+                if (character === '"' && source.slice(index, index + 3) === '"""') {
+                    quote = undefined;
+                    tripleQuoted = false;
+                    index += 2;
+                }
             } else if (quote && character === quote) {
                 quote = undefined;
             } else if (quote) {
@@ -1616,6 +1623,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             } else if (character === '/' && next === '*') {
                 blockComment = true;
                 index++;
+            } else if (character === '"' && source.slice(index, index + 3) === '"""') {
+                quote = '"';
+                tripleQuoted = true;
+                index += 2;
             } else if (character === '"' || character === "'") {
                 quote = character;
             } else if (character === '{') {

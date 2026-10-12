@@ -85,18 +85,21 @@ export class ThinaiFormatter extends AbstractFormatter {
                 continue;
             }
             const source = cstNode.text;
-            if ((source[0] !== '"' && source[0] !== "'") || source.at(-1) !== source[0]) {
+            const delimiter = source.startsWith('"""') ? '"""' : source[0] ?? '';
+            if ((delimiter !== '"' && delimiter !== "'" && delimiter !== '"""') || !source.endsWith(delimiter)) {
                 continue;
             }
-            const openingNewline = source[1] === '\n' ? 1 : source.slice(1, 3) === '\r\n' ? 2 : 0;
+            const delimiterLength = delimiter.length;
+            const openingNewline = source[delimiterLength] === '\n' ? 1
+                : source.slice(delimiterLength, delimiterLength + 2) === '\r\n' ? 2 : 0;
             const inlineFirstLine = openingNewline === 0;
             if (inlineFirstLine && !/[\r\n]/u.test(source)) {
                 continue;
             }
             const newline = source.match(/\r\n|\r|\n/u)?.[0] ?? '\n';
 
-            const contentStart = 1 + openingNewline;
-            const closingQuote = source.length - 1;
+            const contentStart = delimiterLength + openingNewline;
+            const closingQuote = source.length - delimiterLength;
             const trailingWhitespaceLine = /\r?\n[ \t]*$/u.exec(source.slice(contentStart, closingQuote));
             const contentEnd = trailingWhitespaceLine
                 ? closingQuote - trailingWhitespaceLine[0].length

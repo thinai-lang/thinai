@@ -166,6 +166,30 @@ describe('Parsing tests', () => {
         expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
     });
 
+    test('parses triple-quoted string literals and retains legacy multiline quotes', async () => {
+        const triple = await parse(`import """./ordering.tni"""
+bounded context Ordering`);
+        expect(triple.parseResult.lexerErrors).toEqual([]);
+        expect(triple.parseResult.parserErrors).toEqual([]);
+        expect(triple.parseResult.value?.imports[0]?.path).toBe('./ordering.tni');
+
+        const emptyTriple = await parse('import """"""\nbounded context Ordering');
+        expect(emptyTriple.parseResult.lexerErrors).toEqual([]);
+        expect(emptyTriple.parseResult.parserErrors).toEqual([]);
+        expect(emptyTriple.parseResult.value?.imports[0]?.path).toBe('');
+
+        const legacy = await parse(`bounded context Legacy in bounded context Legacy {
+            aggregate Sample {
+                invariant "first line
+                    second line
+                "
+                root entity Item {}
+            }
+        }`);
+        expect(legacy.parseResult.lexerErrors).toEqual([]);
+        expect(legacy.parseResult.parserErrors).toEqual([]);
+    });
+
     test('rejects braced canonical contexts and part-of contributions', async () => {
         const braced = await parse('bounded context Ordering {}');
         const partOf = await parse('part of bounded context Ordering {}');
@@ -293,6 +317,55 @@ describe('Parsing tests', () => {
             '            "',
             '        root entity Item { identifier id: ItemId }',
             '        value object ItemId { raw: string }',
+            '    }',
+            '}'
+        ].join('\r\n'));
+        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
+            members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{ text?: string }> } }> }>;
+        };
+        const aggregate = context.members.find(member => member.$type === 'Aggregate');
+        expect(aggregate?.invariants?.[0].description.parts.map(part => part.text ?? '').join(''))
+            .toBe('first line\n\nsecond line');
+    });
+
+    test('parses triple-quoted multiline specifications with quotes and linked references', async () => {
+        const document = await parse(`bounded context Triple in bounded context Triple {
+            aggregate Sample {
+                invariant """
+                    Use "double" and 'single' quotes.
+                    Keep [[Item.status]] linked.
+                    """
+                root entity Item { status: string }
+            }
+        }`);
+        expect(document.parseResult.lexerErrors).toEqual([]);
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const context = document.parseResult.value?.declarations[1] as Model['declarations'][number] & {
+            members: Array<{ $type: string; invariants?: Array<{ description: { parts: Array<{
+                text?: string;
+                target?: { $refText: string };
+                targets?: Array<{ $refText: string }>;
+            }> } }> }>;
+        };
+        const aggregate = context.members.find(member => member.$type === 'Aggregate');
+        const parts = aggregate?.invariants?.[0].description.parts ?? [];
+        expect(parts.map(part => part.text ?? (part.target
+            ? `[[${part.target.$refText}${(part.targets ?? []).map(target => `.${target.$refText}`).join('')}]]`
+            : '')).join(''))
+            .toBe('Use "double" and \'single\' quotes.\nKeep [[Item.status]] linked.');
+        expect(parts.find(part => part.target)?.target?.$refText).toBe('Item');
+    });
+
+    test('dedents CRLF triple-quoted specification text', async () => {
+        const document = await parse([
+            'bounded context TripleCrLf in bounded context TripleCrLf {',
+            '    aggregate Sample {',
+            '        invariant """',
+            '            first line',
+            '',
+            '            second line',
+            '            """',
+            '        root entity Item {}',
             '    }',
             '}'
         ].join('\r\n'));

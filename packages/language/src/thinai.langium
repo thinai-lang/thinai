@@ -276,18 +276,21 @@ CollectionKind returns string:
     'List' | 'Set' | 'Map';
 
 SpecificationText:
-    DOUBLE_STRING_START (parts+=SpecificationTextPart)* DOUBLE_STRING_END
+    TRIPLE_DOUBLE_STRING_START (parts+=SpecificationTextPart)* TRIPLE_DOUBLE_STRING_END
+    | DOUBLE_STRING_START (parts+=SpecificationTextPart)* DOUBLE_STRING_END
     | SINGLE_STRING_START (parts+=SpecificationTextPart)* SINGLE_STRING_END;
 
 SpecificationTextPart:
-    text=DOUBLE_STRING_TEXT
+    text=TRIPLE_DOUBLE_STRING_TEXT
+    | text=DOUBLE_STRING_TEXT
     | text=SINGLE_STRING_TEXT
     | '[[' target=[SpecificationTarget:ID] ('.' targets+=[SpecificationTarget:ID])* REFERENCE_END;
 
 type SpecificationTarget = NamedDeclaration | EnumValue | Field | Parameter;
 
 StringLiteral returns string:
-    DOUBLE_STRING_START DOUBLE_STRING_TEXT DOUBLE_STRING_END
+    TRIPLE_DOUBLE_STRING_START TRIPLE_DOUBLE_STRING_TEXT? TRIPLE_DOUBLE_STRING_END
+    | DOUBLE_STRING_START DOUBLE_STRING_TEXT DOUBLE_STRING_END
     | SINGLE_STRING_START SINGLE_STRING_TEXT SINGLE_STRING_END;
 
 PrimitiveType returns string:
@@ -298,6 +301,9 @@ SubdomainKind returns string:
 
 hidden terminal WS: /\s+/;
 terminal ID: /[_a-zA-Z][\w_]*/;
+terminal TRIPLE_DOUBLE_STRING_START: /"""/;
+terminal TRIPLE_DOUBLE_STRING_END: /\u0000"""/;
+terminal TRIPLE_DOUBLE_STRING_TEXT: /(\\.|"(?!"\")|[^"\\\[]|\[(?!\[))+/;
 terminal DOUBLE_STRING_START: /"/;
 // The token builder remaps the sentinel-prefixed endings to quote tokens in string modes.
 terminal DOUBLE_STRING_END: /\u0000"/;

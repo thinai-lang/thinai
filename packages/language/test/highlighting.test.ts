@@ -34,7 +34,9 @@ describe('TextMate highlighting', () => {
         const referenceStart = new RegExp(reference.begin);
 
         expect(rawGrammar.repository['template-interpolation']).toBeUndefined();
-        expect(rawGrammar.patterns.filter((pattern: { name?: string }) => pattern.name === 'string.quoted.double.thinai' || pattern.name === 'string.quoted.single.thinai')).toHaveLength(2);
+        expect(rawGrammar.patterns.filter((pattern: { name?: string }) => pattern.name?.startsWith('string.quoted.'))).toHaveLength(3);
+        expect(rawGrammar.patterns.findIndex((pattern: { name?: string }) => pattern.name === 'string.quoted.triple.double.thinai'))
+            .toBeLessThan(rawGrammar.patterns.findIndex((pattern: { name?: string }) => pattern.name === 'string.quoted.double.thinai'));
         expect(reference.patterns[0].name).toBe('variable.other.reference.thinai');
         expect(referenceStart.test('[[Order.Order.place]]')).toBe(true);
         expect(referenceStart.test('\\[[NotAReference.method]]')).toBe(false);
@@ -111,5 +113,18 @@ describe('TextMate highlighting', () => {
         expect(scopesAt('OrderStatus')).toContain('variable.other.reference.thinai');
         expect(scopesAt('is literal')).toContain('string.quoted.single.thinai');
         expect(scopesAt('is literal')).not.toContain('variable.other.reference.thinai');
+    });
+
+    test('keeps triple-quoted specifications open across ordinary quotes and linked references', () => {
+        const opening = grammar!.tokenizeLine('behavior """', INITIAL);
+        const bodyLine = `Use "double" and 'single' quotes, then [[Order.place]].`;
+        const body = grammar!.tokenizeLine(bodyLine, opening.ruleStack);
+        const closing = grammar!.tokenizeLine('"""', body.ruleStack);
+        const following = grammar!.tokenizeLine('method next()', closing.ruleStack);
+        const bodyScopes = body.tokens.flatMap(token => token.scopes);
+
+        expect(bodyScopes).toContain('string.quoted.triple.double.thinai');
+        expect(bodyScopes).toContain('variable.other.reference.thinai');
+        expect(following.tokens.flatMap(token => token.scopes)).toContain('keyword.control.thinai');
     });
 });

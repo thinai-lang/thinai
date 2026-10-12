@@ -2,6 +2,7 @@ import { createToken, type TokenType, type TokenVocabulary } from 'chevrotain';
 import { DefaultTokenBuilder, type Grammar, type TokenBuilderOptions } from 'langium';
 
 const DOUBLE_STRING_MODE = 'THINAI_DOUBLE_STRING';
+const TRIPLE_DOUBLE_STRING_MODE = 'THINAI_TRIPLE_DOUBLE_STRING';
 const SINGLE_STRING_MODE = 'THINAI_SINGLE_STRING';
 const REFERENCE_MODE = 'THINAI_REFERENCE';
 
@@ -42,8 +43,11 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
 
         const doubleOpen = token('DOUBLE_STRING_START');
         const doubleClose = token('DOUBLE_STRING_END');
+        const tripleDoubleOpen = token('TRIPLE_DOUBLE_STRING_START');
+        const tripleDoubleClose = token('TRIPLE_DOUBLE_STRING_END');
         const singleOpen = token('SINGLE_STRING_START');
         const singleClose = token('SINGLE_STRING_END');
+        const tripleDoubleStringText = token('TRIPLE_DOUBLE_STRING_TEXT');
         const doubleStringText = token('DOUBLE_STRING_TEXT');
         const singleStringText = token('SINGLE_STRING_TEXT');
         const referenceStart = token('[[');
@@ -54,8 +58,10 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
 
         const internalNames = new Set([
             doubleClose.name,
+            tripleDoubleClose.name,
             singleClose.name,
             doubleStringText.name,
+            tripleDoubleStringText.name,
             singleStringText.name,
             referenceStart.name,
             referenceEnd.name
@@ -69,11 +75,13 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
             // CST records targets after a newline as line 0 with an absolute column.
             const action = source.name === doubleOpen.name
                 ? { push_mode: DOUBLE_STRING_MODE }
-                : source.name === singleOpen.name
-                    ? { push_mode: SINGLE_STRING_MODE }
-                    : source.name === whitespace.name || source.name === 'ML_COMMENT'
-                        ? { line_breaks: true }
-                        : {};
+                : source.name === tripleDoubleOpen.name
+                    ? { push_mode: TRIPLE_DOUBLE_STRING_MODE }
+                    : source.name === singleOpen.name
+                        ? { push_mode: SINGLE_STRING_MODE }
+                        : source.name === whitespace.name || source.name === 'ML_COMMENT'
+                            ? { line_breaks: true }
+                            : {};
             defaultMap.set(source, createVariant(source, action));
         }
         for (const source of defaultSources) {
@@ -94,6 +102,7 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         const referenceStartInString = createVariant(referenceStart, { push_mode: REFERENCE_MODE });
         const doubleStringTextToken = createVariant(doubleStringText, { line_breaks: true });
         const singleStringTextToken = createVariant(singleStringText, { line_breaks: true });
+        const tripleDoubleStringTextToken = createVariant(tripleDoubleStringText, { line_breaks: true });
         const doubleStringMode = [
             doubleStringTextToken,
             createVariant(doubleClose, { pattern: /"/, pop_mode: true }),
@@ -102,6 +111,11 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         const singleStringMode = [
             singleStringTextToken,
             createVariant(singleClose, { pattern: /'/, pop_mode: true }),
+            referenceStartInString
+        ];
+        const tripleDoubleStringMode = [
+            tripleDoubleStringTextToken,
+            createVariant(tripleDoubleClose, { pattern: /"""/, pop_mode: true }),
             referenceStartInString
         ];
         const referenceMode = [
@@ -114,6 +128,7 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         return {
             modes: {
                 DEFAULT_MODE: defaultMode,
+                [TRIPLE_DOUBLE_STRING_MODE]: tripleDoubleStringMode,
                 [DOUBLE_STRING_MODE]: doubleStringMode,
                 [SINGLE_STRING_MODE]: singleStringMode,
                 [REFERENCE_MODE]: referenceMode

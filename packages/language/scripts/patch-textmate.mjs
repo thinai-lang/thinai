@@ -11,6 +11,18 @@ if (!grammar.patterns || !grammar.repository) {
 grammar.patterns = grammar.patterns.filter(pattern => !pattern.name?.startsWith('string.quoted.'));
 const strings = [
     {
+        name: 'string.quoted.triple.double.thinai',
+        applyEndPatternLast: true,
+        begin: '"""',
+        beginCaptures: { '0': { name: 'punctuation.definition.string.begin.thinai' } },
+        end: '"""',
+        endCaptures: { '0': { name: 'punctuation.definition.string.end.thinai' } },
+        patterns: [
+            { include: '#linked-reference' },
+            { include: '#string-character-escape' }
+        ]
+    },
+    {
         name: 'string.quoted.double.thinai',
         applyEndPatternLast: true,
         begin: '"',

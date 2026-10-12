@@ -239,10 +239,10 @@ in bounded context Formatting {
 "
             }
             method place() {
-                behavior "
+                behavior """
 Place the order using [[status]].
   Preserve relative detail indentation.
-"
+"""
                 transition status from Draft to Placed
                     when "
 The order is ready.
@@ -321,10 +321,10 @@ The order is eligible.
             '        "'
         ].join('\n'));
         expect(formatted).toContain([
-            '        behavior "',
+            '        behavior """',
             '          Place the order using [[status]].',
             '            Preserve relative detail indentation.',
-            '        "'
+            '        """'
         ].join('\n'));
         expect(formatted).toContain([
             '        transition status from Draft to Placed',
@@ -358,7 +358,7 @@ The order is eligible.
         })).toEqual([]);
 
         const tabFormatted = await formatWith(4, false);
-        expect(tabFormatted).toContain('\t\t\t\tbehavior "\n\t\t\t\t\tPlace the order using [[status]].');
+        expect(tabFormatted).toContain('\t\t\t\tbehavior """\n\t\t\t\t\tPlace the order using [[status]].');
     });
 
     test('preserves field, method, and constructor source order when formatting', async () => {
@@ -1374,6 +1374,17 @@ bounded context Second`;
                             Place the order; literal \\[[ is not a reference.
                             inv${marker}
                         " }
+                    }
+                }`
+            },
+            {
+                name: 'closed triple-double-quoted multiline specification',
+                source: `bounded context Ordering in bounded context Ordering {
+                    application service App {
+                        method run() { behavior """
+                            Literal { braces } and [[ links stay prose.
+                            inv${marker}
+                        """ }
                     }
                 }`
             },

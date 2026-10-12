@@ -9,7 +9,8 @@ export class ThinaiParserErrorMessageProvider extends LangiumParserErrorMessageP
         options: Parameters<LangiumParserErrorMessageProvider['buildMismatchTokenMessage']>[0]
     ): string {
         const isEnumValuePosition = ['initial', 'from', 'to'].includes(options.previous.image.toLowerCase());
-        const isQuotedValue = options.actual.image === '"' || options.actual.image === "'";
+        const isQuotedValue = options.actual.image === '"' || options.actual.image === "'"
+            || options.actual.image === '"""';
         if (options.expected.name === 'ID' && isEnumValuePosition && isQuotedValue) {
             return 'Enum values must be unquoted identifiers declared by the field\'s enum type.';
         }
@@ -41,7 +42,9 @@ function dedentBehaviorText(node: SpecificationText): void {
         return;
     }
 
-    const openingNewline = source[1] === '\n' ? 1 : source.slice(1, 3) === '\r\n' ? 2 : 0;
+    const openingDelimiterLength = source.startsWith('"""') ? 3 : 1;
+    const openingNewline = source[openingDelimiterLength] === '\n' ? 1
+        : source.slice(openingDelimiterLength, openingDelimiterLength + 2) === '\r\n' ? 2 : 0;
     if (openingNewline === 0 && !/[\r\n]/u.test(source)) {
         return;
     }

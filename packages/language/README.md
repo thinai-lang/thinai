@@ -181,11 +181,13 @@ values, read models, events, and fields. A dotted reference such as
 are descriptive references, not expressions or executable calls. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
-Multiline specification text may start on the opening-quote line or the next
-line. Formatting normalizes it to block style: common line indentation is
-layout, while relative indentation, line breaks, and linked references are
-preserved. The formatter indents continuation text and aligns the closing quote
-with its specification clause.
+Use triple double quotes for multiline specifications; keep single or double
+quotes for single-line text. Put the opening and closing `"""` delimiters on
+their own lines for block-style text. Common line indentation is layout, while
+relative indentation, line breaks, and linked references are preserved. The
+formatter indents continuation text and aligns the closing delimiter with its
+specification clause. Existing multiline single- and double-quoted strings
+remain accepted for compatibility.
 
 Journeys are top-level, actor-led timelines of user-invoked application-service
 commands that may cross bounded contexts. Declare each `actor` once at model
