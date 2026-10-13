@@ -858,7 +858,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const sibling = this.getSameLineSiblingAt(document, position);
         const inProgressContinuations = extraAllowedKeywords.filter(keyword =>
             ['-> supplier', '<-> partner', '-x-', 'supplier', 'partner', 'integrationPatterns',
-                'participants', 'manages', 'serves', 'from', 'to', 'on', 'realizes', 'kind', 'depends',
+                'participants', 'manages', 'serves', 'reads', 'from', 'to', 'on', 'realizes', 'kind', 'depends',
                 'mirrors', 'returns', 'initial', 'when', 'with',
                 'core', 'supporting', 'generic']
                 .includes(keyword)

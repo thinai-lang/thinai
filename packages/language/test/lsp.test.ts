@@ -229,6 +229,44 @@ in bounded context Ordering {
         })).toEqual([]);
     });
 
+    test('formats repository blocks and method read dependencies', async () => {
+        const source = `bounded context Ordering in bounded context Ordering {
+            repository OrderRepository { manages Order.Order }
+            query repository OrderSummaryRepository { serves OrderSummary reads from Order, Customer }
+            application service Commands {
+                method run() { reads from OrderRepository, CustomerRepository when "The request needs order and customer data." }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-dependency-formatting.tni'), source
+        );
+        documents.push(document);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 4, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('repository OrderRepository {\n        manages Order.Order\n    }');
+        expect(formatted).toContain('query repository OrderSummaryRepository {\n        serves OrderSummary\n        reads from Order, Customer\n    }');
+        expect(formatted).toContain('reads from OrderRepository, CustomerRepository\n                when "The request needs order and customer data."');
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-dependency-formatted.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 4, insertSpaces: true }
+        })).toEqual([]);
+    });
+
     test('indents multiline specification text without changing its content', async () => {
         const source = `bounded context Formatting
 in bounded context Formatting {
@@ -1478,6 +1516,59 @@ bounded context Second`;
         expect(completion?.items.some(item => item.label === 'request' && item.kind === CompletionItemKind.Variable)).toBe(true);
     });
 
+    test('filters reads-from completion candidates by CQRS method role', async () => {
+        const marker = '__read_source__';
+        const source = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            repository OrderRepository {
+                manages Order.Order
+            }
+            read model OrderSummary { status: string }
+            query repository OrderSummaryRepository {
+                serves OrderSummary
+            }
+            application service Commands {
+                method place() { reads from ${marker} }
+            }
+            query service Queries {
+                method find() returns OrderSummary { reads from ${marker} }
+            }
+        }`;
+        const positions = [...source.matchAll(new RegExp(marker, 'g'))].map(match => match.index!);
+        const text = source.replace(marker, '').replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-completion.tni'), text
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const appPosition = document.textDocument.positionAt(positions[0]!);
+        const queryPosition = document.textDocument.positionAt(positions[1]! - marker.length);
+        const appCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: appPosition
+        });
+        const queryCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: queryPosition
+        });
+        const appLabels = appCompletion?.items.map(item => item.label) ?? [];
+        const queryLabels = queryCompletion?.items.map(item => item.label) ?? [];
+        expect(appLabels).toContain('OrderRepository');
+        expect(appLabels).not.toContain('OrderSummaryRepository');
+        expect(queryLabels).toContain('OrderSummaryRepository');
+        expect(queryLabels).not.toContain('OrderRepository');
+        const repositoryItem = appCompletion?.items.find(item => item.label === 'OrderRepository');
+        expect(repositoryItem?.kind).toBe(CompletionItemKind.Interface);
+        expect(repositoryItem?.textEdit).toMatchObject({
+            newText: 'OrderRepository',
+            range: { start: appPosition, end: appPosition }
+        });
+    });
+
     test('offers read models for projector targets with read-model icons', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             read model OrderSummary { status: string }
@@ -1998,7 +2089,8 @@ bounded context Second`;
             { name: 'query service and repository', source: 'bounded context X\nin bounded context X {\nquery ', expected: ['repository', 'service'] },
             { name: 'integration event', source: 'bounded context X\nin bounded context X {\nintegration ', expected: ['event'] },
             { name: 'module depends on', source: 'bounded context X\nin bounded context X {\nmodule M depends ', expected: ['on'] },
-            { name: 'repository manages', source: 'bounded context X\nin bounded context X {\nrepository R ', expected: ['manages'] },
+            { name: 'repository manages', source: 'bounded context X\nin bounded context X {\nrepository R { ', expected: ['manages'] },
+            { name: 'query repository serves', source: 'bounded context X\nin bounded context X {\nquery repository R { ', expected: ['serves'] },
             { name: 'import from', source: 'import { Foo } ', expected: ['from'] }
         ];
 
@@ -2067,8 +2159,10 @@ bounded context Second`;
             ['depends o', 'on'],
             ['context m', 'map'],
             ['import { Foo } f', 'from'],
-            ['repository Orders m', 'manages'],
-            ['query repository Orders s', 'serves'],
+            ['repository Orders { m', 'manages'],
+            ['query repository Orders { s', 'serves'],
+            ['bounded context X\nin bounded context X { application service A { method run() { reads f', 'from'],
+            ['bounded context X\nin bounded context X { application service A { method run() { reads from OrderRepository w', 'when'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status f', 'from'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status from Draft t', 'to'],
             ['sharedKernel Common { p', 'participants'],
@@ -2677,12 +2771,12 @@ bounded context Second`;
                 forbidden: ['aggregate', 'application service', 'value object']
             },
             {
-                source: 'bounded context Ordering\nin bounded context Ordering { repository OrderRepository',
+                source: 'bounded context Ordering\nin bounded context Ordering { repository OrderRepository {',
                 name: 'repository without manages target',
                 forbidden: ['aggregate', 'application service', 'value object']
             },
             {
-                source: 'bounded context Ordering\nin bounded context Ordering { query repository OrderQueries',
+                source: 'bounded context Ordering\nin bounded context Ordering { query repository OrderQueries {',
                 name: 'query repository without serves target',
                 forbidden: ['aggregate', 'application service', 'value object']
             },
@@ -2740,6 +2834,10 @@ bounded context Second`;
             {
                 name: 'transition missing a destination state',
                 source: 'bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { method change() { transition status from Draft to'
+            },
+            {
+                name: 'read dependency without a source',
+                source: 'bounded context Ordering\nin bounded context Ordering { application service App { method run() { reads from'
             }
         ];
         for (const [index, completionCase] of cases.entries()) {
@@ -2753,7 +2851,7 @@ bounded context Second`;
             });
             expect(completion?.items.some(item => item.data?.thinaiSiblingCompletion === true), completionCase.name)
                 .toBe(false);
-            for (const sibling of ['invariant', 'emits', 'transition', 'invokes', 'projects']) {
+            for (const sibling of ['invariant', 'emits', 'transition', 'invokes', 'projects', 'reads from']) {
                 expect(completion?.items.map(item => item.label), completionCase.name).not.toContain(sibling);
             }
         }
@@ -2786,6 +2884,24 @@ bounded context Second`;
                 },
                 newText: '\n    enum'
             });
+    });
+
+    test('offers reads-from as a method sibling with a structural line break', async () => {
+        const prefix = 'bounded context Ordering\nin bounded context Ordering { application service App { method run() { behavior "Check the request." ';
+        const source = `${prefix}} }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-sibling-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'reads from');
+        expect(item).toBeDefined();
+        expect(item?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(item?.insertTextMode).toBe(InsertTextMode.asIs);
+        expect(item?.textEdit?.newText).toBe('\n      reads from');
     });
 
     test('ignores braces inside behavior text when computing sibling indentation depth', async () => {
@@ -3489,7 +3605,9 @@ bounded context Billing realizes Payments`;
                     value object LocalMirror mirrors ${marker} {}
                 }
                 read model ShipmentSummary {}
-                query repository ShipmentQueries serves ShipmentSummary${marker}
+                query repository ShipmentQueries {
+                    serves ShipmentSummary${marker}
+                }
             }`;
         const text = markedText.replace(marker, '').replace(marker, '');
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
@@ -3837,7 +3955,9 @@ bounded context Billing realizes Payments`;
                 value object ShipmentId { raw: string }
                 value object ShipmentLineId { raw: string }
             }
-            repository ShipmentRepository manages ShipmentL
+            repository ShipmentRepository {
+                manages ShipmentL
+            }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/repository-root-completion.tni'), text

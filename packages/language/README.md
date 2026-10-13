@@ -43,7 +43,9 @@ in bounded context Ordering {
     }
   }
 
-  repository OrderRepository manages Order.Order
+  repository OrderRepository {
+      manages Order.Order
+  }
 
   event OrderPlaced
 }
@@ -68,6 +70,7 @@ in bounded context Ordering {
 
   application service OrderApplication {
     method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult {
+      reads from OrderRepository
       invokes Order.Order.place
       behavior "Place the order identified by [[input.orderId]] through the aggregate root and return [[result.status]]."
     }
@@ -105,11 +108,34 @@ the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
 
 An aggregate may declare at most one write repository; repository declarations
-are optional. `ReadModel`, `QueryRepository`, and
-`Projector` declarations are optional. A read model is a query-result shape, not
-necessarily a materialized projection or separate database; a query service may
-read through query or aggregate repositories, including from the same physical
-tables as the write side. A projector describes an event-driven projection.
+are optional and use blocks:
+
+```thinai
+repository OrderRepository {
+  manages Order.Order
+}
+
+query repository OrderSummaryRepository {
+  serves OrderSummary
+  reads from Order, Customer
+}
+```
+
+`reads from` on a query repository records aggregate-owned table data queried
+directly; it does not mean the query repository calls a command-side repository.
+
+Method-level `reads from` documents optional data dependencies and may have a
+descriptive `when` guard. Application services read aggregate repositories;
+query services read query repositories; projectors use events and write their
+declared `projects` targets. CQRS projectors do not read query repositories.
+Aggregate-repository and external query-API reads are explicit projector
+exceptions, since current-state lookups can make replay results differ. Domain
+services may read domain repositories when a business rule requires it; external
+query dependencies should be behind a domain-facing port/anti-corruption layer.
+An external query API must be published and authorized by a context map.
+Method-level `behavior` describes how returned data is used—there are no result
+aliases or per-read behavior clauses. A read model remains a query-result shape,
+not necessarily a materialized projection or separate database.
 Queries may return primitives, data objects, read models, or collections. Data
 objects are identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.

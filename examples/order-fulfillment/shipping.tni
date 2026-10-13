@@ -30,7 +30,9 @@ in bounded context Shipping {
     }
   }
 
-  repository ShipmentRepository manages Shipment.Shipment
+  repository ShipmentRepository {
+    manages Shipment.Shipment
+  }
 
   factory ShipmentFactory {
     method createShipment(id: ShipmentId, orderId: OrderId) returns Shipment.Shipment {

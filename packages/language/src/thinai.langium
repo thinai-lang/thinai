@@ -183,7 +183,7 @@ Method:
     'method' name=ID '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('returns' (returnPrimitive=PrimitiveType | (returnTypePath+=[NamedDeclaration:ID] '.')* returnType=[TypeDeclaration:ID] | returnCollection=CollectionType))?
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior |
-        transitions+=Transition | emissions+=EventEmission | invocations+=MethodInvocation |
+        transitions+=Transition | emissions+=EventEmission | invocations+=MethodInvocation | reads+=ReadDependency |
         'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)*)* '}')?;
 
 MethodInvocation:
@@ -198,6 +198,10 @@ TransitionChange:
 EventEmission:
     'emits' events+=EventReference (',' events+=EventReference)* ('when' guard=SpecificationText)?;
 
+ReadDependency:
+    'reads' 'from' sources+=ReadSourceReference (',' sources+=ReadSourceReference)*
+    ('when' guard=SpecificationText)?;
+
 Constructor:
     'constructor' '(' (parameters+=Parameter (',' parameters+=Parameter)*)? ')'
     ('{' (invariants+=Invariant | preconditions+=Precondition | postconditions+=Postcondition | behaviors+=Behavior)* '}')? ;
@@ -207,10 +211,11 @@ Parameter:
     (primitive=PrimitiveType | (typePath+=[NamedDeclaration:ID] '.')* type=[ParameterType:ID] | collection=CollectionType);
 
 Repository:
-    'repository' name=ID 'manages' (rootPath+=[NamedDeclaration:ID] '.')* root=[Entity:ID] ;
+    'repository' name=ID '{' 'manages' (rootPath+=[NamedDeclaration:ID] '.')* root=[Entity:ID] '}' ;
 
 QueryRepository:
-    'query' 'repository' name=ID 'serves' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID] ;
+    'query' 'repository' name=ID '{' 'serves' (readModelPath+=[NamedDeclaration:ID] '.')* readModel=[ReadModel:ID]
+        ('reads' 'from' sources+=AggregateReference (',' sources+=AggregateReference)*)? '}' ;
 
 QueryService:
     'query' 'service' name=ID '{' methods+=Method* '}' ;
@@ -247,6 +252,12 @@ EventReference:
 
 ReadModelReference:
     (path+=[NamedDeclaration:ID] '.')* target=[ReadModel:ID];
+
+ReadSourceReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[NamedDeclaration:ID];
+
+AggregateReference:
+    (path+=[NamedDeclaration:ID] '.')* target=[Aggregate:ID];
 
 type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity |
     DataObject | EnumType | Factory | IntegrationEvent | Method | Module | Projector | SharedKernel |

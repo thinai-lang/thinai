@@ -37,6 +37,7 @@ import type {
     Parameter,
     Projector,
     QueryRepository,
+    ReadDependency,
     QueryService,
     ReadModel,
     Repository,
@@ -69,6 +70,7 @@ import {
     isRepository,
     isQueryService,
     isReadModel,
+    isReadSourceReference,
     isSeparateWaysRelationship,
     isSpecificationTextPart,
     isSharedKernel,
@@ -117,6 +119,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Journey: validator.checkJourney,
         ApplicationService: validator.checkApplicationService,
         Method: validator.checkMethod,
+        ReadDependency: validator.checkReadDependency,
         Transition: validator.checkTransition,
         Model: [validator.checkModelImports, validator.checkModelLineBreaks],
         Module: validator.checkModule,
@@ -688,6 +691,7 @@ export class ThinaiValidator {
         const applicationService = isApplicationService(method.$container) ? method.$container : undefined;
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
+        const domainService = isDomainService(method.$container) ? method.$container : undefined;
         const emissionMode = getEventEmissionMode(method);
         if (method.projects.length > 0 && !canDeclareProjects(method)) {
             accept('error', 'The projects clause is allowed only in projector methods.', {
@@ -764,6 +768,12 @@ export class ThinaiValidator {
         if (queryService) {
             this.checkQueryServiceMethod(method, queryService, accept);
         }
+        if (applicationService) {
+            this.checkApplicationServiceReads(method, accept);
+        }
+        if (domainService) {
+            this.checkDomainServiceReads(method, accept);
+        }
         if (projectorService) {
             this.checkProjectorMethod(method, projectorService!, accept);
         }
@@ -838,13 +848,112 @@ export class ThinaiValidator {
     }
 
     private checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
-        const repositories = this.getReadRepositoryReferences(method);
         const queryContext = getOwningContextName(service);
-        for (const repository of repositories) {
-            if (getOwningContextName(repository) !== queryContext) {
-                accept('error', 'A query service may read only repositories in its own bounded context.', {
-                    node: method,
-                    property: 'behaviors'
+        for (const read of method.reads) {
+            for (const source of read.sources) {
+                const target = source.target.ref;
+                if (isRepository(target) || isQueryRepository(target) && getOwningContextName(target) !== queryContext) {
+                    accept('error', 'A query service may read only query repositories in its own bounded context.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+            }
+        }
+    }
+
+    private checkApplicationServiceReads(method: Method, accept: ValidationAcceptor): void {
+        for (const read of method.reads) {
+            for (const source of read.sources) {
+                const target = source.target.ref;
+                if (isQueryRepository(target)) {
+                    accept('error', 'An application-service method must use command-side repositories, not query repositories.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+            }
+        }
+    }
+
+    private checkDomainServiceReads(method: Method, accept: ValidationAcceptor): void {
+        for (const read of method.reads) {
+            for (const source of read.sources) {
+                if (isQueryRepository(source.target.ref)) {
+                    accept('error', 'A domain service must not depend on a query repository; use a domain repository or port.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+            }
+        }
+    }
+
+    checkReadDependency(read: ReadDependency, accept: ValidationAcceptor): void {
+        if (!this.isSyntacticallyComplete(read)) {
+            return;
+        }
+        let method: AstNode | undefined = read.$container;
+        while (method && !isMethod(method)) {
+            method = method.$container;
+        }
+        const owner = isMethod(method) ? method.$container : undefined;
+        if (!isMethod(method) || !(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
+            accept('error', 'The reads from clause is allowed only in application-service, query-service, projector, or domain-service methods.', {
+                node: read,
+                keyword: 'reads'
+            });
+            return;
+        }
+
+        for (const source of read.sources) {
+            const target = source.target.ref;
+            if (!target) {
+                continue;
+            }
+            if (isRepository(target) || isQueryRepository(target)) {
+                if (getOwningContextName(read) !== getOwningContextName(target)) {
+                    accept('error', 'A reads from repository dependency must belong to the same bounded context.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+                if (isProjector(owner) && isRepository(target)) {
+                    accept('warning', 'A projector reading current aggregate state may produce different results when events are replayed.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+                if (isProjector(owner) && isQueryRepository(target)) {
+                    accept('error', 'A projector must not read from a query repository; use event data or an explicit aggregate/reference source.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+                continue;
+            }
+            if (!isMethod(target) || !isQueryService(target.$container) ||
+                getOwningContextName(read) === getOwningContextName(target)) {
+                accept('error', 'A reads from method target must be a published query-service method in another bounded context.', {
+                    node: source,
+                    property: 'target'
+                });
+                continue;
+            }
+            if (!this.isQueryServiceExposed(target.$container) || !this.hasAuthorizedQueryRelationship(read, target)) {
+                accept('error', 'Reading a query service in another bounded context requires an exposed query contract and an imported authorized context map.', {
+                    node: source,
+                    property: 'target'
+                });
+            } else if (!this.hasPublishedQueryResult(target)) {
+                accept('error', 'A published query operation must return primitives or explicitly exposed data-object contracts.', {
+                    node: source,
+                    property: 'target'
+                });
+            } else if (isProjector(owner)) {
+                accept('warning', 'A projector reading an external query API may make replay results depend on remote data availability or current state.', {
+                    node: source,
+                    property: 'target'
                 });
             }
         }
@@ -904,7 +1013,7 @@ export class ThinaiValidator {
     private getReadRepositoryReferences(node: AstNode): Array<Repository | QueryRepository> {
         const repositories = new Set<Repository | QueryRepository>();
         AstUtils.streamAst(node).forEach(child => AstUtils.streamReferences(child).forEach(referenceInfo => {
-            if (isReference(referenceInfo.reference) &&
+            if (isSpecificationTextPart(referenceInfo.container) && isReference(referenceInfo.reference) &&
                 (isQueryRepository(referenceInfo.reference.ref) || isRepository(referenceInfo.reference.ref))) {
                 repositories.add(referenceInfo.reference.ref);
             }
@@ -1245,7 +1354,9 @@ export class ThinaiValidator {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
                 const authorizedPublicField = event !== undefined && this.isIntegrationEventExposed(event) &&
                     this.hasAuthorizedEventRelationship(referenceInfo.container, event);
-                if (!authorizedPublicField) {
+                const publishedReadField = isDataObject(target.$container) &&
+                    this.isPublishedReadResponseType(referenceInfo.container, target.$container);
+                if (!authorizedPublicField && !publishedReadField) {
                     accept('error', isDomainEvent(target.$container)
                         ? 'Specification text cannot reference a private DomainEvent field from another bounded context.'
                         : 'Specification text cannot reference a private field from another bounded context.', {
@@ -1255,7 +1366,10 @@ export class ThinaiValidator {
                     return;
                 }
             }
-            if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target)) {
+            const publishedQueryRead = isReadSourceReference(referenceInfo.container) && isMethod(target) &&
+                isQueryService(target.$container) && this.isQueryServiceExposed(target.$container) &&
+                this.hasAuthorizedQueryRelationship(referenceInfo.container, target);
+            if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target) && !publishedQueryRead) {
                 accept('error', 'Specification text cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -1265,7 +1379,8 @@ export class ThinaiValidator {
             const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
             if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
                 (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
-                    isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target))) {
+                    isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target)) &&
+                !this.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -1369,6 +1484,26 @@ export class ThinaiValidator {
                 node: repository,
                 property: 'readModel'
             });
+        }
+        const seen = new Set<import('./generated/ast.js').Aggregate>();
+        for (const source of repository.sources) {
+            const aggregate = source.target.ref;
+            if (!aggregate) {
+                continue;
+            }
+            if (getOwningContextName(aggregate) !== getOwningContextName(repository)) {
+                accept('error', 'A query repository may read aggregate table data only from its own bounded context.', {
+                    node: source,
+                    property: 'target'
+                });
+            }
+            if (seen.has(aggregate)) {
+                accept('error', `Aggregate '${aggregate.name}' is listed more than once as a query-repository source.`, {
+                    node: source,
+                    property: 'target'
+                });
+            }
+            seen.add(aggregate);
         }
     }
 
@@ -1559,6 +1694,95 @@ export class ThinaiValidator {
         return module === undefined || module.exposures.some(exposure =>
             exposure.declarations.some(declaration => declaration.target.ref === event)
         );
+    }
+
+    private isQueryServiceExposed(service: QueryService): boolean {
+        const module = getOwningModule(service);
+        return module !== undefined && module.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.target.ref === service)
+        );
+    }
+
+    private hasPublishedQueryResult(method: Method): boolean {
+        const references = this.collectTypeReferences(method.returnType, method.returnCollection);
+        if (references.length === 0) {
+            return true;
+        }
+        const serviceModule = getOwningModule(method);
+        return serviceModule !== undefined && references.every(reference => {
+            const type = reference.ref;
+            return isDataObject(type) && getOwningModule(type) === serviceModule &&
+                serviceModule.exposures.some(exposure =>
+                    exposure.declarations.some(declaration => declaration.target.ref === type)
+                );
+        });
+    }
+
+    private hasAuthorizedQueryRelationship(source: AstNode, target: Method): boolean {
+        const consumer = getOwningContextName(source);
+        const provider = getOwningContextName(target);
+        if (!consumer || !provider) {
+            return false;
+        }
+        const document = AstUtils.getDocument(source);
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        const targetDocument = AstUtils.getDocument(target);
+        if (!model.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, targetDocument.uri);
+        })) {
+            return false;
+        }
+        const contextMaps = this.getImportedContextMaps(model);
+        const pairKey = JSON.stringify([consumer, provider].sort());
+        const relationships = contextMaps.flatMap(contextMap => contextMap.relationships.flatMap(relationship =>
+            getRelationshipPairSemantics(relationship).filter(pair => pair.key === pairKey)
+        ));
+        const teamRelationships = relationships.filter(pair => pair.kind !== 'sharedKernel');
+        if (new Set(teamRelationships.map(pair => pair.signature)).size > 1 ||
+            teamRelationships.some(pair => pair.kind === 'separateWays')) {
+            return false;
+        }
+        return contextMaps.some(contextMap => contextMap.relationships.some(relationship => {
+            if (!this.isSyntacticallyComplete(relationship)) {
+                return false;
+            }
+            if (isCustomerSupplierRelationship(relationship)) {
+                return relationship.customer?.context?.ref?.name === consumer &&
+                    relationship.supplier?.context?.ref?.name === provider;
+            }
+            if (isPartnershipRelationship(relationship)) {
+                const left = relationship.left?.context?.ref?.name;
+                const right = relationship.right?.context?.ref?.name;
+                return (left === consumer && right === provider) || (right === consumer && left === provider);
+            }
+            return false;
+        }));
+    }
+
+    private isPublishedReadResponseType(source: AstNode, type: AstNode): boolean {
+        if (!isDataObject(type)) {
+            return false;
+        }
+        const module = getOwningModule(type);
+        if (!module || !module.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.target.ref === type)
+        )) {
+            return false;
+        }
+        let method: AstNode | undefined = source;
+        while (method && !isMethod(method)) {
+            method = method.$container;
+        }
+        return isMethod(method) && method.reads.some(read => read.sources.some(reference => {
+            const query = reference.target.ref;
+            return isMethod(query) && isQueryService(query.$container) && query.returnType?.ref === type &&
+                getOwningContextName(query) !== getOwningContextName(method) &&
+                this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
+        }));
     }
 
     private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {

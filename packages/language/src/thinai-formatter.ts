@@ -14,6 +14,7 @@ const commaSeparatedTypes = new Set([
     'Exposure',
     'Method',
     'Constructor',
+    'ReadDependency',
     'Transition',
     'EventEmission',
     'CollectionType'
@@ -33,7 +34,7 @@ const keywordValueSeparators = [
     'aggregate', 'actor', 'by', 'depends', 'emits', 'enum', 'event', 'exposes', 'factory', 'from',
     'in', 'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
     'kernel', 'map', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
-    'repository', 'service',
+    'reads', 'repository', 'service',
     'returns', 'root', 'separateWays', 'serves', 'subdomain', 'supplier', 'customer', 'partner',
     'sharedKernel', 'to', 'transition', 'when', 'with'
 ];
@@ -292,6 +293,24 @@ export class ThinaiFormatter extends AbstractFormatter {
             formatter.keyword('when').append(Formatting.oneSpace());
             this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
         }
+        if (node.$type === 'ReadDependency') {
+            formatter.keyword('reads').append(Formatting.oneSpace());
+            formatter.keyword('from').append(Formatting.oneSpace());
+            formatter.keyword('when').prepend(Formatting.indent());
+            formatter.keyword('when').append(Formatting.oneSpace());
+            this.alignKeyword(node, 'when', this.getBlockIndentation(node) + 1);
+        }
+        if (node.$type === 'Repository') {
+            formatter.keyword('manages').prepend(Formatting.indent());
+            formatter.keyword('manages').append(Formatting.oneSpace());
+        }
+        if (node.$type === 'QueryRepository') {
+            formatter.keyword('serves').prepend(Formatting.indent());
+            formatter.keyword('serves').append(Formatting.oneSpace());
+            formatter.keyword('reads').prepend(Formatting.indent());
+            formatter.keyword('reads').append(Formatting.oneSpace());
+            formatter.keyword('from').append(Formatting.oneSpace());
+        }
         if (node.$type === 'EventEmission') {
             formatter.keyword('emits').append(Formatting.oneSpace());
         }
@@ -308,7 +327,7 @@ export class ThinaiFormatter extends AbstractFormatter {
             const comments = interior.nodes.filter(cstNode => isLeafCstNode(cstNode) &&
                 (cstNode.tokenType.name === 'SL_COMMENT' || cstNode.tokenType.name === 'ML_COMMENT')
             );
-            if (children.length > 0 || comments.length > 0 ||
+            if (children.length > 0 || comments.length > 0 || node.$type === 'Repository' || node.$type === 'QueryRepository' ||
                 node.$type === 'SharedKernelRelationship' || node.$type === 'ContextMapEndpoint') {
                 formatter.nodes(...children).prepend(Formatting.indent());
                 formatter.cst(comments).prepend(Formatting.indent());
@@ -478,6 +497,8 @@ export class ThinaiFormatter extends AbstractFormatter {
             changes?: AstNode[];
             events?: AstNode[];
             invocations?: AstNode[];
+            reads?: AstNode[];
+            sources?: AstNode[];
         };
 
         let children: AstNode[];
@@ -527,7 +548,8 @@ export class ThinaiFormatter extends AbstractFormatter {
                     ...(properties.behaviors ?? []),
                     ...(properties.transitions ?? []),
                     ...(properties.emissions ?? []),
-                    ...(properties.invocations ?? [])
+                    ...(properties.invocations ?? []),
+                    ...(properties.reads ?? [])
                 ];
                 break;
             case 'Transition':
@@ -535,6 +557,9 @@ export class ThinaiFormatter extends AbstractFormatter {
                 break;
             case 'EventEmission':
                 children = properties.events ?? [];
+                break;
+            case 'ReadDependency':
+                children = properties.sources ?? [];
                 break;
             case 'Constructor':
                 children = [

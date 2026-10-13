@@ -8,7 +8,8 @@ import {
     type Stream,
     type LangiumCoreServices,
     UriUtils,
-    stream
+    stream,
+    isReference
 } from 'langium';
 import {
     type ContextMap,
@@ -52,6 +53,8 @@ import {
     isImportableComponent,
     isReadModel,
     isReadModelReference,
+    isReadSourceReference,
+    isAggregateReference,
     isRepository,
     isProjector,
     isQueryRepository,
@@ -834,6 +837,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.isSupportedEventEmission(context, target);
         }
 
+        if (isReadSourceReference(context.container)) {
+            return this.isSupportedReadSource(context.container, target);
+        }
+
+        if (isAggregateReference(context.container)) {
+            return isAggregate(target) && isQueryRepository(context.container.$container) &&
+                getOwningContextName(target) === getOwningContextName(context.container);
+        }
+
         if (isReadModelReference(context.container)) {
             let current: AstNode | undefined = context.container.$container;
             while (current && !isMethod(current)) {
@@ -1104,13 +1116,37 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isField(target)) {
-            return isIntegrationEvent(target.$container) && this.isIntegrationEventExposed(target.$container) &&
-                this.hasAuthorizedEventRelationship(context.container, target.$container);
+            return isIntegrationEvent(target.$container)
+                ? this.isIntegrationEventExposed(target.$container) &&
+                    this.hasAuthorizedEventRelationship(context.container, target.$container)
+                : isDataObject(target.$container) && this.isPublishedReadResponseType(context.container, target.$container);
         }
         if (isIntegrationEvent(target)) {
             return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
         }
+        if (isDataObject(target)) {
+            return this.isPublishedReadResponseType(context.container, target);
+        }
         return false;
+    }
+
+    private isPublishedReadResponseType(source: AstNode, type: DataObject): boolean {
+        const typeModule = getOwningModule(type);
+        if (!typeModule || !typeModule.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.target.ref === type)
+        )) {
+            return false;
+        }
+        let method: AstNode | undefined = source;
+        while (method && !isMethod(method)) {
+            method = method.$container;
+        }
+        return isMethod(method) && method.reads.some(read => read.sources.some(reference => {
+            const query = reference.target.ref;
+            return isMethod(query) && isQueryService(query.$container) && this.hasQueryResultType(query, type) &&
+                getOwningContextName(query) !== getOwningContextName(method) &&
+                this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
+        }));
     }
 
     private isSupportedEventEmission(context: ReferenceInfo, target: AstNode): boolean {
@@ -1314,6 +1350,132 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return module === undefined || module.exposures.some(exposure =>
             exposure.declarations.some(declaration => declaration.target.ref === event)
         );
+    }
+
+    private isSupportedReadSource(reference: import('./generated/ast.js').ReadSourceReference, target: AstNode): boolean {
+        let method: AstNode | undefined = reference.$container;
+        while (method && !isMethod(method)) {
+            method = method.$container;
+        }
+        if (!isMethod(method)) {
+            return false;
+        }
+        const owner = method.$container;
+        const sourceContext = getOwningContextName(method);
+        const targetContext = getOwningContextName(target);
+        if (!sourceContext || !targetContext) {
+            return false;
+        }
+        if (sourceContext === targetContext) {
+            if (isApplicationService(owner) || isDomainService(owner)) {
+                return isRepository(target);
+            }
+            if (isQueryService(owner)) {
+                return isQueryRepository(target);
+            }
+            if (isProjector(owner)) {
+                return isRepository(target);
+            }
+            return false;
+        }
+        if (!(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
+            return false;
+        }
+        return this.hasPublishedQueryMethodDescendant(target, method);
+    }
+
+    private hasPublishedQueryMethodDescendant(candidate: AstNode, source: Method): boolean {
+        return this.indexManager.allElements('Method').some(description => {
+            const method = description.node;
+            return isMethod(method) && isQueryService(method.$container) &&
+                getOwningContextName(source) !== getOwningContextName(method) &&
+                this.isQueryServiceExposed(method.$container) &&
+                this.hasExposedQueryResult(method) &&
+                this.hasAuthorizedQueryRelationship(source, method) &&
+                this.isAstAncestor(candidate, method);
+        });
+    }
+
+    private isQueryServiceExposed(service: import('./generated/ast.js').QueryService): boolean {
+        const module = getOwningModule(service);
+        return module !== undefined && module.exposures.some(exposure =>
+            exposure.declarations.some(declaration => declaration.target.ref === service)
+        );
+    }
+
+    private hasExposedQueryResult(method: Method): boolean {
+        const resultTypes = [
+            ...(method.returnType?.ref ? [method.returnType.ref] : []),
+            ...(method.returnCollection
+                ? AstUtils.streamReferences(method.returnCollection)
+                    .map(referenceInfo => isReference(referenceInfo.reference) ? referenceInfo.reference.ref : undefined)
+                    .filter((type): type is AstNode => type !== undefined)
+                    .toArray()
+                : [])
+        ];
+        return resultTypes.length === 0 || resultTypes.every(type => {
+            if (!isDataObject(type)) {
+                return false;
+            }
+            const module = getOwningModule(type);
+            return module !== undefined && module === getOwningModule(method) && module.exposures.some(exposure =>
+                exposure.declarations.some(declaration => declaration.target.ref === type)
+            );
+        });
+    }
+
+    private hasQueryResultType(method: Method, type: DataObject): boolean {
+        return method.returnType?.ref === type || method.returnCollection !== undefined &&
+            AstUtils.streamReferences(method.returnCollection).some(referenceInfo =>
+                isReference(referenceInfo.reference) && referenceInfo.reference.ref === type
+            );
+    }
+
+    private hasAuthorizedQueryRelationship(source: AstNode, target: Method): boolean {
+        const consumer = getOwningContextName(source);
+        const provider = getOwningContextName(target);
+        const document = AstUtils.getDocument(source);
+        const root = document.parseResult.value;
+        if (!consumer || !provider || !isModel(root) || !root.imports.some(declaration => {
+            const uri = resolveImportUri(document, declaration);
+            return uri !== undefined && UriUtils.equals(uri, AstUtils.getDocument(target).uri);
+        })) {
+            return false;
+        }
+        for (const declaration of root.imports) {
+            const resolvedUri = resolveImportUri(document, declaration);
+            if (!resolvedUri) {
+                continue;
+            }
+            const uri = resolvedUri.toString();
+            const maps = this.indexManager.allElements('ContextMap', new Set([uri]))
+                .map(description => description.node)
+                .filter((node): node is import('./generated/ast.js').ContextMap => isContextMap(node))
+                .toArray();
+            for (const contextMap of maps) {
+                if (declaration.components.length > 0 && !declaration.components.some(component => component.component.ref === contextMap)) {
+                    continue;
+                }
+                if (contextMap.relationships.some(relationship => {
+                    if (!isSyntacticallyComplete(relationship)) {
+                        return false;
+                    }
+                    if (isCustomerSupplierRelationship(relationship)) {
+                        return relationship.customer.context?.ref?.name === consumer &&
+                            relationship.supplier.context?.ref?.name === provider;
+                    }
+                    if (isPartnershipRelationship(relationship)) {
+                        const left = relationship.left.context?.ref?.name;
+                        const right = relationship.right.context?.ref?.name;
+                        return (left === consumer && right === provider) || (right === consumer && left === provider);
+                    }
+                    return false;
+                })) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private getImportableComponents(component: import('./generated/ast.js').ImportComponent, referenceType: string): AstNodeDescription[] {

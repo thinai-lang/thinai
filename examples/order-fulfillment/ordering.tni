@@ -145,7 +145,9 @@ in bounded context Ordering {
     }
   }
 
-  repository OrderRepository manages Order.Order
+  repository OrderRepository {
+    manages Order.Order
+  }
 
   aggregate Customer {
     root entity Customer {
@@ -164,7 +166,9 @@ in bounded context Ordering {
     }
   }
 
-  repository CustomerRepository manages Customer.Customer
+  repository CustomerRepository {
+    manages Customer.Customer
+  }
 
   factory CustomerFactory {
     method createCustomer(id: CustomerId, name: string) returns Customer.Customer {

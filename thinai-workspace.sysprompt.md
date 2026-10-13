@@ -34,13 +34,13 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
   }
   ```
 
-- Constructors have typed parameters and no explicit return type. Pass domain values such as primitives, enums, collections of domain values, and value objects to constructors; do not pass DataObjects or event types. Use DataObjects at application-service and other operation boundaries, and map their contents into domain values before construction. Refer to entities in another aggregate by their identifiers, not by passing entity instances. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses are `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, and `emits`. `invokes` names a method; `emits` names one or more events. Both are descriptive navigable relationships, not required workflows. A transition belongs in an entity method and targets enum fields owned by that entity. A transition statement may list multiple `field from State to State` changes separated by commas; one optional trailing `when "..."` guard applies to the whole group. An `emits` clause may similarly list multiple events followed by one optional `when "..."` guard. Use separate clauses for effects with different guards. These guards are descriptive linked prose, not executable conditions; guarded transitions still count as possible edges for state-reachability validation. The same transition may appear in different methods; an exact duplicate within one method produces a warning. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or factory methods and domain-service methods directly; if both are needed, declare both relationships from the application service. Domain services model policies or calculations and must not invoke aggregate-owned methods, directly or transitively. Aggregate-owned methods must not invoke domain services. Root behavior coordinates changes to child entities.
+- Constructors have typed parameters and no explicit return type. Pass domain values such as primitives, enums, collections of domain values, and value objects to constructors; do not pass DataObjects or event types. Use DataObjects at application-service and other operation boundaries, and map their contents into domain values before construction. Refer to entities in another aggregate by their identifiers, not by passing entity instances. Methods have typed parameters and may use `returns` with a primitive, declared type, or collection type. Optional method-body clauses include `invariant`, `precondition`, `postcondition`, `behavior`, `transition`, `invokes`, `emits`, and `reads from`. A method-level `reads from` may name local repositories or a published external query-service method, with an optional descriptive `when` guard. The guard describes when the dependency is used; it is not executable. Method-level `behavior` describes how returned data is used; do not add result aliases or per-read behavior clauses. `invokes` names a method; `emits` names one or more events. Both are descriptive navigable relationships, not required workflows. A transition belongs in an entity method and targets enum fields owned by that entity. A transition statement may list multiple `field from State to State` changes separated by commas; one optional trailing `when "..."` guard applies to the whole group. An `emits` clause may similarly list multiple events followed by one optional `when "..."` guard. Use separate clauses for effects with different guards. These guards are descriptive linked prose, not executable conditions; guarded transitions still count as possible edges for state-reachability validation. The same transition may appear in different methods; an exact duplicate within one method produces a warning. An enum state field can declare `initial State`; every enum state must then be reachable through declared transitions. Application services may invoke aggregate-root or factory methods and domain-service methods directly; if both are needed, declare both relationships from the application service. Domain services model policies or calculations and must not invoke aggregate-owned methods, directly or transitively. Aggregate-owned methods must not invoke domain services. Root behavior coordinates changes to child entities.
 - Fields and parameters may be optional with `?`; collections are `List<T>`, `Set<T>`, and `Map<K, V>`, and collection element/value types may themselves be collections. An initial enum state is optional; when used, every enum value must be reachable from it through the entity's declared transitions.
 - Domain services use `domain service Name { ... }` at bounded-context or module scope, not inside an aggregate; put each method on a new line inside the braces. They may invoke other domain services only if the invocation chain does not reach aggregate-owned methods. Aggregate behavior is declared on its root entity; aggregate-wide invariants may be declared on the aggregate.
-- Repositories are declared at bounded-context or module scope and keep an explicit `for Aggregate` association. Factories are declared at bounded-context or module scope as `factory Name { ... }`, with each method on its own line; each factory method returns the aggregate root it creates. An application-service method can link to a factory method with `invokes` and does not need a separate creation clause.
+- Repositories are declared at bounded-context or module scope in blocks: `repository Name { manages Aggregate.Root }`. Query repositories use `query repository Name { serves ReadModel reads from AggregateA, AggregateB }`; `reads from` here records aggregate-owned table data read directly, never a call to a command repository. Factories are declared at bounded-context or module scope as `factory Name { ... }`, with each method on its own line; each factory method returns the aggregate root it creates. An application-service method can link to a factory method with `invokes` and does not need a separate creation clause.
 - Modules use `module Name [depends on OtherModule] { ... }`; `exposes Declaration` entries go inside the module before its declarations. Modules may be nested in a bounded context or shared kernel, and dependencies/exposures apply only to declarations in that owning context or kernel.
 - Application services use `application service Name { ... }` to orchestrate use cases and may coordinate multiple aggregates; put methods on separate lines inside the braces. Use `query service Name { ... }` for bounded-context read operations, also with methods on separate lines. Methods with an event-typed parameter react to that event on an application service or projector.
-- A query method must declare a result. Query services may read through query or aggregate repositories, including when both sides use the same physical database tables, and may link to those repositories in descriptive text. Read models, query repositories, and projectors are optional. Projectors describe event-driven projections and do not call application services or change aggregates.
+- A query method must declare a result. Under CQRS, query services read query repositories (not aggregate repositories), while application services read aggregate repositories (not query repositories). Query repositories may directly read tables written by the command side, including in the same physical database. Projectors use event data and write their declared targets; they must not read query repositories. Aggregate-repository or external query-API reads in projectors are explicit exceptions and can make replay results differ. Query services may read exposed external query APIs with an authorized context map. Domain services may read domain repositories when a domain rule requires it; external query dependencies go through a domain-facing port/anti-corruption layer. Read models, query repositories, and projectors are optional. Projectors describe event-driven projections and do not call application services or change aggregates.
 - Actors are declared once at model scope. Top-level journeys use `by Actor { ... }` blocks to group user-invoked application-service commands, which may belong to different bounded contexts. Journey steps use the singular keyword `invoke Method`; do not write `invokes` in a journey. Background event handoffs and event-triggered handlers are not journey steps. Optional `with "..."` input descriptions and `when "..."` guard descriptions are prose, not bindings or executable conditions; when both are present, keep them on the same `invoke` step, with `when` after `with`. Commands still enforce invariants. These descriptions may link to parameters and relevant fields, including `[[Context.QueryService.method.result.field]]`; a query-result link does not require that query to be invoked in the journey.
 - Fields and method parameters may be optional with `?`, as in `discount?: number`.
 - Primitive types include `string`, `number`, `boolean`, `date`, `time`, and `instant`. Use `date` for a calendar day, `time` for a wall-clock time without a date or time zone, and `instant` for an exact point on the global timeline (for example, `createdAt` or `occurredAt`). `time` is not an elapsed duration; use a value object for richer temporal concepts such as a time-zone-aware appointment.
@@ -76,7 +76,9 @@ in bounded context Ordering {
         enum OrderStatus { Draft, Placed, Paid }
         enum PaymentStatus { Pending, Confirmed }
     }
-    repository OrderRepository manages Order.Order
+    repository OrderRepository {
+        manages Order.Order
+    }
     factory OrderFactory {
         method createOrder() returns Order.Order
     }
@@ -84,7 +86,10 @@ in bounded context Ordering {
         orderId: string
         status: string
     }
-    query repository OrderReadModelRepository serves OrderReadModel
+    query repository OrderReadModelRepository {
+        serves OrderReadModel
+        reads from Order
+    }
     projector OrderReadModelProjector {
         method onOrderPlaced(source: OrderPlaced) {
             projects OrderReadModel
@@ -99,6 +104,7 @@ in bounded context Ordering {
     application service OrderApplication {
         method placeOrder(id: OrderId) {
             precondition "The order can be placed."
+            reads from OrderRepository
             invokes Order.Order.place
             behavior "Place the order through its aggregate root."
         }
@@ -112,9 +118,11 @@ in bounded context Ordering {
     }
     query service OrderQueries {
         method getStatus(id: OrderId) returns OrderStatus {
+            reads from OrderReadModelRepository
             behavior "Read [[OrderReadModelRepository]] for the selected order."
         }
         method search(term: string) returns List<string> {
+            reads from OrderReadModelRepository
             behavior "Search [[OrderReadModelRepository]] for matching orders."
         }
     }

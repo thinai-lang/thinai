@@ -123,7 +123,9 @@ describe('Linking tests', () => {
                         }
                         enum OrderStatus { Draft, Placed }
                 }
-                    repository OrderRepository manages Order.Order
+                    repository OrderRepository {
+                        manages Order.Order
+                    }
                 application service OrderApplication {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place
@@ -155,7 +157,9 @@ describe('Linking tests', () => {
                     root entity Shipment { method start() identifier id: ShipmentId }
                     value object ShipmentId { raw: string }
                 }
-                repository ShipmentRepository manages Shipment.Shipment
+                repository ShipmentRepository {
+                    manages Shipment.Shipment
+                }
                 factory ShipmentFactory {
                     method createShipment() returns Shipment.Shipment
                     }
@@ -317,6 +321,76 @@ describe('Linking tests', () => {
         expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'requires an imported context map with an authorized relationship'
         ))).toBe(false);
+    });
+
+    test('allows reads from an exposed external query operation with an authorized context map', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-contexts.tni'),
+            'bounded context Catalog bounded context Ordering'
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/catalog-api.tni'),
+            `import "./query-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries, ProductInfo
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns ProductInfo
+                     }
+                     data object ProductInfo { available: boolean }
+                 }
+             }`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-map.tni'),
+            `import "./query-contexts.tni"
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-consumer.tni'),
+            `import "./query-contexts.tni"
+             import "./catalog-api.tni"
+             import { Commerce } from "./query-map.tni"
+             in bounded context Ordering {
+                 read model OrderSummary {
+                     productAvailable: boolean
+                 }
+                 event OrderPlaced
+                 domain service ProductEligibility {
+                     method canOrder(sku: string) returns boolean {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                             when "Local product facts are unavailable."
+                         behavior "Use [[Catalog.PublicApi.ProductInfo.available]] from the published product result to evaluate eligibility."
+                     }
+                 }
+                 application service OrderApplication {
+                     method checkCatalog(sku: string) {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+                 query service OrderQueries {
+                     method checkCatalog(sku: string) returns boolean {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+                 projector OrderProjector {
+                     method onOrderPlaced(source: OrderPlaced) {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                         projects OrderSummary
+                     }
+                 }
+             }`
+        );
+        documents = [contexts, catalog, contextMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.parseResult.parserErrors).toHaveLength(0);
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        expect(consumer.diagnostics?.some(diagnostic => diagnostic.severity === 2 &&
+            String(diagnostic.message).includes('projector reading an external query API'))).toBe(true);
     });
 
     test('pattern labels do not control event authorization', async () => {
@@ -645,7 +719,9 @@ describe('Linking tests', () => {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
             }`
         );
         documents = [document];
@@ -902,7 +978,9 @@ describe('Linking tests', () => {
                         raw: string
                     }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.ensureOwner
@@ -962,7 +1040,9 @@ describe('Linking tests', () => {
                 factory OrderFactory {
                     method createOrder(id: OrderId) returns Order.Order
                     }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                     method placeOrder() {
                         invokes OrderFactory.createOrder
@@ -1112,7 +1192,9 @@ describe('Linking tests', () => {
                     value object OrderId { raw: string }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 module Contracts {
                     value object DeliveryCode { raw: string }
                 }
@@ -1123,12 +1205,16 @@ describe('Linking tests', () => {
                     value object OrderId { raw: string }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 aggregate Invoice {
                     root entity Invoice { method inspect() identifier id: InvoiceId orderId: Order.OrderId }
                     value object InvoiceId { raw: string }
                 }
-                repository InvoiceRepository manages Invoice.Invoice
+                repository InvoiceRepository {
+                    manages Invoice.Invoice
+                }
                 module Contracts {
                     exposes DeliveryCode
                     value object DeliveryCode { raw: string }

@@ -85,9 +85,15 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
     Projector: { properties: new Set(['methods']), completionKeywords: ['method'], statement: { block: 'required' } },
     Factory: { properties: new Set(['methods']), completionKeywords: ['method'], statement: { block: 'optional', bareNameBoundary: true } },
     Method: {
-        properties: new Set(['invariants', 'preconditions', 'postconditions', 'behaviors', 'transitions', 'emissions', 'invocations', 'projects']),
-        completionKeywords: ['invariant', 'precondition', 'postcondition', 'behavior', 'invokes'],
+        properties: new Set(['invariants', 'preconditions', 'postconditions', 'behaviors', 'transitions', 'emissions', 'invocations', 'reads', 'projects']),
+        completionKeywords: ['invariant', 'precondition', 'postcondition', 'behavior', 'invokes', 'reads from'],
         statement: { block: 'optional', incompleteSuffixes: ['returns'] }
+    },
+    ReadDependency: {
+        statement: {
+            referenceLists: [{ property: 'sources', targetProperty: 'target' }],
+            incompleteSuffixes: ['reads', 'from', 'when']
+        }
     },
     Constructor: {
         properties: new Set(['invariants', 'preconditions', 'postconditions', 'behaviors']),
@@ -144,10 +150,10 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
         statement: { referenceLists: [{ property: 'targets' }], incompleteSuffixes: ['invokes', 'when'] }
     },
     QueryRepository: {
-        statement: { requiredReferences: ['readModel'], bareNameBoundary: true, incompleteSuffixes: ['serves'] }
+        statement: { block: 'required', requiredReferences: ['readModel'], bareNameBoundary: true, incompleteSuffixes: ['serves'] }
     },
     ReadModelReference: { statement: { requiredReferences: ['target'], bareNameBoundary: true } },
-    Repository: { statement: { requiredReferences: ['root'], bareNameBoundary: true, incompleteSuffixes: ['manages'] } },
+    Repository: { statement: { block: 'required', requiredReferences: ['root'], bareNameBoundary: true, incompleteSuffixes: ['manages'] } },
     SharedKernelRelationship: {
         statement: {
             block: 'required',

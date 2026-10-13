@@ -195,7 +195,8 @@ in bounded context Ordering {
     test('does not report missing repository and method return types before their declarations are complete', async () => {
         const incompleteRepository = await parse(`bounded context Ordering
 in bounded context Ordering {
-    repository OrderRepository manages`);
+    repository OrderRepository {
+        manages`);
         const repositoryMessages = incompleteRepository.diagnostics?.map(diagnostic => String(diagnostic.message)) ?? [];
         expect(repositoryMessages.some(message => message.startsWith('An error occurred'))).toBe(false);
         expect(repositoryMessages.some(message => message.includes('must manage an aggregate-root entity'))).toBe(false);
@@ -326,7 +327,9 @@ in bounded context Ordering {
                     }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place
@@ -417,7 +420,9 @@ in bounded context Ordering {
                     value object OrderLineId { raw: string }
                     enum LineStatus { Open, Shipped }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                     method shipLine(id: OrderId) {
                         invokes Order.Order.shipLine
@@ -860,7 +865,9 @@ in bounded context Ordering {
                     }
                     value object OrderLineId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                     method shipLine(id: OrderId) {
                         invokes Order.OrderLine.ship
@@ -1128,14 +1135,19 @@ in bounded context Ordering {
                     root entity Order { method place() identifier id: OrderId }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 read model OrderLookup { eligible: boolean }
                 query service OrderQueries {
                     method lookup() returns boolean {
+                        reads from OrderLookupRepository
                         behavior "Read [[OrderLookupRepository]] to determine whether the order can be placed."
                     }
                 }
-                query repository OrderLookupRepository serves OrderLookup
+                query repository OrderLookupRepository {
+                    serves OrderLookup
+                }
                 application service OrderCommands {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place
@@ -1159,7 +1171,9 @@ in bounded context Ordering {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 application service OrderApplication {
                     method placeOrder(id: OrderId) {
                         behavior "Place an order using the supplied identifier."
@@ -1182,7 +1196,9 @@ in bounded context Ordering {
                     }
                     value object OrderId { raw: string }
                 }
-                repository OrderWriteRepository manages Order.Order
+                repository OrderWriteRepository {
+                    manages Order.Order
+                }
                 aggregate Customer {
                     root entity Customer {
                         method activate()
@@ -1190,11 +1206,19 @@ in bounded context Ordering {
                     }
                     value object CustomerId { raw: string }
                 }
-                repository CustomerWriteRepository manages Customer.Customer
+                repository CustomerWriteRepository {
+                    manages Customer.Customer
+                }
                 read model OrderSearch { orderNumber: string }
                 read model CustomerHistory { customerName: string }
-                query repository OrderSearchRepository serves OrderSearch
-                query repository CustomerHistoryRepository serves CustomerHistory
+                query repository OrderSearchRepository {
+                    serves OrderSearch
+                    reads from Order
+                }
+                query repository CustomerHistoryRepository {
+                    serves CustomerHistory
+                    reads from Customer
+                }
                 application service OrderCommands {
                     method placeOrder(id: OrderId) {
                         invokes Order.Order.place
@@ -1207,6 +1231,7 @@ in bounded context Ordering {
                 }
                 query service OrderingReports {
                     method findOrders(text: string) returns string {
+                        reads from OrderSearchRepository, CustomerHistoryRepository
                         behavior "Combine [[OrderSearchRepository]] with [[CustomerHistoryRepository]] for the report."
                     }
                 }
@@ -1234,7 +1259,9 @@ in bounded context Ordering {
                     value object OrderId { raw: string }
                     enum OrderStatus { Draft, Placed }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 data object PlaceOrderInput {
                     orderId: OrderId
                     requestedStatus: OrderStatus
@@ -1248,7 +1275,9 @@ in bounded context Ordering {
                     status: OrderStatus
                     eligible: boolean
                 }
-                query repository OrderEligibilityRepository serves OrderEligibility
+                query repository OrderEligibilityRepository {
+                    serves OrderEligibility
+                }
                 event OrderPlaced { orderId: string }
                 projector OrderEligibilityProjector {
                     method onOrderPlaced(source: OrderPlaced) {
@@ -1258,6 +1287,7 @@ in bounded context Ordering {
                 }
                 query service OrderQueries {
                     method canPlace(orderId: OrderId) returns OrderEligibility {
+                        reads from OrderEligibilityRepository
                         behavior "Read [[OrderEligibilityRepository]] and return [[result.eligible]] for [[orderId]]."
                     }
                 }
@@ -1320,6 +1350,56 @@ in bounded context Ordering {
         const errors = semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => String(diagnostic.message));
         expect(errors).toContain('A projector method must declare at least one read model with projects.');
         expect(errors).toContain('The projects clause is allowed only in projector methods.');
+    });
+
+    test('validates CQRS read dependencies by method owner and supports query-repository table sources', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            repository OrderRepository {
+                manages Order.Order
+            }
+            read model OrderSummary { status: string }
+            query repository OrderSummaryRepository {
+                serves OrderSummary
+                reads from Order
+            }
+            application service Commands {
+                method place() { reads from OrderRepository }
+                method invalidQueryRead() { reads from OrderSummaryRepository }
+            }
+            query service Queries {
+                method find() returns OrderSummary { reads from OrderSummaryRepository }
+                method invalidAggregateRead() returns OrderSummary { reads from OrderRepository }
+            }
+            domain service Eligibility {
+                method check() { reads from OrderRepository }
+                method invalidQueryRead() { reads from OrderSummaryRepository }
+            }
+            event OrderPlaced
+            projector OrderProjector {
+                method onOrderPlaced(source: OrderPlaced) {
+                    reads from OrderRepository when "The event needs current customer details."
+                    projects OrderSummary
+                }
+                method invalidQueryRead(source: OrderPlaced) {
+                    reads from OrderSummaryRepository
+                    projects OrderSummary
+                }
+            }
+        }`);
+        const diagnostics = semanticDiagnostics(document);
+        const errors = diagnostics.filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => String(diagnostic.message));
+        expect(errors).toContain('An application-service method must use command-side repositories, not query repositories.');
+        expect(errors).toContain('A query service may read only query repositories in its own bounded context.');
+        expect(errors).toContain('A domain service must not depend on a query repository; use a domain repository or port.');
+        expect(errors).toContain('A projector must not read from a query repository; use event data or an explicit aggregate/reference source.');
+        expect(diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning &&
+            String(diagnostic.message).includes('may produce different results when events are replayed'))).toBe(true);
+        expect(errors).not.toContain('A query repository may read aggregate table data only from its own bounded context.');
     });
 
     test('underlines method effects that are not allowed for their owner', async () => {
@@ -1435,8 +1515,12 @@ in bounded context Ordering {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
                 }
-                repository FirstOrderRepository manages Order.Order
-                repository SecondOrderRepository manages Order.Order
+                repository FirstOrderRepository {
+                    manages Order.Order
+                }
+                repository SecondOrderRepository {
+                    manages Order.Order
+                }
             }
         `);
 
@@ -1454,7 +1538,9 @@ in bounded context Ordering {
                     entity OrderLine { identifier id: OrderLineId }
                     value object OrderLineId { raw: string }
                 }
-                repository OrderLineRepository manages Order.OrderLine
+                repository OrderLineRepository {
+                    manages Order.OrderLine
+                }
             }
         `);
 
@@ -1470,7 +1556,9 @@ in bounded context Ordering {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 factory OrderFactory {
                     method createOrder(id: OrderId) returns Order.Order
                     }
@@ -1517,9 +1605,13 @@ in bounded context Ordering {
                     }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 read model OrderReadModel { status: string }
-                query repository OrderReadModelRepository serves OrderReadModel
+                query repository OrderReadModelRepository {
+                    serves OrderReadModel
+                }
                 application service OrderApplication {
                     method deleteOrder(id: OrderId) {
                         invokes Order.Order.validateDeletion
@@ -1537,7 +1629,7 @@ in bounded context Ordering {
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('allows query services to read aggregate repositories without query projections', async () => {
+    test('rejects query services that read from aggregate repositories', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
                 aggregate Order {
@@ -1547,16 +1639,21 @@ in bounded context Ordering {
                     }
                     value object OrderId { raw: string }
                 }
-                repository OrderRepository manages Order.Order
+                repository OrderRepository {
+                    manages Order.Order
+                }
                 query service OrderQueries {
                     method getStatus(id: OrderId) returns string {
-                        behavior "Read the status for [[id]] from [[OrderRepository]]."
+                        reads from OrderRepository
+                        behavior "Read the status for [[id]] from the order summary."
                     }
                 }
             }
         `);
 
-        expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes('A query service may read only query repositories')
+        )).toBe(true);
     });
 
     test('allows integration-event handlers without an after-commit clause', async () => {

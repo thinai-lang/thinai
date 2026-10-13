@@ -74,7 +74,10 @@ in bounded context Ordering {
     status: OrderStatus
   }
 
-  query repository OrderSummaryRepository serves OrderSummary
+  query repository OrderSummaryRepository {
+    serves OrderSummary
+    reads from Order, Customer
+  }
 
   read model CustomerSummary {
     customerId: CustomerId
@@ -86,8 +89,14 @@ in bounded context Ordering {
     status: OrderStatus
   }
 
-  query repository CustomerSummaryRepository serves CustomerSummary
-  query repository OrderAuditSummaryRepository serves OrderAuditSummary
+  query repository CustomerSummaryRepository {
+    serves CustomerSummary
+    reads from Customer
+  }
+  query repository OrderAuditSummaryRepository {
+    serves OrderAuditSummary
+    reads from Order
+  }
 
   projector OrderSummaryProjector {
     method onOrderPlaced(source: OrderPlaced) {
@@ -105,12 +114,14 @@ in bounded context Ordering {
 
   query service OrderQueries {
     method canPlaceOrder(orderId: OrderId) returns OrderEligibilityResult {
+      reads from OrderSummaryRepository
       precondition "The identified order exists."
       behavior "Read [[OrderSummaryRepository]] for [[orderId]] and return whether [[result.eligible]] is true."
       postcondition "The result reports whether the order is eligible for placement."
     }
 
     method findCustomerOrders(customerId: CustomerId) returns List<OrderSummary> {
+      reads from OrderSummaryRepository, CustomerSummaryRepository
       precondition "The customer identifier is valid."
       behavior "Combine [[OrderSummaryRepository]] and [[CustomerSummaryRepository]] for the selected customer."
       postcondition "The result contains the selected customer's order summaries."
