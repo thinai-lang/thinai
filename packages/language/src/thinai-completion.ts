@@ -32,6 +32,7 @@ import {
     isModule,
     isParameter,
     isProjector,
+    isReadSourceReference,
     isSpecificationText,
     isSpecificationTextPart,
     isTransition
@@ -1049,6 +1050,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return undefined;
         }
         const offset = document.textDocument.offsetAt(position);
+        if (AstUtils.streamAst(model).filter(isReadSourceReference).some(reference => {
+            const cstNode = reference.$cstNode;
+            return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end &&
+                reference.target?.ref === undefined;
+        })) {
+            return null;
+        }
         const currentLine = position.line;
         const text = document.textDocument.getText();
         const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;

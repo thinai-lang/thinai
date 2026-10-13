@@ -1569,6 +1569,64 @@ bounded context Second`;
         });
     });
 
+    test('does not offer method-body siblings while completing a reads-from source', async () => {
+        const prefix = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            repository OrderRepository {
+                manages Order.Order
+            }
+            application service Commands {
+                method place() {
+                    reads from OrderRep`;
+        const source = `${prefix}\n                }\n            }\n        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-partial-source.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('OrderRepository');
+        for (const sibling of ['behavior', 'invokes', 'reads from', 'projects', 'invariant', 'postcondition']) {
+            expect(labels).not.toContain(sibling);
+        }
+    });
+
+    test('offers method-body siblings after a complete reads-from source', async () => {
+        const prefix = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            repository OrderRepository {
+                manages Order.Order
+            }
+            application service Commands {
+                method place() {
+                    reads from OrderRepository`;
+        const source = `${prefix}\n                }\n            }\n        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-complete-source-sibling.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const behavior = completion?.items.find(item => item.label === 'behavior');
+        expect(behavior).toBeDefined();
+        expect(behavior?.data?.thinaiSiblingCompletion).toBe(true);
+    });
+
     test('completes authorized external query methods as reads-from sources', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/read-api-contexts.tni'),
