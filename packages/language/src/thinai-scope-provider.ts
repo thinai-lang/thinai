@@ -194,9 +194,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 .filter((node): node is AstNode => node !== undefined)
                 .toArray()
         );
-        const index = context.index ?? 0;
+        const index = context.property === 'target' ? values.length : context.index ?? 0;
         const prefix = (values as ReferenceInfo['reference'][]).slice(0, index).map(reference => reference.$refText);
-        return this.getPathSegmentCompletions(context, this.reflection.getReferenceType(context), prefix, allowedTargets, true);
+        return this.getPathSegmentCompletions(
+            context,
+            this.reflection.getReferenceType(context),
+            prefix,
+            allowedTargets,
+            context.property === 'path' && !isReadSourceReference(container)
+        );
     }
 
     private getPathScopeContext(context: ReferenceInfo): ReferenceInfo {
@@ -346,7 +352,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             : this.getUnsegmentedScope(scopeContext, 'NamedDeclaration')
                 .getElement(path.slice(0, segmentIndex + 1).join('.'));
         const target = targetDescription?.node ?? this.getPathSegmentTarget(finalDescription.node, path, segmentIndex, context);
-        if (!target) {
+        if (!target || !this.nameProvider.getName(target)) {
             return this.createScope([]);
         }
 

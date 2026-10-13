@@ -1569,6 +1569,67 @@ bounded context Second`;
         });
     });
 
+    test('completes authorized external query methods as reads-from sources', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-api-contexts.tni'),
+            'bounded context Catalog bounded context Ordering'
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-api-catalog.tni'),
+            `import "./read-api-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries, ProductInfo
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns ProductInfo
+                     }
+                     data object ProductInfo {
+                         available: boolean
+                     }
+                 }
+             }`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-api-map.tni'),
+            `import "./read-api-contexts.tni"
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-api-consumer.tni'),
+            `import "./read-api-contexts.tni"
+             import "./read-api-catalog.tni"
+             import { Commerce } from "./read-api-map.tni"
+             in bounded context Ordering {
+                 application service OrderCommands {
+                     method checkProduct(sku: string) {
+                         reads from Catalog.PublicApi.ProductQueries.
+                     }
+                 }
+             }`
+        );
+        documents.push(contexts, catalog, contextMap, consumer);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(consumer.textDocument.getText().indexOf('ProductQueries.') + 'ProductQueries.'.length)
+        });
+        const queryItem = completion?.items.find(item => item.label === 'findProduct');
+        expect(queryItem).toBeDefined();
+        expect(queryItem?.kind).toBe(CompletionItemKind.Method);
+        const cursorOffset = consumer.textDocument.getText().indexOf('ProductQueries.') + 'ProductQueries.'.length;
+        expect(queryItem?.textEdit).toMatchObject({
+            newText: 'findProduct',
+            range: {
+                start: consumer.textDocument.positionAt(cursorOffset),
+                end: consumer.textDocument.positionAt(cursorOffset)
+            }
+        });
+        expect(completion?.items.map(item => item.label)).not.toContain('OrderRepository');
+    });
+
     test('offers read models for projector targets with read-model icons', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             read model OrderSummary { status: string }
@@ -2195,6 +2256,88 @@ bounded context Second`;
                     end: document.textDocument.positionAt(source.length)
                 }
             });
+        }
+    });
+
+    test('completes repository block statements and query-repository sources', async () => {
+        const marker = '__cursor__';
+        const cases = [
+            {
+                name: 'write repository in an empty block',
+                body: `repository OrderRepository {
+                    ${marker}
+                }`,
+                expected: 'manages'
+            },
+            {
+                name: 'query repository in an empty block',
+                body: `query repository OrderSummaryRepository {
+                    ${marker}
+                }`,
+                expected: 'serves'
+            },
+            {
+                name: 'query repository source after serves',
+                body: `query repository OrderSummaryRepository {
+                    serves OrderSummary
+                    ${marker}
+                }`,
+                expected: 'reads'
+            },
+            {
+                name: 'query repository reads continuation',
+                body: `query repository OrderSummaryRepository {
+                    serves OrderSummary
+                    reads ${marker}
+                }`,
+                expected: 'from'
+            },
+            {
+                name: 'aggregate sources for a query repository',
+                body: `query repository OrderSummaryRepository {
+                    serves OrderSummary
+                    reads from ${marker}
+                }`,
+                expected: 'Order'
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const source = `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                read model OrderSummary { status: string }
+                ${completionCase.body}
+            }`;
+            const offset = source.indexOf(marker);
+            const text = source.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/repository-block-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const item = completion?.items.find(candidate => candidate.label === completionCase.expected);
+            expect(item, completionCase.name).toBeDefined();
+            if (['manages', 'serves', 'reads', 'from'].includes(completionCase.expected)) {
+                expect(item?.kind, completionCase.name).toBe(CompletionItemKind.Keyword);
+                expect(item?.textEdit?.newText, completionCase.name).toContain(completionCase.expected);
+            }
+            if (completionCase.expected === 'Order') {
+                expect(completion?.items.map(item => item.label), completionCase.name).not.toContain('OrderRepository');
+                expect(item?.kind).toBe(CompletionItemKind.Class);
+                expect(item?.textEdit).toMatchObject({
+                    newText: 'Order',
+                    range: {
+                        start: document.textDocument.positionAt(offset),
+                        end: document.textDocument.positionAt(offset)
+                    }
+                });
+            }
         }
     });
 
