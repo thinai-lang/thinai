@@ -8,7 +8,7 @@ import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
 import { ThinaiImportCompletion } from '../src/thinai-import-completion.js';
 import { createThinaiSelectionRange } from '../src/thinai-selection-range.js';
-import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
+import { CompletionItemKind, CompletionTriggerKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -2395,8 +2395,12 @@ bounded context Second`;
             await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
-                position: document.textDocument.positionAt(offset)
+                position: document.textDocument.positionAt(offset),
+                ...(completionCase.name === 'query repository source after serves'
+                    ? { context: { triggerKind: CompletionTriggerKind.TriggerCharacter, triggerCharacter: '\n' } }
+                    : {})
             });
+            expect(services.Thinai.lsp.CompletionProvider?.completionOptions?.triggerCharacters).toContain('\n');
             const item = completion?.items.find(candidate => candidate.label === completionCase.expected);
             expect(item, `${completionCase.name}: ${completion?.items.map(candidate => candidate.label).join(', ')}`).toBeDefined();
             if (completionCase.name === 'query repository in an empty block') {

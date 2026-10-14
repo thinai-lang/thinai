@@ -63,7 +63,7 @@ const siblingKeywordPrefixes = getSiblingKeywordPrefixes();
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',']
+        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',', '\n']
     };
 
     private readonly thinaiServices: ThinaiServices;
