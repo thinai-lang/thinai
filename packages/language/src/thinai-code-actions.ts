@@ -1,5 +1,4 @@
 import {
-    AstNodeDescription,
     AstUtils,
     GrammarUtils,
     type LangiumDocument,
@@ -20,7 +19,7 @@ import {
     type Import,
     type ImportableComponent
 } from './generated/ast.js';
-import { resolveImportUri } from './thinai-scope-utils.js';
+import { resolveAstNodeDescription, resolveImportUri, toImportPath } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 
 interface UnresolvedReference {
@@ -141,12 +140,12 @@ export class ThinaiCodeActionProvider {
 
             const uriKey = description.documentUri.toString();
             const existingImport = importsByUri.get(uriKey)?.find(importDeclaration => importDeclaration.components.length > 0);
-            const importPath = this.toImportPath(document, description.documentUri);
+            const importPath = toImportPath(UriUtils.dirname(document.uri), description.documentUri);
             if (importsByUri.has(uriKey)) {
                 if (!existingImport) {
                     continue;
                 }
-                const component = this.getImportableComponent(this.getDescriptionNode(description));
+                const component = this.getImportableComponent(resolveAstNodeDescription(description, this.services));
                 if (!component || existingImport.components.some(selection => selection.component.ref === component)) {
                     continue;
                 }
@@ -159,29 +158,7 @@ export class ThinaiCodeActionProvider {
         return [...candidates.values()];
     }
 
-    private getDescriptionNode(description: AstNodeDescription) {
-        if (description.node) {
-            return description.node;
-        }
-        const document = this.services.shared.workspace.LangiumDocuments.getDocument(description.documentUri);
-        return document?.parseResult.value
-            ? this.services.workspace.AstNodeLocator.getAstNode(document.parseResult.value, description.path)
-            : undefined;
-    }
-
     private getImportableComponent(node: import('langium').AstNode | undefined): ImportableComponent | undefined {
-        let current = node;
-        while (current) {
-            if (isImportableComponent(current)) {
-                return current;
-            }
-            current = current.$container;
-        }
-        return undefined;
-    }
-
-    private toImportPath(document: LangiumDocument, target: AstNodeDescription['documentUri']): string {
-        const relativePath = UriUtils.relative(UriUtils.dirname(document.uri), target);
-        return relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
+        return node ? AstUtils.getContainerOfType(node, isImportableComponent) : undefined;
     }
 }

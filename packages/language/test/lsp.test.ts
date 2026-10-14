@@ -11,6 +11,7 @@ import {
 } from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
+import { ThinaiCompletionDetails } from '../src/thinai-completion-details.js';
 import { ThinaiImportCompletion } from '../src/thinai-import-completion.js';
 import { createThinaiSelectionRange } from '../src/thinai-selection-range.js';
 import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
@@ -1127,9 +1128,8 @@ bounded context Second`;
     });
 
     test('describes completion details for methods, fields, parameters, and enum values', () => {
-        const provider = new ThinaiCompletionProvider(services.Thinai);
-        const getDetail = (description: AstNodeDescription) =>
-            (provider as unknown as { getCompletionDetail(value: AstNodeDescription): string }).getCompletionDetail(description);
+        const details = new ThinaiCompletionDetails();
+        const getDetail = (description: AstNodeDescription) => details.getCompletionDetail(description);
         const typeNode = (type: string, name: string) => ({ $type: type, name }) as AstNode;
         const domainEvent = typeNode('DomainEvent', 'OrderPlaced');
 

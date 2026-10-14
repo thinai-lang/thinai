@@ -7,9 +7,7 @@ import {
     type Scope,
     type Stream,
     type LangiumCoreServices,
-    UriUtils,
     stream,
-    isReference
 } from 'langium';
 import {
     type ContextMap,
@@ -22,7 +20,6 @@ import {
     type ReadModel,
     type TransitionChange,
     isAggregate,
-    isContextMap,
     isConstructor,
     isBoundedContext,
     isBoundedContextPart,
@@ -48,7 +45,6 @@ import {
     isTransitionChange,
     isModule,
     isModuleReference,
-    isSharedKernel,
     isImportComponent,
     isImportableComponent,
     isReadModel,
@@ -64,34 +60,36 @@ import {
     isValueObject,
     type Module
 } from './generated/ast.js';
-import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
-import { isSyntacticallyComplete } from './thinai-ast-utils.js';
+import { getMethodInvocationViolations } from './thinai-method-invocation-policy.js';
+import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import {
     getExportedName,
     getOwningAggregate,
     getOwningContextName,
     getOwningModule,
+    getOwningSharedKernel,
     isInSharedKernel,
+    resolveAstNodeDescription,
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { ThinaiExternalScope } from './thinai-external-scope.js';
 
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
-    private readonly documents: LangiumCoreServices['shared']['workspace']['LangiumDocuments'];
-    private readonly nodeLocator: LangiumCoreServices['workspace']['AstNodeLocator'];
+    private readonly services: LangiumCoreServices;
     private readonly externalScope: ThinaiExternalScope;
+    private readonly referencePolicy: ThinaiReferencePolicy;
 
     constructor(services: LangiumCoreServices) {
         super(services);
-        this.documents = services.shared.workspace.LangiumDocuments;
-        this.nodeLocator = services.workspace.AstNodeLocator;
+        this.services = services;
         this.externalScope = new ThinaiExternalScope(
             this.reflection,
             this.nameProvider,
             this.descriptions,
             this.indexManager
         );
+        this.referencePolicy = new ThinaiReferencePolicy(services);
     }
 
     override getScope(context: ReferenceInfo): Scope {
@@ -252,7 +250,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         while (current && !isEntity(current)) {
             current = current.$container;
         }
-        const aggregate = current && isEntity(current) ? this.getOwningAggregateNode(current) : undefined;
+        const aggregate = current && isEntity(current) ? getOwningAggregate(current) : undefined;
         const fields = current && isEntity(current)
             ? current.fields.filter(field => {
                 const stateType = field.type?.ref;
@@ -302,7 +300,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const field = isField(fieldTarget)
             ? fieldTarget
             : entity?.fields.find(candidate => candidate.name === transition.field?.$refText);
-        const aggregate = entity ? this.getOwningAggregateNode(entity) : undefined;
+        const aggregate = entity ? getOwningAggregate(entity) : undefined;
         const stateType = field?.type?.ref;
         const enumType = isEnumType(stateType)
             ? stateType
@@ -326,7 +324,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             current = current.$container;
         }
         const entity = isEntity(current) ? current : undefined;
-        const aggregate = entity ? this.getOwningAggregateNode(entity) : undefined;
+        const aggregate = entity ? getOwningAggregate(entity) : undefined;
         const enumType = isEnumType(stateType)
             ? stateType
             : aggregate?.members.find(member => isEnumType(member) && member.name === field.type?.$refText);
@@ -455,14 +453,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (this.hasSpecificationPathPrefix(context.container, context)) {
             return true;
         }
-        let current: AstNode | undefined = context.container;
-        while (current) {
-            if (isEntity(current) || isValueObject(current)) {
-                return target.$container === current;
-            }
-            current = current.$container;
-        }
-        return false;
+        const owner = AstUtils.getContainerOfType(context.container,
+            (node): node is AstNode => isEntity(node) || isValueObject(node)
+        );
+        return target.$container === owner;
     }
 
     private hasSpecificationPathPrefix(
@@ -485,21 +479,18 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (referenceType !== 'SpecificationTarget' || !isSpecificationTextPart(context.container)) {
             return pending;
         }
-        let current: AstNode | undefined = context.container;
         let operation: Method | Constructor | undefined;
         let journeyStep: JourneyStep | undefined;
-        while (current) {
-            if (isJourneyStep(current)) {
-                journeyStep = current;
-                const target = current.targets.at(-1)?.ref;
-                operation = isMethod(target) ? target : undefined;
-                break;
-            }
-            if (isMethod(current) || isConstructor(current)) {
-                operation = current;
-                break;
-            }
-            current = current.$container;
+        const enclosingOperation = AstUtils.getContainerOfType(context.container,
+            (node): node is JourneyStep | Method | Constructor =>
+                isJourneyStep(node) || isMethod(node) || isConstructor(node)
+        );
+        if (isJourneyStep(enclosingOperation)) {
+            journeyStep = enclosingOperation;
+            const target = enclosingOperation.targets.at(-1)?.ref;
+            operation = isMethod(target) ? target : undefined;
+        } else if (isMethod(enclosingOperation) || isConstructor(enclosingOperation)) {
+            operation = enclosingOperation;
         }
         if (!operation) {
             return pending;
@@ -697,101 +688,32 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         while (source && !isMethod(source)) {
             source = source.$container;
         }
-        if (!isMethod(source) || target.parameters.some(parameter =>
+        if (!isMethod(source) || isProjector(source.$container)) {
+            return false;
+        }
+        const owner = source.$container;
+        const applicationService = isApplicationService(owner) ? owner : undefined;
+        const queryService = isQueryService(owner) ? owner : undefined;
+        const eventParameters = source.parameters.filter(parameter =>
             isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
-        )) {
-            return false;
-        }
-        if (isProjector(source.$container)) {
-            return false;
-        }
-        const targetSharedKernel = this.getOwningSharedKernel(target);
-        const sharedKernelServiceCall = targetSharedKernel !== undefined && isDomainService(target.$container) &&
-            (isApplicationService(source.$container) || isDomainService(source.$container)) &&
-            this.hasVisibleSharedKernel(source, targetSharedKernel) &&
-            this.hasSharedKernelRelationship(source, targetSharedKernel);
-        if (this.isCrossContext(source, target) && !sharedKernelServiceCall) {
-            return false;
-        }
-
-        if (isDomainService(source.$container) && !isDomainService(target.$container)) {
-            return false;
-        }
-
-        const sourceApplication = isApplicationService(source.$container);
-        const sourceQueryService = isQueryService(source.$container) ? source.$container : undefined;
-        const sourceAggregate = this.getOwningAggregateNode(source);
-        const reachable = getReachableMethods(target);
-        if (sourceQueryService && (target.$container !== sourceQueryService || hasBehaviorSideEffects(target))) {
-            return false;
-        }
-        if (isDomainService(source.$container) && (this.getOwningAggregateNode(target) !== undefined ||
-            reachable.some(method => this.getOwningAggregateNode(method) !== undefined))) {
-            return false;
-        }
-        if (sourceAggregate && (isDomainService(target.$container) ||
-            reachable.some(method => isDomainService(method.$container)))) {
-            return false;
-        }
-
-        if (isApplicationService(target.$container) && target.$container !== source.$container) {
-            const eventParameterCount = source.parameters.filter(parameter =>
-                isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
-            ).length;
-            if (!sourceApplication || eventParameterCount !== 1 || source.parameters.length !== 1) {
-                return false;
-            }
-        }
-
-        const targetAggregate = this.getOwningAggregateNode(target);
-        const targetIsRootMethod = targetAggregate !== undefined &&
-            target.$container === targetAggregate.members.find(member => isEntity(member) && member.root);
-        const factoryRoot = target.returnType?.ref;
-        const factoryReturnsRoot = isFactory(target.$container) && isEntity(factoryRoot) && factoryRoot.root &&
-            this.getOwningAggregateNode(factoryRoot) !== undefined;
-        // Application services may target aggregate-root methods or factory methods;
-        // other method containers remain subject to the validator's structural rules.
-        if (sourceApplication && !targetIsRootMethod && !factoryReturnsRoot &&
-            !isApplicationService(target.$container) && !isDomainService(target.$container)) {
-            return false;
-        }
-        if (!sourceApplication && isApplicationService(target.$container)) {
-            return false;
-        }
-        if (targetAggregate && !targetIsRootMethod && !isEntity(source.$container)) {
-            return false;
-        }
-        if (sourceAggregate && targetAggregate && sourceAggregate !== targetAggregate) {
-            return false;
-        }
-
-        if (!sourceApplication && !isApplicationService(target.$container) &&
-            reachable.some(method => isApplicationService(method.$container))) {
-            return false;
-        }
-        if (sourceApplication && !isApplicationService(target.$container) && (
-            reachable.some(method => isApplicationService(method.$container)) ||
-            (!targetIsRootMethod && reachable.some(method => this.getOwningAggregateNode(method) !== undefined))
-        )) {
-            return false;
-        }
-        if (!sourceApplication && sourceAggregate && reachable.some(method => {
-            const aggregate = this.getOwningAggregateNode(method);
-            return aggregate !== undefined && aggregate !== sourceAggregate;
-        })) {
-            return false;
-        }
-        return true;
+        );
+        return getMethodInvocationViolations(source, target, applicationService, queryService, eventParameters, {
+            getOwningSharedKernel: node => getOwningSharedKernel(node),
+            hasVisibleSharedKernel: (node, sharedKernel) => this.referencePolicy.hasVisibleSharedKernel(node, sharedKernel),
+            hasSharedKernelRelationship: (node, sharedKernel) =>
+                this.referencePolicy.hasSharedKernelRelationship(node, sharedKernel),
+            isCrossContextOwned: (left, right) => this.isCrossContext(left, right),
+            isEventParameter: parameter => isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref),
+            getOwningAggregate,
+            isAggregateRootMethod: (method, aggregate) =>
+                method.$container === aggregate.members.find(member => isEntity(member) && member.root)
+        }).length === 0;
     }
 
     private isCrossContext(source: AstNode, target: AstNode): boolean {
         const sourceContext = getOwningContextName(source);
         const targetContext = getOwningContextName(target);
         return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
-    }
-
-    private getOwningAggregateNode(node: AstNode): import('./generated/ast.js').Aggregate | undefined {
-        return getOwningAggregate(node);
     }
 
     private getPathSegmentCompletions(
@@ -1029,12 +951,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isInSharedKernel(target)) {
-            const sharedKernel = this.getOwningSharedKernel(target);
-            return sharedKernel !== undefined && this.hasSharedKernelRelationship(context.container, sharedKernel);
+            const sharedKernel = getOwningSharedKernel(target);
+            return sharedKernel !== undefined &&
+                this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel);
         }
 
         if (isIntegrationEvent(target) && isParameter(context.container)) {
-            return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
+            return this.referencePolicy.isIntegrationEventExposed(target) &&
+                this.referencePolicy.hasAuthorizedEventRelationship(context.container, target);
         }
 
         return false;
@@ -1096,7 +1020,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (field.identifier && context.container !== field) {
                 return false;
             }
-            if (field.identifier && (!isValueObject(target) || this.getOwningAggregateNode(field) !== target.$container)) {
+            if (field.identifier && (!isValueObject(target) || getOwningAggregate(field) !== target.$container)) {
                 return false;
             }
             if (isDataObject(owner) && (isEntity(target) || isReadModel(target))) {
@@ -1115,7 +1039,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 return false;
             }
             if (isIntegrationEvent(owner)) {
-                if (this.getOwningAggregateNode(target)) {
+                if (getOwningAggregate(target)) {
                     return false;
                 }
                 if (!isInSharedKernel(target)) {
@@ -1129,8 +1053,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     }
                 }
             }
-            const sourceAggregate = this.getOwningAggregateNode(field);
-            const targetAggregate = isEntity(target) ? this.getOwningAggregateNode(target) : undefined;
+            const sourceAggregate = getOwningAggregate(field);
+            const targetAggregate = isEntity(target) ? getOwningAggregate(target) : undefined;
             if (targetAggregate && targetAggregate !== sourceAggregate) {
                 return false;
             }
@@ -1151,8 +1075,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (isDomainEvent(target) || isIntegrationEvent(target) || isDataObject(target)) {
                     return false;
                 }
-                const sourceAggregate = this.getOwningAggregateNode(parent);
-                if (isEntity(target) && target.root && this.getOwningAggregateNode(target) !== sourceAggregate) {
+                const sourceAggregate = getOwningAggregate(parent);
+                if (isEntity(target) && target.root && getOwningAggregate(target) !== sourceAggregate) {
                     return false;
                 }
             }
@@ -1230,12 +1154,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (!isEntity(entity) || !entity.root || getOwningContextName(entity) !== contextName) {
                 continue;
             }
-            let current: AstNode | undefined = entity;
-            while (current) {
-                if (current === target) {
-                    return true;
-                }
-                current = current.$container;
+            if (AstUtils.getContainerOfType(entity, (candidate): candidate is AstNode => candidate === target)) {
+                return true;
             }
         }
         return false;
@@ -1257,36 +1177,19 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         if (isField(target)) {
             return isIntegrationEvent(target.$container)
-                ? this.isIntegrationEventExposed(target.$container) &&
-                    this.hasAuthorizedEventRelationship(context.container, target.$container)
-                : isDataObject(target.$container) && this.isPublishedReadResponseType(context.container, target.$container);
+                ? this.referencePolicy.isIntegrationEventExposed(target.$container) &&
+                    this.referencePolicy.hasAuthorizedEventRelationship(context.container, target.$container)
+                : isDataObject(target.$container) &&
+                    this.referencePolicy.isPublishedReadResponseType(context.container, target.$container);
         }
         if (isIntegrationEvent(target)) {
-            return this.isIntegrationEventExposed(target) && this.hasAuthorizedEventRelationship(context.container, target);
+            return this.referencePolicy.isIntegrationEventExposed(target) &&
+                this.referencePolicy.hasAuthorizedEventRelationship(context.container, target);
         }
         if (isDataObject(target)) {
-            return this.isPublishedReadResponseType(context.container, target);
+            return this.referencePolicy.isPublishedReadResponseType(context.container, target);
         }
         return false;
-    }
-
-    private isPublishedReadResponseType(source: AstNode, type: DataObject): boolean {
-        const typeModule = getOwningModule(type);
-        if (!typeModule || !typeModule.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === type)
-        )) {
-            return false;
-        }
-        let method: AstNode | undefined = source;
-        while (method && !isMethod(method)) {
-            method = method.$container;
-        }
-        return isMethod(method) && method.reads.some(read => read.sources.some(reference => {
-            const query = reference.target.ref;
-            return isMethod(query) && isQueryService(query.$container) && this.hasQueryResultType(query, type) &&
-                getOwningContextName(query) !== getOwningContextName(method) &&
-                this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
-        }));
     }
 
     private isSupportedEventEmission(context: ReferenceInfo, target: AstNode): boolean {
@@ -1300,15 +1203,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (!isDomainEvent(target) && !isIntegrationEvent(target)) {
             return false;
         }
-        let current: AstNode | undefined = context.container;
-        while (current && !isMethod(current)) {
-            current = current.$container;
-        }
-        if (!isMethod(current) || this.isCrossContext(current, target)) {
+        const current = AstUtils.getContainerOfType(context.container, isMethod);
+        if (!current || this.isCrossContext(current, target)) {
             return false;
         }
 
-        const aggregate = this.getOwningAggregateNode(current);
+        const aggregate = getOwningAggregate(current);
         const root = aggregate?.members.find(member => isEntity(member) && member.root);
         if (isEntity(root) && current.$container === root) {
             return isDomainEvent(target);
@@ -1347,24 +1247,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private isAstAncestor(ancestor: AstNode, node: AstNode): boolean {
-        let current: AstNode | undefined = node;
-        while (current) {
-            if (current === ancestor) {
-                return true;
-            }
-            current = current.$container;
-        }
-        return false;
+        return AstUtils.getContainerOfType(node, (candidate): candidate is AstNode => candidate === ancestor) !== undefined;
     }
 
     private getDescriptionNode(description: AstNodeDescription): AstNode | undefined {
-        if (description.node) {
-            return description.node;
-        }
-        const document = this.documents.getDocument(description.documentUri);
-        return document?.parseResult.value
-            ? this.nodeLocator.getAstNode(document.parseResult.value, description.path)
-            : undefined;
+        return resolveAstNodeDescription(description, this.services);
     }
 
     private isTypeReference(context: ReferenceInfo): boolean {
@@ -1372,132 +1259,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             .includes(context.property)) {
             return false;
         }
-        let current: AstNode | undefined = context.container;
-        while (current) {
-            if (isField(current) || isParameter(current) || isMethod(current)) {
-                return true;
-            }
-            current = current.$container;
-        }
-        return false;
-    }
-
-    private getOwningSharedKernel(node: AstNode): import('./generated/ast.js').SharedKernel | undefined {
-        let current: AstNode | undefined = node;
-        while (current) {
-            if (isSharedKernel(current)) {
-                return current;
-            }
-            current = current.$container;
-        }
-        return undefined;
-    }
-
-    private hasSharedKernelRelationship(source: AstNode, sharedKernel: import('./generated/ast.js').SharedKernel): boolean {
-        const contextName = getOwningContextName(source);
-        const document = AstUtils.getDocument(source);
-        const root = document.parseResult.value;
-        if (!contextName || !isModel(root)) {
-            return false;
-        }
-        const contextMaps = [...root.declarations.filter(isContextMap)];
-        for (const declaration of root.imports) {
-            const resolvedUri = resolveImportUri(document, declaration);
-            if (!resolvedUri) {
-                continue;
-            }
-            const uri = resolvedUri.toString();
-            contextMaps.push(...this.indexManager.allElements('ContextMap', new Set([uri]))
-                .map(description => description.node)
-                .filter((node): node is import('./generated/ast.js').ContextMap =>
-                    isContextMap(node) && (declaration.components.length === 0 ||
-                        declaration.components.some(component => component.component.ref === node))
-                ).toArray());
-        }
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            isSyntacticallyComplete(relationship) && isSharedKernelRelationship(relationship) &&
-            relationship.sharedKernel?.ref === sharedKernel &&
-            relationship.participants.some(participant => participant?.target?.ref?.name === contextName)
-        ));
-    }
-
-    private hasVisibleSharedKernel(source: AstNode, sharedKernel: import('./generated/ast.js').SharedKernel): boolean {
-        const document = AstUtils.getDocument(source);
-        const root = document.parseResult.value;
-        if (!isModel(root)) {
-            return false;
-        }
-        if (root.declarations.includes(sharedKernel)) {
-            return true;
-        }
-        const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
-        return root.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, sharedKernelUri) &&
-                (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel));
-        });
-    }
-
-    private hasAuthorizedEventRelationship(source: AstNode, event: import('./generated/ast.js').IntegrationEvent): boolean {
-        const consumer = getOwningContextName(source);
-        const producer = getOwningContextName(event);
-        const document = AstUtils.getDocument(source);
-        const root = document.parseResult.value;
-        if (!consumer || !producer || !isModel(root) || !root.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, AstUtils.getDocument(event).uri);
-        })) {
-            return false;
-        }
-        for (const declaration of root.imports) {
-            const resolvedUri = resolveImportUri(document, declaration);
-            if (!resolvedUri) {
-                continue;
-            }
-            const uri = resolvedUri.toString();
-            const contextMaps = this.indexManager.allElements('ContextMap', new Set([uri]))
-                .map(description => description.node)
-                .filter((node): node is import('./generated/ast.js').ContextMap => isContextMap(node))
-                .toArray();
-            for (const contextMap of contextMaps) {
-                if (declaration.components.length > 0 && !declaration.components.some(component => component.component.ref === contextMap)) {
-                    continue;
-                }
-                for (const relationship of contextMap.relationships) {
-                    if (!isSyntacticallyComplete(relationship)) {
-                        continue;
-                    }
-                    if (isCustomerSupplierRelationship(relationship) &&
-                        relationship.customer?.context?.ref?.name === consumer &&
-                        relationship.supplier?.context?.ref?.name === producer) {
-                        return true;
-                    }
-                    if (isPartnershipRelationship(relationship)) {
-                        const left = relationship.left?.context?.ref?.name;
-                        const right = relationship.right?.context?.ref?.name;
-                        if ((left === consumer && right === producer) || (right === consumer && left === producer)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private isIntegrationEventExposed(event: import('./generated/ast.js').IntegrationEvent): boolean {
-        const module = getOwningModule(event);
-        return module === undefined || module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === event)
-        );
+        return AstUtils.getContainerOfType(context.container,
+            (node): node is import('./generated/ast.js').Field | import('./generated/ast.js').Parameter | Method =>
+                isField(node) || isParameter(node) || isMethod(node)
+        ) !== undefined;
     }
 
     private isSupportedReadSource(reference: import('./generated/ast.js').ReadSourceReference, target: AstNode): boolean {
-        let method: AstNode | undefined = reference.$container;
-        while (method && !isMethod(method)) {
-            method = method.$container;
-        }
-        if (!isMethod(method)) {
+        const method = AstUtils.getContainerOfType(reference, isMethod);
+        if (!method) {
             return false;
         }
         const owner = method.$container;
@@ -1529,93 +1299,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const method = description.node;
             return isMethod(method) && isQueryService(method.$container) &&
                 getOwningContextName(source) !== getOwningContextName(method) &&
-                this.isQueryServiceExposed(method.$container) &&
-                this.hasExposedQueryResult(method) &&
-                this.hasAuthorizedQueryRelationship(source, method) &&
+                this.referencePolicy.isQueryServiceExposed(method.$container) &&
+                this.referencePolicy.isExposedQueryResult(method) &&
+                this.referencePolicy.hasAuthorizedQueryRelationship(source, method) &&
                 this.isAstAncestor(candidate, method);
         });
-    }
-
-    private isQueryServiceExposed(service: import('./generated/ast.js').QueryService): boolean {
-        const module = getOwningModule(service);
-        return module !== undefined && module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === service)
-        );
-    }
-
-    private hasExposedQueryResult(method: Method): boolean {
-        const resultTypes = [
-            ...(method.returnType?.ref ? [method.returnType.ref] : []),
-            ...(method.returnCollection
-                ? AstUtils.streamReferences(method.returnCollection)
-                    .map(referenceInfo => isReference(referenceInfo.reference) ? referenceInfo.reference.ref : undefined)
-                    .filter((type): type is AstNode => type !== undefined)
-                    .toArray()
-                : [])
-        ];
-        return resultTypes.length === 0 || resultTypes.every(type => {
-            if (!isDataObject(type)) {
-                return false;
-            }
-            const module = getOwningModule(type);
-            return module !== undefined && module === getOwningModule(method) && module.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.target.ref === type)
-            );
-        });
-    }
-
-    private hasQueryResultType(method: Method, type: DataObject): boolean {
-        return method.returnType?.ref === type || method.returnCollection !== undefined &&
-            AstUtils.streamReferences(method.returnCollection).some(referenceInfo =>
-                isReference(referenceInfo.reference) && referenceInfo.reference.ref === type
-            );
-    }
-
-    private hasAuthorizedQueryRelationship(source: AstNode, target: Method): boolean {
-        const consumer = getOwningContextName(source);
-        const provider = getOwningContextName(target);
-        const document = AstUtils.getDocument(source);
-        const root = document.parseResult.value;
-        if (!consumer || !provider || !isModel(root) || !root.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, AstUtils.getDocument(target).uri);
-        })) {
-            return false;
-        }
-        for (const declaration of root.imports) {
-            const resolvedUri = resolveImportUri(document, declaration);
-            if (!resolvedUri) {
-                continue;
-            }
-            const uri = resolvedUri.toString();
-            const maps = this.indexManager.allElements('ContextMap', new Set([uri]))
-                .map(description => description.node)
-                .filter((node): node is import('./generated/ast.js').ContextMap => isContextMap(node))
-                .toArray();
-            for (const contextMap of maps) {
-                if (declaration.components.length > 0 && !declaration.components.some(component => component.component.ref === contextMap)) {
-                    continue;
-                }
-                if (contextMap.relationships.some(relationship => {
-                    if (!isSyntacticallyComplete(relationship)) {
-                        return false;
-                    }
-                    if (isCustomerSupplierRelationship(relationship)) {
-                        return relationship.customer.context?.ref?.name === consumer &&
-                            relationship.supplier.context?.ref?.name === provider;
-                    }
-                    if (isPartnershipRelationship(relationship)) {
-                        const left = relationship.left.context?.ref?.name;
-                        const right = relationship.right.context?.ref?.name;
-                        return (left === consumer && right === provider) || (right === consumer && left === provider);
-                    }
-                    return false;
-                })) {
-                    return true;
-                }
-            }
-        }
-        return false;
     }
 
     private getImportableComponents(component: import('./generated/ast.js').ImportComponent, referenceType: string): AstNodeDescription[] {

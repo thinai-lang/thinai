@@ -333,9 +333,9 @@ describe('Linking tests', () => {
             `import "./query-contexts.tni"
              in bounded context Catalog {
                  module PublicApi {
-                     exposes ProductQueries, ProductInfo
-                     query service ProductQueries {
-                         method findProduct(sku: string) returns ProductInfo
+                      exposes ProductQueries, ProductInfo
+                      query service ProductQueries {
+                          method findProduct(sku: string) returns List<ProductInfo>
                      }
                      data object ProductInfo { available: boolean }
                  }
@@ -532,16 +532,16 @@ describe('Linking tests', () => {
             URI.file('/workspace/conflicting-map-separate-ways.tni'),
             'import "./conflicting-map-contexts.tni" context map Separate { separateWays Ordering -x- Shipping }'
         );
-        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/conflicting-map-consumer.tni'),
-            `import "./conflicting-map-contexts.tni"
+        const consumerText = `import "./conflicting-map-contexts.tni"
              import { Partners } from "./conflicting-map-partnership.tni"
              import { Separate } from "./conflicting-map-separate-ways.tni"
              in bounded context Shipping {
                  application service ShipmentApplication {
                      method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
                  }
-             }`
+             }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-consumer.tni'), consumerText
         );
         documents = [contexts, partnershipMap, separateWaysMap, consumer];
 
@@ -553,6 +553,12 @@ describe('Linking tests', () => {
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'requires an imported context map with an authorized relationship'
         ))).toBe(true);
+        const prefixEnd = consumerText.indexOf('Ordering.OrderPlacedV1') + 'Ordering.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(prefixEnd)
+        });
+        expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
     });
 
     test('treats different integration patterns across imported maps as a conflict', async () => {

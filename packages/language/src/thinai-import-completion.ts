@@ -1,6 +1,7 @@
 import { type LangiumDocument, URI, UriUtils } from 'langium';
 import { CompletionItemKind, type CompletionItem } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
+import { toImportPath } from './thinai-scope-utils.js';
 
 export interface ImportPathContext {
     path: string;
@@ -88,7 +89,7 @@ export class ThinaiImportCompletion {
             if (UriUtils.equals(uri, document.uri)) {
                 continue;
             }
-            const relativePath = this.toImportPath(currentDirectory, uri);
+            const relativePath = toImportPath(currentDirectory, uri);
             if (!relativePath.startsWith(typedPath)) {
                 continue;
             }
@@ -136,8 +137,4 @@ export class ThinaiImportCompletion {
         return left.size === right.size && [...left].every(value => right.has(value));
     }
 
-    private toImportPath(currentDirectory: URI, target: URI): string {
-        const relativePath = UriUtils.relative(currentDirectory, target);
-        return relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
-    }
 }

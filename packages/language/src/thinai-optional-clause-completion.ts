@@ -34,13 +34,7 @@ export class ThinaiOptionalClauseCompletion {
         }) => reference?.ref !== undefined ||
             typeof reference?.$refText === 'string' && reference.$refText.length > 0 &&
             reference.$refNode !== undefined && reference.$refNode.end < offset;
-        const getEnclosingMethod = (node: AstNode): import('./generated/ast.js').Method | undefined => {
-            let current = node.$container;
-            while (current && !isMethod(current)) {
-                current = current.$container;
-            }
-            return isMethod(current) ? current : undefined;
-        };
+        const getEnclosingMethod = (node: AstNode) => AstUtils.getContainerOfType(node, isMethod);
         const isJourneyCommand = (targets: Array<{ ref?: AstNode }>): boolean => {
             const target = targets.at(-1)?.ref;
             return isMethod(target) && isApplicationService(target.$container) && !target.parameters.some(parameter =>

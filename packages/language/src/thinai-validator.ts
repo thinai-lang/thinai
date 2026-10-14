@@ -56,7 +56,6 @@ import {
     isEnumValue,
     isField,
     isIntegrationEvent,
-    isContextMap,
     isCustomerSupplierRelationship,
     isEnumType,
     isModel,
@@ -73,13 +72,20 @@ import {
     isReadSourceReference,
     isSeparateWaysRelationship,
     isSpecificationTextPart,
-    isSharedKernel,
     isSharedKernelRelationship,
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { getExportedName, getOwningAggregate, getOwningContextName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope-utils.js';
-import { isSyntacticallyComplete as isAstSyntacticallyComplete } from './thinai-ast-utils.js';
+import {
+    getExportedName,
+    getOwningAggregate,
+    getOwningContextName,
+    getOwningModule,
+    getOwningSharedKernel,
+    isInSharedKernel,
+    resolveImportUri
+} from './thinai-scope-utils.js';
+import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import {
     canDeclareProjects,
     canDeclareTransition,
@@ -88,6 +94,7 @@ import {
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
+import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import {
     areRelationshipPairDefinitionsCompatible,
     getRelationshipPairSemantics,
@@ -137,7 +144,11 @@ export function registerValidationChecks(services: ThinaiServices): void {
 }
 
 export class ThinaiValidator {
-    constructor(private readonly services: ThinaiServices) {}
+    private readonly referencePolicy: ThinaiReferencePolicy;
+
+    constructor(private readonly services: ThinaiServices) {
+        this.referencePolicy = new ThinaiReferencePolicy(services);
+    }
 
     checkBoundedContext(context: BoundedContext, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(context, accept);
@@ -257,7 +268,7 @@ export class ThinaiValidator {
         const relationshipsByPair = new Map<string, ContextRelationshipPairSemantics[]>();
         const reported = new Set<ContextRelationship>();
         for (const relationship of contextMap.relationships) {
-            if (!this.isSyntacticallyComplete(relationship)) {
+            if (!isSyntacticallyComplete(relationship)) {
                 continue;
             }
             for (const pair of getRelationshipPairSemantics(relationship)) {
@@ -283,9 +294,9 @@ export class ThinaiValidator {
         }>>();
         const reported = new Set<ContextRelationship>();
 
-        for (const contextMap of this.getImportedContextMaps(model)) {
+        for (const contextMap of this.referencePolicy.getVisibleContextMaps(model)) {
             for (const relationship of contextMap.relationships) {
-                if (!this.isSyntacticallyComplete(relationship)) {
+                if (!isSyntacticallyComplete(relationship)) {
                     continue;
                 }
                 for (const pair of getRelationshipPairSemantics(relationship)) {
@@ -359,7 +370,7 @@ export class ThinaiValidator {
     checkAggregate(aggregate: Aggregate, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(aggregate, accept);
         const roots = aggregate.members.filter(member => isEntity(member) && member.root);
-        if (roots.length !== 1 && this.isSyntacticallyComplete(aggregate)) {
+        if (roots.length !== 1 && isSyntacticallyComplete(aggregate)) {
             accept('error', 'An aggregate must declare exactly one root entity.', {
                 node: aggregate,
                 property: 'members'
@@ -372,18 +383,18 @@ export class ThinaiValidator {
         this.checkFieldMethodNameConflicts(entity.fields, entity.methods, accept);
         this.checkDuplicateFieldNames(entity.fields, accept);
         this.checkDuplicateConstructorSignatures(entity.constructors, accept);
-        if (this.isSyntacticallyComplete(entity)) {
+        if (isSyntacticallyComplete(entity)) {
             this.checkEntityStateGraph(entity, accept);
         }
-        const aggregate = this.getOwningAggregate(entity);
-        if (!aggregate && this.isSyntacticallyComplete(entity)) {
+        const aggregate = getOwningAggregate(entity);
+        if (!aggregate && isSyntacticallyComplete(entity)) {
             accept('error', 'An entity must belong to an aggregate.', {
                 node: entity,
                 property: 'name'
             });
         }
         const identifierFields = entity.fields.filter(field => field.identifier);
-        if (identifierFields.length !== 1 && this.isSyntacticallyComplete(entity)) {
+        if (identifierFields.length !== 1 && isSyntacticallyComplete(entity)) {
             accept('error', 'An entity must declare exactly one identifier field.', {
                 node: entity,
                 property: 'fields'
@@ -471,7 +482,7 @@ export class ThinaiValidator {
                 });
             }
             if (isIntegrationEvent(field.$container) && typeReferences.some(reference =>
-                reference.ref !== undefined && this.getOwningAggregate(reference.ref) !== undefined
+                reference.ref !== undefined && getOwningAggregate(reference.ref) !== undefined
             )) {
                 accept('error', 'An integration-event payload must not expose types owned by an aggregate.', {
                     node: field,
@@ -496,10 +507,10 @@ export class ThinaiValidator {
                 }
             }
         }
-        const sourceAggregate = this.getOwningAggregate(field);
+        const sourceAggregate = getOwningAggregate(field);
         for (const reference of typeReferences) {
             const target = reference.ref;
-            const targetAggregate = target && isEntity(target) ? this.getOwningAggregate(target) : undefined;
+            const targetAggregate = target && isEntity(target) ? getOwningAggregate(target) : undefined;
             if (targetAggregate && targetAggregate !== sourceAggregate) {
                 accept('error', 'An aggregate must reference another aggregate through its identifier, not its entity.', {
                     node: field,
@@ -660,7 +671,7 @@ export class ThinaiValidator {
     }
 
     checkCollectionType(collection: CollectionType, accept: ValidationAcceptor): void {
-        if (!this.isSyntacticallyComplete(collection) || !collection.$cstNode?.text.trimEnd().endsWith('>')) {
+        if (!isSyntacticallyComplete(collection) || !collection.$cstNode?.text.trimEnd().endsWith('>')) {
             return;
         }
         const hasValueType = collection.valuePrimitive !== undefined || collection.valueType !== undefined || collection.valueCollection !== undefined;
@@ -701,7 +712,7 @@ export class ThinaiValidator {
         }
         if (queryService) {
             if (!method.returnPrimitive && !method.returnType && !method.returnCollection &&
-                this.isSyntacticallyComplete(method)) {
+                isSyntacticallyComplete(method)) {
                 accept('error', 'A query must declare a result type.', {
                     node: method,
                     property: 'returnType'
@@ -734,8 +745,9 @@ export class ThinaiValidator {
                     property: 'type'
                 });
             }
-            if (event && isIntegrationEvent(event) && this.isCrossContextOwned(method, event) && !this.hasAuthorizedEventRelationship(method, event)) {
-                accept('error', this.isIntegrationEventExposed(event)
+            if (event && isIntegrationEvent(event) && this.isCrossContextOwned(method, event) &&
+                !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
+                accept('error', this.referencePolicy.isIntegrationEventExposed(event)
                     ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
                     : 'An integration event in a module must be explicitly exposed before another bounded context can consume it.', {
                     node: eventParameters[0],
@@ -756,13 +768,13 @@ export class ThinaiValidator {
             }
         }
         validateMethodInvocations(method, applicationService, queryService, eventParameters, accept, {
-            isSyntacticallyComplete: node => this.isSyntacticallyComplete(node),
-            getOwningSharedKernel: node => this.getOwningSharedKernel(node),
-            hasVisibleSharedKernel: (source, sharedKernel) => this.hasVisibleSharedKernel(source, sharedKernel),
-            hasSharedKernelRelationship: (source, sharedKernel) => this.hasSharedKernelRelationship(source, sharedKernel),
+            isSyntacticallyComplete,
+            getOwningSharedKernel,
+            hasVisibleSharedKernel: (source, sharedKernel) => this.referencePolicy.hasVisibleSharedKernel(source, sharedKernel),
+            hasSharedKernelRelationship: (source, sharedKernel) => this.referencePolicy.hasSharedKernelRelationship(source, sharedKernel),
             isCrossContextOwned: (source, target) => this.isCrossContextOwned(source, target),
             isEventParameter: parameter => this.isEventParameter(parameter),
-            getOwningAggregate: node => this.getOwningAggregate(node),
+            getOwningAggregate,
             isAggregateRootMethod: (target, aggregate) => this.isAggregateRootMethod(target, aggregate)
         });
         if (queryService) {
@@ -792,7 +804,7 @@ export class ThinaiValidator {
                 });
                 continue;
             }
-            if (!this.isSyntacticallyComplete(emission)) {
+            if (!isSyntacticallyComplete(emission)) {
                 continue;
             }
             for (const emitted of emission.events) {
@@ -890,7 +902,7 @@ export class ThinaiValidator {
     }
 
     checkReadDependency(read: ReadDependency, accept: ValidationAcceptor): void {
-        if (!this.isSyntacticallyComplete(read)) {
+        if (!isSyntacticallyComplete(read)) {
             return;
         }
         let method: AstNode | undefined = read.$container;
@@ -941,12 +953,13 @@ export class ThinaiValidator {
                 });
                 continue;
             }
-            if (!this.isQueryServiceExposed(target.$container) || !this.hasAuthorizedQueryRelationship(read, target)) {
+            if (!this.referencePolicy.isQueryServiceExposed(target.$container) ||
+                !this.referencePolicy.hasAuthorizedQueryRelationship(read, target)) {
                 accept('error', 'Reading a query service in another bounded context requires an exposed query contract and an imported authorized context map.', {
                     node: source,
                     property: 'target'
                 });
-            } else if (!this.hasPublishedQueryResult(target)) {
+            } else if (!this.referencePolicy.isExposedQueryResult(target)) {
                 accept('error', 'A published query operation must return primitives or explicitly exposed data-object contracts.', {
                     node: source,
                     property: 'target'
@@ -980,7 +993,7 @@ export class ThinaiValidator {
     private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
         const cstNode = method.$cstNode;
         const hasClosedBody = cstNode !== undefined && findCstTokenOffset(cstNode, '{') !== undefined &&
-            cstNode.text.trimEnd().endsWith('}') && this.isSyntacticallyComplete(method);
+            cstNode.text.trimEnd().endsWith('}') && isSyntacticallyComplete(method);
         if (method.projects.length === 0 && hasClosedBody) {
             accept('error', 'A projector method must declare at least one read model with projects.', {
                 node: method,
@@ -1040,7 +1053,7 @@ export class ThinaiValidator {
     }
 
     checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
-        const aggregate = this.getOwningAggregate(transition);
+        const aggregate = getOwningAggregate(transition);
         const method = transition.$container;
         const entity = method.$container;
         if (!aggregate || !canDeclareTransition(method) || !isEntity(entity)) {
@@ -1050,7 +1063,7 @@ export class ThinaiValidator {
             });
             return;
         }
-        if (!this.isSyntacticallyComplete(transition)) {
+        if (!isSyntacticallyComplete(transition)) {
             return;
         }
         const changedFields = new Set<Field>();
@@ -1095,21 +1108,21 @@ export class ThinaiValidator {
 
     checkJourney(journey: Journey, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(journey, accept);
-        if (journey.actors.length === 0 && this.isSyntacticallyComplete(journey)) {
+        if (journey.actors.length === 0 && isSyntacticallyComplete(journey)) {
             accept('error', 'A journey must contain at least one actor block.', {
                 node: journey,
                 property: 'actors'
             });
         }
         for (const actorBlock of journey.actors) {
-            if (actorBlock.steps.length === 0 && this.isSyntacticallyComplete(actorBlock)) {
+            if (actorBlock.steps.length === 0 && isSyntacticallyComplete(actorBlock)) {
                 accept('error', 'An actor block in a journey must contain at least one command step.', {
                     node: actorBlock,
                     property: 'steps'
                 });
             }
             for (const step of actorBlock.steps) {
-                if (this.isSyntacticallyComplete(step)) {
+                if (isSyntacticallyComplete(step)) {
                     this.checkJourneyStep(step, accept);
                 }
             }
@@ -1137,7 +1150,7 @@ export class ThinaiValidator {
 
     checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {
         this.checkUniqueParameterNames(constructor.parameters, accept);
-        const sourceAggregate = this.getOwningAggregate(constructor);
+        const sourceAggregate = getOwningAggregate(constructor);
         for (const parameter of constructor.parameters) {
             if (this.isEventParameter(parameter)) {
                 accept('error', 'Constructors must not accept events; handle events in application-service methods or projectors.', {
@@ -1155,7 +1168,7 @@ export class ThinaiValidator {
             }
             const foreignRoot = typeReferences.find(reference => {
                 const target = reference.ref;
-                return isEntity(target) && target.root && this.getOwningAggregate(target) !== sourceAggregate;
+                return isEntity(target) && target.root && getOwningAggregate(target) !== sourceAggregate;
             });
             if (foreignRoot) {
                 accept('error', 'A constructor must reference another aggregate through its identifier, not its root entity.', {
@@ -1226,13 +1239,13 @@ export class ThinaiValidator {
         property: string,
         applicationServiceSignature: boolean
     ): void {
-        const sourceAggregate = this.getOwningAggregate(node);
+            const sourceAggregate = getOwningAggregate(node);
         for (const reference of references) {
             const target = reference.ref;
             if (!target || !isEntity(target)) {
                 continue;
             }
-            const targetAggregate = this.getOwningAggregate(target);
+            const targetAggregate = getOwningAggregate(target);
             if (applicationServiceSignature ||
                 (!target.root && sourceAggregate !== targetAggregate)) {
                 accept('error', applicationServiceSignature
@@ -1370,10 +1383,10 @@ export class ThinaiValidator {
             const crossesContext = this.isCrossContextOwned(referenceInfo.container, target);
             if (isField(target) && crossesContext && !isInSharedKernel(target)) {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
-                const authorizedPublicField = event !== undefined && this.isIntegrationEventExposed(event) &&
-                    this.hasAuthorizedEventRelationship(referenceInfo.container, event);
+                const authorizedPublicField = event !== undefined && this.referencePolicy.isIntegrationEventExposed(event) &&
+                    this.referencePolicy.hasAuthorizedEventRelationship(referenceInfo.container, event);
                 const publishedReadField = isDataObject(target.$container) &&
-                    this.isPublishedReadResponseType(referenceInfo.container, target.$container);
+                    this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target.$container);
                 if (!authorizedPublicField && !publishedReadField) {
                     accept('error', isDomainEvent(target.$container)
                         ? 'Specification text cannot reference a private DomainEvent field from another bounded context.'
@@ -1385,8 +1398,8 @@ export class ThinaiValidator {
                 }
             }
             const publishedQueryRead = isReadSourceReference(referenceInfo.container) && isMethod(target) &&
-                isQueryService(target.$container) && this.isQueryServiceExposed(target.$container) &&
-                this.hasAuthorizedQueryRelationship(referenceInfo.container, target);
+                isQueryService(target.$container) && this.referencePolicy.isQueryServiceExposed(target.$container) &&
+                this.referencePolicy.hasAuthorizedQueryRelationship(referenceInfo.container, target);
             if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target) && !publishedQueryRead) {
                 accept('error', 'Specification text cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container,
@@ -1398,7 +1411,7 @@ export class ThinaiValidator {
             if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
                 (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
                     isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target)) &&
-                !this.isPublishedReadResponseType(referenceInfo.container, target)) {
+                !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -1413,7 +1426,8 @@ export class ThinaiValidator {
                 return;
             }
             if (isSpecificationReference && isIntegrationEvent(target) && crossesContext &&
-                (!this.isIntegrationEventExposed(target) || !this.hasAuthorizedEventRelationship(referenceInfo.container, target))) {
+                (!this.referencePolicy.isIntegrationEventExposed(target) ||
+                    !this.referencePolicy.hasAuthorizedEventRelationship(referenceInfo.container, target))) {
                 accept('error', 'Cross-context IntegrationEvent references require an exposed contract and an authorized context-map relationship.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -1459,9 +1473,9 @@ export class ThinaiValidator {
     checkRepository(repository: Repository, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(repository, accept);
         const root = repository.root?.ref;
-        const aggregate = root ? this.getOwningAggregate(root) : undefined;
+        const aggregate = root ? getOwningAggregate(root) : undefined;
         if (!isEntity(root) || !root.root || !aggregate) {
-            if (!this.isSyntacticallyComplete(repository)) {
+            if (!isSyntacticallyComplete(repository)) {
                 return;
             }
             accept('error', 'A repository must manage an aggregate-root entity.', {
@@ -1479,7 +1493,7 @@ export class ThinaiValidator {
         const writeRepositories = this.services.shared.workspace.LangiumDocuments.all.toArray()
             .flatMap(document => document.parseResult.value
                 ? AstUtils.streamAst(document.parseResult.value).filter(isRepository)
-                    .filter(candidate => candidate.root.ref && this.getOwningAggregate(candidate.root.ref) === aggregate).toArray()
+                    .filter(candidate => candidate.root.ref && getOwningAggregate(candidate.root.ref) === aggregate).toArray()
                 : []);
         const ordered = writeRepositories.sort((left, right) => this.getDeclarationKey(left).localeCompare(this.getDeclarationKey(right)));
         if (ordered.length > 1 && ordered[0] !== repository) {
@@ -1534,8 +1548,8 @@ export class ThinaiValidator {
         this.checkDuplicateDeclaration(factory, accept);
         for (const method of factory.methods) {
             const result = method.returnType?.ref;
-            if (this.isSyntacticallyComplete(method) &&
-                (!isEntity(result) || !result.root || !this.getOwningAggregate(result) || this.isCrossContextOwned(factory, result))) {
+            if (isSyntacticallyComplete(method) &&
+                (!isEntity(result) || !result.root || !getOwningAggregate(result) || this.isCrossContextOwned(factory, result))) {
                 accept('error', 'A factory method must return an aggregate-root entity in its own bounded context.', {
                     node: method,
                     property: 'returnType'
@@ -1545,7 +1559,7 @@ export class ThinaiValidator {
     }
 
     checkContextRelationship(relationship: ContextRelationship, accept: ValidationAcceptor): void {
-        if (!this.isSyntacticallyComplete(relationship)) {
+        if (!isSyntacticallyComplete(relationship)) {
             return;
         }
         const endpoints = this.getContextMapEndpoints(relationship);
@@ -1639,186 +1653,6 @@ export class ThinaiValidator {
         });
     }
 
-    private hasAuthorizedEventRelationship(source: AstNode, event: IntegrationEvent): boolean {
-        if (!this.isIntegrationEventExposed(event)) {
-            return false;
-        }
-        const consumer = getOwningContextName(source);
-        const producer = getOwningContextName(event);
-        if (!consumer || !producer) {
-            return false;
-        }
-        const document = AstUtils.getDocument(source);
-        const model = document.parseResult.value;
-        if (!isModel(model)) {
-            return false;
-        }
-        const eventDocument = AstUtils.getDocument(event);
-        if (!model.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, eventDocument.uri);
-        })) {
-            return false;
-        }
-
-        const contextMaps = this.getImportedContextMaps(model);
-        const pairKey = JSON.stringify([consumer, producer].sort());
-        const relationships = contextMaps.flatMap(contextMap =>
-            contextMap.relationships.flatMap(relationship =>
-                getRelationshipPairSemantics(relationship)
-                    .filter(pair => pair.key === pairKey)
-                    .map(pair => pair)
-            )
-        );
-        const teamRelationships = relationships.filter(pair => pair.kind !== 'sharedKernel');
-        const teamSignatures = new Set(teamRelationships.map(pair => pair.signature));
-        const conflictsWithSeparateWays = teamRelationships.some(pair => pair.kind === 'separateWays') &&
-            relationships.some(pair => pair.kind === 'sharedKernel');
-        if (teamSignatures.size > 1 || conflictsWithSeparateWays) {
-            return false;
-        }
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            this.authorizesEventRelationship(relationship, consumer, producer)
-        ));
-    }
-
-    private getImportedContextMaps(model: Model): ContextMap[] {
-        const document = AstUtils.getDocument(model);
-        const contextMaps = new Set<ContextMap>();
-        for (const declaration of model.imports) {
-            const uri = resolveImportUri(document, declaration);
-            if (!uri) {
-                continue;
-            }
-            const mapDocument = this.services.shared.workspace.LangiumDocuments.getDocument(
-                uri
-            );
-            const importedModel = mapDocument?.parseResult.value;
-            if (!mapDocument || !isModel(importedModel)) {
-                continue;
-            }
-            for (const contextMap of importedModel.declarations.filter(isContextMap)) {
-                if (declaration.components.length === 0 ||
-                    declaration.components.some(component => component.component.ref === contextMap)) {
-                    contextMaps.add(contextMap);
-                }
-            }
-        }
-        return [...contextMaps];
-    }
-
-    private isIntegrationEventExposed(event: IntegrationEvent): boolean {
-        const module = getOwningModule(event);
-        return module === undefined || module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === event)
-        );
-    }
-
-    private isQueryServiceExposed(service: QueryService): boolean {
-        const module = getOwningModule(service);
-        return module !== undefined && module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === service)
-        );
-    }
-
-    private hasPublishedQueryResult(method: Method): boolean {
-        const references = this.collectTypeReferences(method.returnType, method.returnCollection);
-        if (references.length === 0) {
-            return true;
-        }
-        const serviceModule = getOwningModule(method);
-        return serviceModule !== undefined && references.every(reference => {
-            const type = reference.ref;
-            return isDataObject(type) && getOwningModule(type) === serviceModule &&
-                serviceModule.exposures.some(exposure =>
-                    exposure.declarations.some(declaration => declaration.target.ref === type)
-                );
-        });
-    }
-
-    private hasAuthorizedQueryRelationship(source: AstNode, target: Method): boolean {
-        const consumer = getOwningContextName(source);
-        const provider = getOwningContextName(target);
-        if (!consumer || !provider) {
-            return false;
-        }
-        const document = AstUtils.getDocument(source);
-        const model = document.parseResult.value;
-        if (!isModel(model)) {
-            return false;
-        }
-        const targetDocument = AstUtils.getDocument(target);
-        if (!model.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, targetDocument.uri);
-        })) {
-            return false;
-        }
-        const contextMaps = this.getImportedContextMaps(model);
-        const pairKey = JSON.stringify([consumer, provider].sort());
-        const relationships = contextMaps.flatMap(contextMap => contextMap.relationships.flatMap(relationship =>
-            getRelationshipPairSemantics(relationship).filter(pair => pair.key === pairKey)
-        ));
-        const teamRelationships = relationships.filter(pair => pair.kind !== 'sharedKernel');
-        if (new Set(teamRelationships.map(pair => pair.signature)).size > 1 ||
-            teamRelationships.some(pair => pair.kind === 'separateWays')) {
-            return false;
-        }
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship => {
-            if (!this.isSyntacticallyComplete(relationship)) {
-                return false;
-            }
-            if (isCustomerSupplierRelationship(relationship)) {
-                return relationship.customer?.context?.ref?.name === consumer &&
-                    relationship.supplier?.context?.ref?.name === provider;
-            }
-            if (isPartnershipRelationship(relationship)) {
-                const left = relationship.left?.context?.ref?.name;
-                const right = relationship.right?.context?.ref?.name;
-                return (left === consumer && right === provider) || (right === consumer && left === provider);
-            }
-            return false;
-        }));
-    }
-
-    private isPublishedReadResponseType(source: AstNode, type: AstNode): boolean {
-        if (!isDataObject(type)) {
-            return false;
-        }
-        const module = getOwningModule(type);
-        if (!module || !module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === type)
-        )) {
-            return false;
-        }
-        let method: AstNode | undefined = source;
-        while (method && !isMethod(method)) {
-            method = method.$container;
-        }
-        return isMethod(method) && method.reads.some(read => read.sources.some(reference => {
-            const query = reference.target.ref;
-            return isMethod(query) && isQueryService(query.$container) && query.returnType?.ref === type &&
-                getOwningContextName(query) !== getOwningContextName(method) &&
-                this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
-        }));
-    }
-
-    private authorizesEventRelationship(relationship: ContextRelationship, consumer: string, producer: string): boolean {
-        if (!this.isSyntacticallyComplete(relationship)) {
-            return false;
-        }
-        if (isCustomerSupplierRelationship(relationship)) {
-            return relationship.customer?.context?.ref?.name === consumer &&
-                relationship.supplier?.context?.ref?.name === producer;
-        }
-        if (isPartnershipRelationship(relationship)) {
-            const left = relationship.left?.context?.ref?.name;
-            const right = relationship.right?.context?.ref?.name;
-            return (left === consumer && right === producer) || (right === consumer && left === producer);
-        }
-        return false;
-    }
-
     private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {
         if (isCustomerSupplierRelationship(relationship)) {
             return [relationship.customer, relationship.supplier]
@@ -1829,14 +1663,6 @@ export class ThinaiValidator {
                 .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
         }
         return [];
-    }
-
-    private isSyntacticallyComplete(node: AstNode): boolean {
-        return isAstSyntacticallyComplete(node);
-    }
-
-    private getOwningAggregate(node: AstNode): Aggregate | undefined {
-        return getOwningAggregate(node);
     }
 
     private collectTypeReferences(
@@ -1866,10 +1692,10 @@ export class ThinaiValidator {
                 continue;
             }
             if (isInSharedKernel(target)) {
-                const sharedKernel = this.getOwningSharedKernel(target);
-                const sourceSharedKernel = this.getOwningSharedKernel(node);
+                const sharedKernel = getOwningSharedKernel(target);
+                const sourceSharedKernel = getOwningSharedKernel(node);
                 if (sourceContext && sourceSharedKernel !== sharedKernel &&
-                    (!sharedKernel || !this.hasSharedKernelRelationship(node, sharedKernel))) {
+                    (!sharedKernel || !this.referencePolicy.hasSharedKernelRelationship(node, sharedKernel))) {
                     accept('error', 'Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.', {
                         node,
                         property
@@ -1890,63 +1716,6 @@ export class ThinaiValidator {
                 return;
             }
         }
-    }
-
-    private hasSharedKernelRelationship(source: AstNode, sharedKernel: SharedKernel): boolean {
-        const contextName = getOwningContextName(source);
-        const document = AstUtils.getDocument(source);
-        const model = document.parseResult.value;
-        if (!contextName || !isModel(model)) {
-            return false;
-        }
-        const contextMaps = [...model.declarations.filter(isContextMap)];
-        for (const declaration of model.imports) {
-            const uri = resolveImportUri(document, declaration);
-            if (!uri) {
-                continue;
-            }
-            const importedDocument = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
-            const importedModel = importedDocument?.parseResult.value;
-            if (!importedDocument || !isModel(importedModel)) {
-                continue;
-            }
-            contextMaps.push(...importedModel.declarations.filter(isContextMap).filter(contextMap =>
-                declaration.components.length === 0 || declaration.components.some(component => component.component.ref === contextMap)
-            ));
-        }
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
-            this.isSyntacticallyComplete(relationship) && isSharedKernelRelationship(relationship) &&
-            relationship.sharedKernel?.ref === sharedKernel &&
-            relationship.participants.some(participant => participant?.target?.ref?.name === contextName)
-        ));
-    }
-
-    private hasVisibleSharedKernel(source: AstNode, sharedKernel: SharedKernel): boolean {
-        const document = AstUtils.getDocument(source);
-        const model = document.parseResult.value;
-        if (!isModel(model)) {
-            return false;
-        }
-        if (model.declarations.includes(sharedKernel)) {
-            return true;
-        }
-        const sharedKernelUri = AstUtils.getDocument(sharedKernel).uri;
-        return model.imports.some(declaration => {
-            const uri = resolveImportUri(document, declaration);
-            return uri !== undefined && UriUtils.equals(uri, sharedKernelUri) &&
-                (declaration.components.length === 0 || declaration.components.some(component => component.component.ref === sharedKernel));
-        });
-    }
-
-    private getOwningSharedKernel(node: AstNode): SharedKernel | undefined {
-        let current: AstNode | undefined = node;
-        while (current) {
-            if (isSharedKernel(current)) {
-                return current;
-            }
-            current = current.$container;
-        }
-        return undefined;
     }
 
     private isCrossContextOwned(source: AstNode, target: AstNode): boolean {

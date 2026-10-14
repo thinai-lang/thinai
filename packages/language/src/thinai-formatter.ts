@@ -477,108 +477,31 @@ export class ThinaiFormatter extends AbstractFormatter {
     }
 
     private getBlockChildren(node: AstNode): AstNode[] {
-        const properties = node as AstNode & {
-            members?: AstNode[];
-            invariants?: AstNode[];
-            constructors?: AstNode[];
-            methods?: AstNode[];
-            fields?: AstNode[];
-            values?: AstNode[];
-            relationships?: AstNode[];
-            exposures?: AstNode[];
-            declarations?: AstNode[];
-            actors?: AstNode[];
-            steps?: AstNode[];
-            preconditions?: AstNode[];
-            postconditions?: AstNode[];
-            behaviors?: AstNode[];
-            transitions?: AstNode[];
-            emissions?: AstNode[];
-            changes?: AstNode[];
-            events?: AstNode[];
-            invocations?: AstNode[];
-            reads?: AstNode[];
-            sources?: AstNode[];
-        };
-
-        let children: AstNode[];
-        switch (node.$type) {
-            case 'BoundedContextPart':
-            case 'SharedKernel':
-                children = properties.members ?? [];
-                break;
-            case 'Aggregate':
-                children = [...(properties.members ?? []), ...(properties.invariants ?? [])];
-                break;
-            case 'Entity':
-            case 'ValueObject':
-                children = [
-                    ...(properties.constructors ?? []),
-                    ...(properties.methods ?? []),
-                    ...(properties.fields ?? [])
-                ].sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
-                break;
-            case 'EnumType':
-                children = properties.values ?? [];
-                break;
-            case 'ContextMap':
-                children = properties.relationships ?? [];
-                break;
-            case 'Module':
-                children = [...(properties.exposures ?? []), ...(properties.members ?? [])];
-                break;
-            case 'ApplicationService':
-            case 'Projector':
-            case 'DomainService':
-            case 'QueryService':
-            case 'Factory':
-                children = properties.methods ?? [];
-                break;
-            case 'ReadModel':
-            case 'DataObject':
-            case 'DomainEvent':
-            case 'IntegrationEvent':
-                children = properties.fields ?? [];
-                break;
-            case 'Method':
-                children = [
-                    ...(properties.invariants ?? []),
-                    ...(properties.preconditions ?? []),
-                    ...(properties.postconditions ?? []),
-                    ...(properties.behaviors ?? []),
-                    ...(properties.transitions ?? []),
-                    ...(properties.emissions ?? []),
-                    ...(properties.invocations ?? []),
-                    ...(properties.reads ?? [])
-                ];
-                break;
-            case 'Transition':
-                children = properties.changes ?? [];
-                break;
-            case 'EventEmission':
-                children = properties.events ?? [];
-                break;
-            case 'ReadDependency':
-                children = properties.sources ?? [];
-                break;
-            case 'Constructor':
-                children = [
-                    ...(properties.invariants ?? []),
-                    ...(properties.preconditions ?? []),
-                    ...(properties.postconditions ?? []),
-                    ...(properties.behaviors ?? [])
-                ];
-                break;
-            case 'Journey':
-                children = properties.actors ?? [];
-                break;
-            case 'JourneyActor':
-                children = properties.steps ?? [];
-                break;
-            default:
-                children = [];
+        const cstNode = node.$cstNode;
+        if (!cstNode) {
+            return [];
         }
-        return children.sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
+        const leaves = CstUtils.flattenCst(cstNode).toArray();
+        const opening = leaves.find(leaf => leaf.text === '{');
+        const closing = [...leaves].reverse().find(leaf => leaf.text === '}');
+        if (!opening) {
+            return [];
+        }
+        const bodyEnd = closing?.offset ?? cstNode.end;
+        const excludedProperties: Record<string, readonly string[]> = {
+            Method: ['projects'],
+            QueryRepository: ['sources'],
+            SharedKernelRelationship: ['participants']
+        };
+        const excluded = new Set(excludedProperties[node.$type] ?? []);
+        return AstUtils.streamContents(node)
+            .filter(child => {
+                const childCst = child.$cstNode;
+                return childCst !== undefined && childCst.offset >= opening.end && childCst.end <= bodyEnd &&
+                    !excluded.has(child.$containerProperty ?? '');
+            })
+            .toArray()
+            .sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
     }
 
     private withRangeFormatting<T>(format: () => T): T {

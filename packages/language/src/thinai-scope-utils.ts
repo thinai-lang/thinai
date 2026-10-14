@@ -1,4 +1,12 @@
-import { AstUtils, type AstNode, type LangiumDocument, UriUtils } from 'langium';
+import {
+    AstUtils,
+    type AstNode,
+    type AstNodeDescription,
+    type LangiumCoreServices,
+    type LangiumDocument,
+    type URI,
+    UriUtils
+} from 'langium';
 import {
     isBoundedContext,
     isBoundedContextPart,
@@ -14,7 +22,8 @@ import {
     isValueObject,
     type Aggregate,
     type Import,
-    type Module
+    type Module,
+    type SharedKernel
 } from './generated/ast.js';
 
 const exportedTypes = new Set([
@@ -49,24 +58,21 @@ export function getDeclarationPath(node: NamedNode): string[] {
 
 /** Shared containment and URI helpers used by scoping, validation, and tooling. */
 export function getOwningContextName(node: AstNode): string | undefined {
-    let current: AstNode | undefined = node;
-    while (current) {
-        if (isBoundedContext(current)) {
-            return current.name;
-        }
-        if (isBoundedContextPart(current)) {
-            return current.context.ref?.name ?? current.context.$refText;
-        }
-        if (isSharedKernel(current)) {
-            return current.name;
-        }
-        current = current.$container;
+    const owner = AstUtils.getContainerOfType(node, (candidate): candidate is AstNode =>
+        isBoundedContext(candidate) || isBoundedContextPart(candidate) || isSharedKernel(candidate)
+    );
+    if (isBoundedContext(owner) || isSharedKernel(owner)) {
+        return owner.name;
     }
-    return undefined;
+    return isBoundedContextPart(owner) ? owner.context.ref?.name ?? owner.context.$refText : undefined;
 }
 
 export function getOwningAggregate(node: AstNode): Aggregate | undefined {
     return AstUtils.getContainerOfType(node, isAggregate);
+}
+
+export function getOwningSharedKernel(node: AstNode): SharedKernel | undefined {
+    return AstUtils.getContainerOfType(node, isSharedKernel);
 }
 
 export function getExportedName(node: NamedNode): string {
@@ -76,25 +82,29 @@ export function getExportedName(node: NamedNode): string {
 }
 
 export function getOwningModule(node: AstNode): Module | undefined {
-    let current: AstNode | undefined = node;
-    while (current) {
-        if (isModule(current)) {
-            return current;
-        }
-        current = current.$container;
-    }
-    return undefined;
+    return AstUtils.getContainerOfType(node, isModule);
 }
 
 export function isInSharedKernel(node: AstNode): boolean {
-    let current: AstNode | undefined = node;
-    while (current) {
-        if (isSharedKernel(current)) {
-            return true;
-        }
-        current = current.$container;
+    return getOwningSharedKernel(node) !== undefined;
+}
+
+export function resolveAstNodeDescription(
+    description: AstNodeDescription,
+    services: Pick<LangiumCoreServices, 'shared' | 'workspace'>
+): AstNode | undefined {
+    if (description.node) {
+        return description.node;
     }
-    return false;
+    const document = services.shared.workspace.LangiumDocuments.getDocument(description.documentUri);
+    return document?.parseResult.value
+        ? services.workspace.AstNodeLocator.getAstNode(document.parseResult.value, description.path)
+        : undefined;
+}
+
+export function toImportPath(currentDirectory: URI, target: URI): string {
+    const relativePath = UriUtils.relative(currentDirectory, target);
+    return relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
 }
 
 export function resolveImportUri(document: LangiumDocument, importDeclaration: Import) {

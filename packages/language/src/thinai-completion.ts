@@ -18,15 +18,10 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
-    isApplicationService,
     isEnumType,
-    isDomainEvent,
-    isDomainService,
-    isEnumValue,
     isEntity,
     isFactory,
     isField,
-    isIntegrationEvent,
     isJourneyStep,
     isModel,
     isMethod,
@@ -36,14 +31,13 @@ import {
     isProjector,
     isQueryRepository,
     isReadSourceReference,
-    isSpecificationText,
     isSpecificationTextPart,
-    isTransition,
-    isQueryService
+    isTransition
 } from './generated/ast.js';
-import { getExportedName, isInSharedKernel } from './thinai-scope-utils.js';
+import { isInSharedKernel } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
+import { ThinaiCompletionDetails } from './thinai-completion-details.js';
 import {
     getBlockNestingDepth,
     getIncompleteStatementSuffixes,
@@ -58,28 +52,15 @@ import { ThinaiImportCompletion } from './thinai-import-completion.js';
 import { ThinaiContextMapCompletion } from './thinai-context-map-completion.js';
 import { ThinaiOptionalClauseCompletion } from './thinai-optional-clause-completion.js';
 import { ThinaiKeywordContinuations } from './thinai-keyword-continuations.js';
+import {
+    ThinaiQueryRepositoryCompletion,
+    isQueryRepositoryReadCompletionPosition
+} from './thinai-query-repository-completion.js';
+import { getSpecificationCompletionContext } from './thinai-specification-completion-context.js';
+
+export { isQueryRepositoryReadCompletionPosition };
 
 const siblingKeywordPrefixes = getSiblingKeywordPrefixes();
-
-/** True when the cursor is on the blank next-statement position for a query repository read source. */
-export function isQueryRepositoryReadCompletionPosition(document: LangiumDocument, offset: number): boolean {
-    const root = document.parseResult.value;
-    if (!root) {
-        return false;
-    }
-    const text = document.textDocument.getText();
-    const repository = AstUtils.streamAst(root)
-        .filter(isQueryRepository)
-        .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-            scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
-        .toArray()
-        .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
-    const servedReference = repository?.readModel;
-    const referenceEnd = servedReference?.$refNode?.end;
-    return repository !== undefined && typeof servedReference?.$refText === 'string' &&
-        servedReference.$refText.length > 0 && referenceEnd !== undefined && offset >= referenceEnd &&
-        repository.sources.length === 0 && /^[\t \r\n]*$/u.test(text.slice(referenceEnd, offset));
-}
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
@@ -91,16 +72,24 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     private readonly contextMapCompletion: ThinaiContextMapCompletion;
     private readonly optionalClauseCompletion: ThinaiOptionalClauseCompletion;
     private readonly keywordContinuations: ThinaiKeywordContinuations;
+    private readonly completionDetails: ThinaiCompletionDetails;
+    private readonly queryRepositoryCompletion: ThinaiQueryRepositoryCompletion;
 
     constructor(services: ThinaiServices) {
         super(services);
         this.thinaiServices = services;
+        this.completionDetails = new ThinaiCompletionDetails();
+        this.queryRepositoryCompletion = new ThinaiQueryRepositoryCompletion({
+            createKeywordCompletionItem: (document, position, label, detail, fallbackStart, insertText, useLangiumTokenEdit) =>
+                this.createKeywordCompletionItem(document, position, label, detail, fallbackStart, insertText, useLangiumTokenEdit),
+            getBlockChildIndentation: (document, parent, offset) => this.getBlockChildIndentation(document, parent, offset)
+        });
         this.importCompletion = new ThinaiImportCompletion(services);
         this.optionalClauseCompletion = new ThinaiOptionalClauseCompletion(services);
         this.contextMapCompletion = new ThinaiContextMapCompletion(services, {
             isCompleteSameLineSibling: (node, document, position) =>
                 this.isCompleteSameLineSibling(node, document, position),
-            getCompletionDetail: description => this.getCompletionDetail(description),
+            getCompletionDetail: description => this.completionDetails.getCompletionDetail(description),
             getCompletionContext: (document, position) => this.getLangiumCompletionContext(document, position),
             fillCompletionItem: (context, item) => this.fillCompletionItem(context, item)
         });
@@ -153,71 +142,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         context: CompletionContext
     ): CompletionValueItem {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
-        item.detail = this.getCompletionDetail(nodeDescription);
+        item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
         return item;
-    }
-
-    private getCompletionDetail(description: AstNodeDescription): string {
-        const node = description.node;
-        if (!node) {
-            return `${description.type} ${description.name}`;
-        }
-        const name = this.getCanonicalName(node, description.name);
-        if (isMethod(node)) {
-            const parameters = node.parameters.map(parameter => this.getParameterDetail(parameter)).join(', ');
-            const result = node.returnPrimitive ??
-                (node.returnType?.ref ? this.getCanonicalName(node.returnType.ref, node.returnType.$refText) :
-                    node.returnCollection ? this.getCollectionDetail(node.returnCollection) : undefined);
-            return `Method ${name}(${parameters})${result ? ` returns ${result}` : ''}`;
-        }
-        if (isField(node)) {
-            return `Field ${name}: ${this.getTypeDetail(node)}`;
-        }
-        if (isParameter(node)) {
-            return `Parameter ${name}: ${this.getParameterDetail(node).replace(`${node.name}: `, '')}`;
-        }
-        if (isEnumValue(node)) {
-            const enumName = this.getCanonicalName(node.$container, node.$container.name);
-            return `Enum value ${name} (${enumName})`;
-        }
-        return `${description.type} ${name}`;
-    }
-
-    private getCanonicalName(node: AstNode, fallback: string): string {
-        if (!('name' in node) || typeof node.name !== 'string') {
-            return fallback;
-        }
-        return getExportedName(node as AstNode & { name: string }) || node.name;
-    }
-
-    private getParameterDetail(parameter: import('./generated/ast.js').Parameter): string {
-        const optional = parameter.optional ? '?' : '';
-        const parameterTarget = parameter.type?.ref;
-        const type = parameter.primitive ??
-            (isDomainEvent(parameterTarget) || isIntegrationEvent(parameterTarget)
-                ? `event ${this.getCanonicalName(parameterTarget, parameter.type!.$refText)}`
-                : parameterTarget ? this.getCanonicalName(parameterTarget, parameter.type!.$refText) :
-                    parameter.collection ? this.getCollectionDetail(parameter.collection) : 'unknown');
-        return `${parameter.name}${optional}: ${type}`;
-    }
-
-    private getTypeDetail(field: import('./generated/ast.js').Field): string {
-        return field.primitive ??
-            (field.type?.ref ? this.getCanonicalName(field.type.ref, field.type.$refText) :
-                field.collection ? this.getCollectionDetail(field.collection) : 'unknown');
-    }
-
-    private getCollectionDetail(collection: import('./generated/ast.js').CollectionType): string {
-        const element = collection.elementPrimitive ??
-            (collection.elementType?.ref ? this.getCanonicalName(collection.elementType.ref, collection.elementType.$refText) :
-                collection.elementCollection ? this.getCollectionDetail(collection.elementCollection) : 'unknown');
-        if (collection.kind !== 'Map') {
-            return `${collection.kind}<${element}>`;
-        }
-        const value = collection.valuePrimitive ??
-            (collection.valueType?.ref ? this.getCanonicalName(collection.valueType.ref, collection.valueType.$refText) :
-                collection.valueCollection ? this.getCollectionDetail(collection.valueCollection) : 'unknown');
-        return `Map<${element}, ${value}>`;
     }
 
     override async getCompletion(
@@ -226,7 +152,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const defaultCompletion = await super.getCompletion(document, params, cancelToken);
-        const specificationContext = this.getSpecificationTextCompletionContext(
+        const specificationContext = getSpecificationCompletionContext(
             document,
             document.textDocument.offsetAt(params.position)
         );
@@ -265,8 +191,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const inProgressKeywordCompletions = [
             ...this.keywordContinuations.getInProgressCompletions(document, params.position),
             ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position),
-            ...this.getQueryRepositoryReadCompletions(document, params.position),
-            ...this.getMethodReadsFromCompletions(document, params.position)
+            ...this.queryRepositoryCompletion.getQueryRepositoryReadCompletions(document, params.position),
+            ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
         ];
         const blockKeywords = this.getEnclosingBlockKeywordCompletions(document, params.position);
         const modelGapKeywords = this.getModelGapKeywordCompletions(
@@ -332,44 +258,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
     }
 
-    private getSpecificationTextCompletionContext(
-        document: LangiumDocument,
-        offset: number
-    ): 'text' | 'reference' | undefined {
-        const model = document.parseResult.value;
-        if (!model) {
-            return undefined;
-        }
-        const specification = AstUtils.streamAst(model)
-            .filter(isSpecificationText)
-            .filter(node => {
-                const cstNode = node.$cstNode;
-                if (!cstNode || offset <= cstNode.offset) {
-                    return false;
-                }
-                if (offset < cstNode.end) {
-                    return true;
-                }
-                const delimiter = cstNode.text[0];
-                return offset === cstNode.end && (delimiter !== '"' && delimiter !== "'" || !cstNode.text.endsWith(delimiter));
-            })
-            .toArray()
-            .sort((left, right) =>
-                (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
-            )[0];
-        if (!specification) {
-            return undefined;
-        }
-        const inReference = specification.parts.some(part => {
-            if (!isSpecificationTextPart(part) || !part.$cstNode) {
-                return false;
-            }
-            const isReferencePart = part.target !== undefined || part.$cstNode.text.startsWith('[[');
-            return isReferencePart && part.$cstNode.offset <= offset && offset <= part.$cstNode.end;
-        });
-        return inReference ? 'reference' : 'text';
-    }
-
     private filterContextSensitiveKeywordCompletions(
         document: LangiumDocument,
         position: Position,
@@ -428,7 +316,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const activeQueryRepository = AstUtils.streamAst(root)
             .filter(isQueryRepository)
             .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                this.getSourceStructure(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
+                scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
             .toArray()
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
@@ -582,7 +470,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         return scopeProvider.getExposureDeclarationCandidates(exposure as import('./generated/ast.js').Exposure)
             .filter(description => {
-                const detail = this.getCompletionDetail(description);
+                const detail = this.completionDetails.getCompletionDetail(description);
                 return description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()) &&
                     !existingItems.some(item => item.label === description.name && item.detail === detail);
             })
@@ -592,7 +480,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 const item: CompletionValueItem = {
                     nodeDescription: description,
                     kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
-                    detail: this.getCompletionDetail(description),
+                    detail: this.completionDetails.getCompletionDetail(description),
                     sortText: '0',
                     insertText
                 };
@@ -1167,118 +1055,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return hasIncompleteStatement ? null : best;
     }
 
-    private getQueryRepositoryReadCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
-        const root = document.parseResult.value;
-        if (!root) {
-            return [];
-        }
-        const offset = document.textDocument.offsetAt(position);
-        const text = document.textDocument.getText();
-        const repository = AstUtils.streamAst(root)
-            .filter(isQueryRepository)
-            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                this.getSourceStructure(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
-            .toArray()
-            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
-        const servedReference = repository?.readModel;
-        const referenceEnd = servedReference?.$refNode?.end;
-        if (!repository || !this.hasReferenceText(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
-            return [];
-        }
-        const betweenServeAndCursor = text.slice(referenceEnd, offset);
-        const partialPhrase = this.getReadsFromPrefix(betweenServeAndCursor);
-        if (!/^[\t \r\n]*$/u.test(betweenServeAndCursor) && !partialPhrase ||
-            repository.sources.length > 0 && !partialPhrase) {
-            return [];
-        }
-        const newline = text.includes('\r\n') ? '\r\n' : '\n';
-        const indentation = this.getBlockChildIndentation(document, repository, offset);
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
-        const currentLinePrefix = text.slice(lineStart, offset);
-        const partialLinePhrase = this.getReadsFromPrefix(currentLinePrefix);
-        let editStart: number;
-        let newText: string;
-        if (/^[\t ]*$/u.test(currentLinePrefix)) {
-            editStart = lineStart;
-            newText = `${currentLinePrefix}reads from`;
-        } else if (partialLinePhrase) {
-            editStart = lineStart + partialLinePhrase.start;
-            newText = 'reads from';
-        } else {
-            editStart = referenceEnd;
-            newText = `${newline}${indentation}reads from`;
-        }
-        return [{
-            label: 'reads from',
-            kind: CompletionItemKind.Keyword,
-            detail: 'Language keyword',
-            preselect: true,
-            insertTextMode: InsertTextMode.asIs,
-            data: {
-                thinaiSiblingCompletion: true,
-                thinaiIndentationDepth: getBlockNestingDepth(repository)
-            },
-            sortText: '1',
-            textEdit: {
-                range: {
-                    start: document.textDocument.positionAt(editStart),
-                    end: position
-                },
-                newText
-            }
-        }];
-    }
-
-    private getMethodReadsFromCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
-        const root = document.parseResult.value;
-        if (!root) {
-            return [];
-        }
-        const offset = document.textDocument.offsetAt(position);
-        const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
-        const prefix = text.slice(lineStart, offset);
-        const partial = this.getReadsFromPrefix(prefix);
-        if (!partial) {
-            return [];
-        }
-        const method = AstUtils.streamAst(root)
-            .filter(isMethod)
-            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                offset <= candidate.$cstNode.end)
-            .toArray()
-            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) -
-                (right.$cstNode!.end - right.$cstNode!.offset))[0];
-        const owner = method?.$container;
-        const methodPrefix = method?.$cstNode ? text.slice(method.$cstNode.offset, offset) : '';
-        if (!method || !(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner)) ||
-            !methodPrefix.includes('{')) {
-            return [];
-        }
-        return [this.createKeywordCompletionItem(
-            document,
-            position,
-            'reads from',
-            'Language keyword',
-            lineStart + partial.start,
-            'reads from',
-            false
-        )];
-    }
-
-    private getReadsFromPrefix(source: string): { start: number; value: string } | undefined {
-        const match = /(?:^|\s)(r|re|rea|read|reads(?:\s+f(?:r(?:o(?:m)?)?)?)?)\s*$/iu.exec(source);
-        const value = match?.[1]?.replace(/\s+/gu, ' ');
-        if (!match || !value || value.length >= 'reads from'.length ||
-            !'reads from'.startsWith(value.toLowerCase())) {
-            return undefined;
-        }
-        return {
-            start: match.index + match[0].lastIndexOf(match[1]!),
-            value
-        };
-    }
-
     private isAfterTransitionChangeComma(model: AstNode, text: string, offset: number): boolean {
         return AstUtils.streamAst(model).filter(isTransition).some(transition => {
             const cstNode = transition.$cstNode;
@@ -1294,7 +1070,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!isBlockNodeType(node.$type)) {
             return false;
         }
-        return this.getSourceStructure(source).openBraces > 0;
+        return scanThinaiSource(source).openBraces > 0;
     }
 
     private isCompleteSameLineSibling(node: AstNode, document: LangiumDocument, position: Position): boolean {
@@ -1391,7 +1167,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     }
 
     private hasUnterminatedStringLiteral(source: string): boolean {
-        return this.getSourceStructure(source).unterminatedString;
+        return scanThinaiSource(source).unterminatedString;
     }
 
     private hasIncompleteStatementSuffix(source: string): boolean {
@@ -1411,11 +1187,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return normalized.endsWith(candidate) &&
                 (normalized.length === candidate.length || /\s/u.test(normalized[normalized.length - candidate.length - 1]!));
         });
-    }
-
-    private getSourceStructure(source: string): { openBraces: number; unterminatedString: boolean } {
-        const structure = scanThinaiSource(source);
-        return { openBraces: structure.openBraces, unterminatedString: structure.unterminatedString };
     }
 
     private hasClosedParameterList(source: string, keyword: 'constructor' | 'method'): boolean {

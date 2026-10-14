@@ -6,7 +6,6 @@ import type {
 } from 'langium';
 import type { AstNodeDescriptionProvider, NameProvider, IndexManager } from 'langium';
 import {
-    isBoundedContext,
     isBoundedContextPart,
     isDataObject,
     isDomainEvent,
@@ -18,7 +17,13 @@ import {
     type Import,
     type ImportableComponent
 } from './generated/ast.js';
-import { getExportedName, getOwningModule, isInSharedKernel, resolveImportUri } from './thinai-scope-utils.js';
+import {
+    getExportedName,
+    getOwningContextName,
+    getOwningModule,
+    isInSharedKernel,
+    resolveImportUri
+} from './thinai-scope-utils.js';
 
 /** Builds the imported, module-visible, and document-local symbol scopes. */
 export class ThinaiExternalScope {
@@ -124,20 +129,10 @@ export class ThinaiExternalScope {
     }
 
     private getLexicalContextName(context: ReferenceInfo): string | undefined {
-        let current: AstNode | undefined = context.container;
-        while (current) {
-            if (isBoundedContext(current)) {
-                return current.name;
-            }
-            if (isBoundedContextPart(current)) {
-                if (context.container === current && context.property === 'context') {
-                    return undefined;
-                }
-                return current.context.ref?.name ?? current.context.$refText;
-            }
-            current = current.$container;
+        if (isBoundedContextPart(context.container) && context.property === 'context') {
+            return undefined;
         }
-        return undefined;
+        return getOwningContextName(context.container);
     }
 
     private isWithinComponent(name: string, component: ImportableComponent): boolean {
