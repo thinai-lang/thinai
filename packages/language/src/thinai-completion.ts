@@ -18,8 +18,10 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
+    isApplicationService,
     isEnumType,
     isDomainEvent,
+    isDomainService,
     isEnumValue,
     isEntity,
     isFactory,
@@ -36,7 +38,8 @@ import {
     isReadSourceReference,
     isSpecificationText,
     isSpecificationTextPart,
-    isTransition
+    isTransition,
+    isQueryService
 } from './generated/ast.js';
 import { getExportedName, isInSharedKernel } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
@@ -235,7 +238,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const inProgressKeywordCompletions = [
             ...this.keywordContinuations.getInProgressCompletions(document, params.position),
             ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position),
-            ...this.getQueryRepositoryReadCompletions(document, params.position)
+            ...this.getQueryRepositoryReadCompletions(document, params.position),
+            ...this.getMethodReadsFromCompletions(document, params.position)
         ];
         const blockKeywords = this.getEnclosingBlockKeywordCompletions(document, params.position);
         const modelGapKeywords = this.getModelGapKeywordCompletions(
@@ -251,7 +255,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
-        const completionWithKeywords = this.withCompoundKeywordCompletions(completionWithModelGapKeywords, inProgressKeywordCompletions);
+        const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(completionWithModelGapKeywords, inProgressKeywordCompletions);
+        const offersCompoundReadsFrom = [...blockKeywords, ...inProgressKeywordCompletions]
+            .some(item => item.label === 'reads from');
+        const completionWithKeywords = offersCompoundReadsFrom && rawCompletionWithKeywords
+            ? {
+                ...rawCompletionWithKeywords,
+                items: rawCompletionWithKeywords.items.filter(item => item.label !== 'reads')
+            }
+            : rawCompletionWithKeywords;
         const relationshipContinuationLabels = new Set(relationshipContinuations.map(item => item.label));
         const emptyBlockReplacements = new Map(blockKeywords
             .filter(item => this.isSiblingStatementCompletion(item))
@@ -403,6 +415,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (item.label === 'returns' && activeMethod && isProjector(activeMethod.$container)) {
                     return false;
                 }
+                if (item.label === 'reads') {
+                    return false;
+                }
+                if (item.label === 'reads from' && activeMethod && allowedMethodClauses &&
+                    !allowedMethodClauses.has('reads from')) {
+                    return false;
+                }
                 if ((item.label === 'entity' || item.label === 'root entity') && !entityDeclarationsAllowed) {
                     return false;
                 }
@@ -450,6 +469,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             value: ['value object'],
             root: ['root entity'],
             integration: ['integration event'],
+            reads: ['reads from'],
             depends: ['depends on']
         };
         const items = completion.items.flatMap(item => {
@@ -861,7 +881,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const sibling = this.getSameLineSiblingAt(document, position);
         const inProgressContinuations = extraAllowedKeywords.filter(keyword =>
             ['-> supplier', '<-> partner', '-x-', 'supplier', 'partner', 'integrationPatterns',
-                'participants', 'manages', 'serves', 'reads', 'from', 'to', 'on', 'realizes', 'kind', 'depends',
+                'participants', 'manages', 'serves', 'reads from', 'from', 'to', 'on', 'realizes', 'kind', 'depends',
                 'mirrors', 'returns', 'initial', 'when', 'with',
                 'core', 'supporting', 'generic']
                 .includes(keyword)
@@ -1112,18 +1132,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const repository = AstUtils.streamAst(root)
             .filter(isQueryRepository)
             .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                offset <= candidate.$cstNode.end)
+                this.getSourceStructure(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
             .toArray()
-            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) -
-                (right.$cstNode!.end - right.$cstNode!.offset))[0];
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
         const servedReference = repository?.readModel;
         const referenceEnd = servedReference?.$refNode?.end;
-        if (!repository || !servedReference?.ref || referenceEnd === undefined || repository.sources.length > 0 ||
-            offset < referenceEnd) {
+        if (!repository || !servedReference?.ref || referenceEnd === undefined || offset < referenceEnd) {
             return [];
         }
         const betweenServeAndCursor = text.slice(referenceEnd, offset);
-        if (!/^[\t \r\n]*$/u.test(betweenServeAndCursor)) {
+        const partialPhrase = this.getReadsFromPrefix(betweenServeAndCursor);
+        if (!/^[\t \r\n]*$/u.test(betweenServeAndCursor) && !partialPhrase ||
+            repository.sources.length > 0 && !partialPhrase) {
             return [];
         }
         const newline = text.includes('\r\n') ? '\r\n' : '\n';
@@ -1147,6 +1167,56 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 newText: `${newline}${indentation}reads from`
             }
         }];
+    }
+
+    private getMethodReadsFromCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const prefix = text.slice(lineStart, offset);
+        const partial = this.getReadsFromPrefix(prefix);
+        if (!partial) {
+            return [];
+        }
+        const method = AstUtils.streamAst(root)
+            .filter(isMethod)
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
+                offset <= candidate.$cstNode.end)
+            .toArray()
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) -
+                (right.$cstNode!.end - right.$cstNode!.offset))[0];
+        const owner = method?.$container;
+        const methodPrefix = method?.$cstNode ? text.slice(method.$cstNode.offset, offset) : '';
+        if (!method || !(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner)) ||
+            !methodPrefix.includes('{')) {
+            return [];
+        }
+        return [this.createKeywordCompletionItem(
+            document,
+            position,
+            'reads from',
+            'Language keyword',
+            lineStart + partial.start,
+            'reads from',
+            false
+        )];
+    }
+
+    private getReadsFromPrefix(source: string): { start: number; value: string } | undefined {
+        const match = /(?:^|\s)(r|re|rea|read|reads(?:\s+f(?:r(?:o(?:m)?)?)?)?)\s*$/iu.exec(source);
+        const value = match?.[1]?.replace(/\s+/gu, ' ');
+        if (!match || !value || value.length >= 'reads from'.length ||
+            !'reads from'.startsWith(value.toLowerCase())) {
+            return undefined;
+        }
+        return {
+            start: match.index + match[0].lastIndexOf(match[1]!),
+            value
+        };
     }
 
     private isAfterTransitionChangeComma(model: AstNode, text: string, offset: number): boolean {

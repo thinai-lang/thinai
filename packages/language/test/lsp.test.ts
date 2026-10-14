@@ -2280,7 +2280,7 @@ bounded context Second`;
             ['import { Foo } f', 'from'],
             ['repository Orders { m', 'manages'],
             ['query repository Orders { s', 'serves'],
-            ['bounded context X\nin bounded context X { application service A { method run() { reads f', 'from'],
+            ['bounded context X\nin bounded context X { application service A { method run() { reads f', 'reads from'],
             ['bounded context X\nin bounded context X { application service A { method run() { reads from OrderRepository w', 'when'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status f', 'from'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status from Draft t', 'to'],
@@ -2292,12 +2292,12 @@ bounded context Second`;
         ] as const;
 
         for (const [index, [source, expected]] of cases.entries()) {
-            const text = expected === 'from' || expected === 'to' ? `${source} } } }` : source;
+            const text = expected === 'from' || expected === 'to' || expected === 'reads from' ? `${source} } } }` : source;
             const document = services.shared.workspace.LangiumDocuments.createDocument(
                 URI.file(`/workspace/partial-keyword-${index}.tni`), text
             );
             documents.push(document);
-            if (expected === 'from' || expected === 'to') {
+            if (expected === 'from' || expected === 'to' || expected === 'reads from') {
                 await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             }
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
@@ -2307,13 +2307,19 @@ bounded context Second`;
             const item = completion?.items.find(candidate => candidate.label === expected);
             expect(item, source).toBeDefined();
             expect(completion?.items.filter(candidate => candidate.label === expected), source).toHaveLength(1);
-            expect(item?.textEdit).toMatchObject({
-                newText: expected,
-                range: {
-                    start: document.textDocument.positionAt(source.length - 1),
-                    end: document.textDocument.positionAt(source.length)
-                }
-            });
+            if (expected === 'reads from') {
+                expect(item?.textEdit?.newText).toContain('reads from');
+                expect(completion?.items.map(candidate => candidate.label)).not.toContain('reads');
+                expect(completion?.items.map(candidate => candidate.label)).not.toContain('from');
+            } else {
+                expect(item?.textEdit).toMatchObject({
+                    newText: expected,
+                    range: {
+                        start: document.textDocument.positionAt(source.length - 1),
+                        end: document.textDocument.positionAt(source.length)
+                    }
+                });
+            }
         }
     });
 
@@ -2353,7 +2359,7 @@ bounded context Second`;
                     serves OrderSummary
                     reads ${marker}
                 }`,
-                expected: 'from'
+                expected: 'reads from'
             },
             {
                 name: 'aggregate sources for a query repository',
@@ -2385,9 +2391,19 @@ bounded context Second`;
                 position: document.textDocument.positionAt(offset)
             });
             const item = completion?.items.find(candidate => candidate.label === completionCase.expected);
-            expect(item, completionCase.name).toBeDefined();
+            expect(item, `${completionCase.name}: ${completion?.items.map(candidate => candidate.label).join(', ')}`).toBeDefined();
             if (completionCase.name === 'query repository in an empty block') {
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads from');
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
+            }
+            if (completionCase.name === 'query repository source after serves' ||
+                completionCase.name === 'query repository source after serves on the same line') {
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('from');
+            }
+            if (completionCase.name === 'query repository reads continuation') {
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('from');
             }
             if (['manages', 'serves', 'reads', 'from', 'reads from'].includes(completionCase.expected)) {
                 expect(item?.kind, completionCase.name).toBe(CompletionItemKind.Keyword);
@@ -3115,6 +3131,31 @@ bounded context Second`;
         expect(item?.data?.thinaiSiblingCompletion).toBe(true);
         expect(item?.insertTextMode).toBe(InsertTextMode.asIs);
         expect(item?.textEdit?.newText).toBe('\n      reads from');
+        expect(completion?.items.map(candidate => candidate.label)).not.toContain('reads');
+        expect(completion?.items.map(candidate => candidate.label)).not.toContain('from');
+    });
+
+    test('offers reads from as one item in an empty method body', async () => {
+        const prefix = `bounded context Ordering in bounded context Ordering {
+            application service App {
+                method run() {
+                    `;
+        const source = `${prefix}\n                }\n            }\n        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-empty-method-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'reads from');
+        expect(item).toBeDefined();
+        expect(item?.kind).toBe(CompletionItemKind.Keyword);
+        expect(item?.textEdit?.newText).toContain('reads from');
+        expect(completion?.items.map(candidate => candidate.label)).not.toContain('reads');
+        expect(completion?.items.map(candidate => candidate.label)).not.toContain('from');
     });
 
     test('ignores braces inside behavior text when computing sibling indentation depth', async () => {

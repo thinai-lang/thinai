@@ -1,12 +1,15 @@
 import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
 import { type CompletionItem, type Position } from 'vscode-languageserver';
 import {
+    isApplicationService,
     isBoundedContext,
+    isDomainService,
     isEntity,
     isEnumType,
     isField,
     isMethod,
     isProjector,
+    isQueryService,
     isSubdomain,
     isTransition,
     isValueObject,
@@ -55,7 +58,6 @@ export class ThinaiKeywordContinuations {
             [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from']],
             [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s*\{\s*([\p{L}_]*)$/iu, ['serves']],
             [/\brepository\s+[_a-zA-Z][\w_]*\s*\{\s*([\p{L}_]*)$/iu, ['manages']],
-            [/\breads\s+([\p{L}_]*)$/iu, ['from']],
             [/\breads\s+from\s+[_a-zA-Z][\w.]*(?:\s*,\s*[_a-zA-Z][\w.]*)*\s+([\p{L}_]*)$/iu, ['when']],
             [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*([\p{L}_]*)$/iu, ['participants']],
             [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
@@ -224,6 +226,10 @@ export class ThinaiKeywordContinuations {
         let labels = getSiblingCompletionKeywords(container.$type, isModule(container) && isInSharedKernel(container));
         if (!isMethod(container)) {
             return labels;
+        }
+        const owner = container.$container;
+        if (!(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
+            labels = labels.filter(label => label !== 'reads from');
         }
         if (isProjector(container.$container)) {
             labels = labels.filter(label => label !== 'invokes');
