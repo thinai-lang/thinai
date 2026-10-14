@@ -115,6 +115,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             isSpecificationTextPart(context.container)) {
             return this.createScope(this.getSpecificationPathSymbols(context, referenceType));
         }
+        if (referenceType === 'SpecificationTarget' && context.property === 'target' &&
+            isSpecificationTextPart(context.container)) {
+            return this.createScope(this.getSpecificationRootPathSymbols(context, referenceType));
+        }
         if (context.property === 'targets' &&
             (isJourneyStep(context.container) || isMethodInvocation(context.container))) {
             return this.createScope(this.getInvocationPathSymbols(context, referenceType));
@@ -137,6 +141,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
         return stream(candidates).filter(description =>
+            this.isAllowedUnqualifiedSpecificationField(context, description) &&
             this.isSupportedCandidate(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionField(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionState(context, this.getDescriptionNode(description))
@@ -160,6 +165,36 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         } as ReferenceInfo;
         const candidates = this.getUnsegmentedScope(context, 'NamedDeclaration').getAllElements();
         return this.filterCompletionCandidates(context, candidates).toArray();
+    }
+
+    getSpecificationRootCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
+        if (!isSpecificationTextPart(context.container)) {
+            return [];
+        }
+        const referenceType = this.reflection.getReferenceType(context);
+        const scope = this.getUnsegmentedScope(context, referenceType);
+        const candidates = new Map<string, AstNodeDescription>();
+        for (const description of scope.getAllElements()) {
+            const target = this.getDescriptionNode(description);
+            if (!target) {
+                continue;
+            }
+            const path = description.name.split('.');
+            for (let index = 0; index < path.length; index++) {
+                const segmentTarget = this.getPathSegmentTarget(target, path, index, context);
+                if (!segmentTarget) {
+                    continue;
+                }
+                const segmentName = path[index]!;
+                const segmentDescription = this.descriptions.createDescription(
+                    segmentTarget,
+                    segmentName,
+                    AstUtils.getDocument(segmentTarget)
+                );
+                candidates.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}#${segmentName}`, segmentDescription);
+            }
+        }
+        return [...candidates.values()];
     }
 
     getPathCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] | undefined {
@@ -377,12 +412,20 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
 
-        let result = this.createScope(this.externalScope.getImportedSymbols(document, referenceType));
-        result = this.createScope(this.externalScope.getDocumentSymbols(context, document, referenceType), result);
+        let result = this.createScope(this.filterUnqualifiedSpecificationFields(
+            context,
+            referenceType,
+            this.externalScope.getImportedSymbols(document, referenceType)
+        ));
+        result = this.createScope(this.filterUnqualifiedSpecificationFields(
+            context,
+            referenceType,
+            this.externalScope.getDocumentSymbols(context, document, referenceType)
+        ), result);
         const moduleSymbols = context.property === 'dependencies'
             ? []
             : this.externalScope.getModuleSymbols(context, referenceType);
-        result = this.createScope(moduleSymbols, result);
+        result = this.createScope(this.filterUnqualifiedSpecificationFields(context, referenceType, moduleSymbols), result);
         for (let index = localScopes.length - 1; index >= 0; index--) {
             result = this.createScope(localScopes[index], result);
         }
@@ -391,6 +434,50 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             result = this.createScope(specificationSymbols, result);
         }
         return result;
+    }
+
+    private filterUnqualifiedSpecificationFields(
+        context: ReferenceInfo,
+        referenceType: string,
+        candidates: AstNodeDescription[]
+    ): AstNodeDescription[] {
+        if (referenceType !== 'SpecificationTarget' || !isSpecificationTextPart(context.container)) {
+            return candidates;
+        }
+        return candidates.filter(candidate => this.isAllowedUnqualifiedSpecificationField(context, candidate));
+    }
+
+    private isAllowedUnqualifiedSpecificationField(context: ReferenceInfo, candidate: AstNodeDescription): boolean {
+        const target = this.getDescriptionNode(candidate);
+        if (!isSpecificationTextPart(context.container) || !isField(target) || candidate.name !== target.name) {
+            return true;
+        }
+        if (this.hasSpecificationPathPrefix(context.container, context)) {
+            return true;
+        }
+        let current: AstNode | undefined = context.container;
+        while (current) {
+            if (isEntity(current) || isValueObject(current)) {
+                return target.$container === current;
+            }
+            current = current.$container;
+        }
+        return false;
+    }
+
+    private hasSpecificationPathPrefix(
+        part: import('./generated/ast.js').SpecificationTextPart,
+        context: ReferenceInfo
+    ): boolean {
+        if (context.property === 'target') {
+            return part.targets.some(reference => reference.$refText.length > 0);
+        }
+        if (context.property === 'targets') {
+            const index = context.index ?? part.targets.length;
+            return part.target !== undefined && part.target.$refText.length > 0 ||
+                part.targets.slice(0, index).some(reference => reference.$refText.length > 0);
+        }
+        return false;
     }
 
     private getSpecificationSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
@@ -497,6 +584,53 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const prefix = [part.target, ...part.targets.slice(0, index)]
             .map(candidate => candidate.$refText);
         return this.getPathSegmentCompletions(context, referenceType, prefix);
+    }
+
+    private getSpecificationRootPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
+        if (!isSpecificationTextPart(context.container)) {
+            return [];
+        }
+        const part = context.container;
+        if (!part.target) {
+            return this.getUnsegmentedScope(context, referenceType).getAllElements().toArray();
+        }
+        const path = [part.target, ...part.targets].map(reference => reference.$refText);
+        if (path.length < 2 || path.some(segment => segment.length === 0)) {
+            return this.getUnsegmentedScope(context, referenceType).getAllElements().toArray();
+        }
+        const scope = this.getUnsegmentedScope(context, referenceType);
+        const description = scope.getElement(path.join('.'));
+        let target = description?.node
+            ? this.getPathSegmentTarget(description.node, path, 0, context)
+            : undefined;
+        if (!target) {
+            const matchingRoots = new Set<AstNode>();
+            for (const candidate of scope.getAllElements()) {
+                const candidateTarget = this.getDescriptionNode(candidate);
+                if (!candidateTarget) {
+                    continue;
+                }
+                const candidatePath = candidate.name.split('.');
+                if (candidatePath.length < path.length || path.some((segment, index) =>
+                    index === path.length - 1
+                        ? !candidatePath[index]!.toLowerCase().startsWith(segment.toLowerCase())
+                        : candidatePath[index] !== segment
+                )) {
+                    continue;
+                }
+                const root = this.getPathSegmentTarget(candidateTarget, candidatePath, 0, context);
+                if (root) {
+                    matchingRoots.add(root);
+                }
+            }
+            if (matchingRoots.size === 1) {
+                target = matchingRoots.values().next().value;
+            }
+        }
+        if (!target) {
+            return scope.getAllElements().toArray();
+        }
+        return [this.descriptions.createDescription(target, path[0]!, AstUtils.getDocument(target))];
     }
 
     private getInvocationPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {

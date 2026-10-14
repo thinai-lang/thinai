@@ -1521,6 +1521,110 @@ bounded context Second`;
         expect(completion?.items.some(item => item.label === 'request' && item.kind === CompletionItemKind.Variable)).toBe(true);
     });
 
+    test('completes the first symbol in an unfinished inline specification reference', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            data object Request { orderId: string }
+            application service OrderApplication {
+                method place(request: Request) { behavior "Use [[`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/specification-incomplete-reference-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        const position = document.textDocument.positionAt(text.length);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position
+        });
+        const parameter = completion?.items.find(item => item.label === 'request');
+
+        expect(parameter).toMatchObject({
+            kind: CompletionItemKind.Variable,
+            textEdit: {
+                range: { start: position, end: position },
+                newText: 'request'
+            }
+        });
+        expect(completion?.items.some(item => item.kind === CompletionItemKind.Keyword)).toBe(false);
+    });
+
+    test('resolves aggregate-qualified specification fields across imported files with repeated names', async () => {
+        const producer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method fulfillItem() {
+                            behavior "Check the local [[sta]]"
+                        }
+                        identifier id: OrderId
+                        customerId: string
+                        status: string
+                    }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        const consumerText = `import "./ordering.tni"
+            in bounded context Ordering {
+                application service OrderItemFulfillment {
+                    method fulfillItem(orderId: OrderId, itemId: OrderItemId) {
+                        invokes Order.Order.fulfillItem
+                        behavior "Ship the selected [[Order.Order.customerId]] child item through the aggregate root."
+                        postcondition "The referenced field is never guessed as [[customerId]]."
+                    }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-events.tni'), consumerText
+        );
+        documents = [producer, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const model = consumer.parseResult.value;
+        const referencePart = model && AstUtils.streamAst(model)
+            .find(node => node.$type === 'SpecificationTextPart' && 'target' in node && node.target);
+        expect(referencePart).toBeDefined();
+        if (!referencePart || !('target' in referencePart)) {
+            return;
+        }
+        const references = [referencePart.target, ...referencePart.targets];
+        expect(references.map(reference => reference.ref?.$type)).toEqual(['Aggregate', 'Entity', 'Field']);
+        expect(references.map(reference => reference.error)).toEqual([undefined, undefined, undefined]);
+
+        const localPrefixEnd = producer.textDocument.getText().indexOf('[[sta]]') + '[[sta'.length;
+        const localCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(producer, {
+            textDocument: { uri: producer.uri.toString() },
+            position: producer.textDocument.positionAt(localPrefixEnd)
+        });
+        expect(localCompletion?.items.find(item => item.label === 'status')).toMatchObject({
+            kind: CompletionItemKind.Field
+        });
+
+        const firstSegmentEnd = consumerText.indexOf('[[Order.Order.customerId]]') + '[[Order'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(firstSegmentEnd)
+        });
+        expect(completion?.items.find(item => item.label === 'Order' && item.detail?.includes('Aggregate'))).toMatchObject({
+            kind: CompletionItemKind.Class
+        });
+        expect(consumer.diagnostics?.some(diagnostic =>
+            diagnostic.message === "Could not resolve reference to SpecificationTarget named 'Order'."
+        )).toBe(false);
+        expect(consumer.diagnostics?.some(diagnostic =>
+            diagnostic.message === "Could not resolve reference to SpecificationTarget named 'customerId'."
+        )).toBe(true);
+        const bareFieldOpening = consumerText.indexOf('[[customerId]]') + '[['.length;
+        const bareFieldCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(bareFieldOpening)
+        });
+        expect(bareFieldCompletion?.items.some(item => item.label === 'customerId')).toBe(false);
+    });
+
     test('filters reads-from completion candidates by CQRS method role', async () => {
         const marker = '__read_source__';
         const source = `bounded context Ordering in bounded context Ordering {

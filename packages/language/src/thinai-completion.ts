@@ -134,6 +134,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 this.thinaiServices.references.ScopeProvider.getScope(scopedReference).getAllElements()
             );
         }
+        if (isSpecificationTextPart(container) && property === 'target') {
+            const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+            return scopeProvider.filterCompletionCandidates(
+                refInfo,
+                scopeProvider.getSpecificationRootCompletionCandidates(refInfo)
+            );
+        }
         return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
             refInfo,
             super.getReferenceCandidates(refInfo, context)
@@ -354,10 +361,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return undefined;
         }
         const inReference = specification.parts.some(part => {
-            if (!isSpecificationTextPart(part) || !part.target || !part.$cstNode) {
+            if (!isSpecificationTextPart(part) || !part.$cstNode) {
                 return false;
             }
-            return part.$cstNode.offset <= offset && offset <= part.$cstNode.end;
+            const isReferencePart = part.target !== undefined || part.$cstNode.text.startsWith('[[');
+            return isReferencePart && part.$cstNode.offset <= offset && offset <= part.$cstNode.end;
         });
         return inReference ? 'reference' : 'text';
     }

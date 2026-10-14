@@ -204,7 +204,11 @@ and `transition` relationships. Interpolated specifications can link to
 methods, parameters, repositories, entities, value objects, enum types and
 values, read models, events, and fields. A dotted reference such as
 `[[input.address.street]]` makes each segment independently navigable. Links
-are descriptive references, not expressions or executable calls. Factory
+are descriptive references, not expressions or executable calls. A specification
+inside an entity or value object may refer to that enclosing object's fields by
+their bare names; fields on other objects should use an owner-qualified path, such
+as `[[Order.Order.customerId]]`. Operation inputs and results use their named
+roots, such as `[[input.orderId]]` and `[[result.status]]`. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
 Use triple double quotes for multiline specifications; keep single or double
