@@ -3,12 +3,17 @@ import { readFile } from 'node:fs/promises';
 import { AstUtils, EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
 import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
-import { applyConfiguredIndentation, applyConfiguredIndentationToCompletions, createThinaiServices } from 'thinai-language';
+import {
+    applyConfiguredIndentation,
+    applyConfiguredIndentationToCompletions,
+    createThinaiServices,
+    isQueryRepositoryReadCompletionPosition
+} from 'thinai-language';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
 import { ThinaiImportCompletion } from '../src/thinai-import-completion.js';
 import { createThinaiSelectionRange } from '../src/thinai-selection-range.js';
-import { CompletionItemKind, CompletionTriggerKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
+import { CompletionItemKind, InsertTextMode, SymbolKind, type CompletionItem, type CompletionList } from 'vscode-languageserver';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
@@ -2395,17 +2400,17 @@ bounded context Second`;
             await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
-                position: document.textDocument.positionAt(offset),
-                ...(completionCase.name === 'query repository source after serves'
-                    ? { context: { triggerKind: CompletionTriggerKind.TriggerCharacter, triggerCharacter: '\n' } }
-                    : {})
+                position: document.textDocument.positionAt(offset)
             });
-            expect(services.Thinai.lsp.CompletionProvider?.completionOptions?.triggerCharacters).toContain('\n');
             const item = completion?.items.find(candidate => candidate.label === completionCase.expected);
             expect(item, `${completionCase.name}: ${completion?.items.map(candidate => candidate.label).join(', ')}`).toBeDefined();
             if (completionCase.name === 'query repository in an empty block') {
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads from');
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
+                expect(isQueryRepositoryReadCompletionPosition(document, offset)).toBe(false);
+            }
+            if (completionCase.name === 'query repository source after serves') {
+                expect(isQueryRepositoryReadCompletionPosition(document, offset)).toBe(true);
             }
             if (completionCase.name === 'query repository source after serves' ||
                 completionCase.name === 'query repository source after serves on the same line' ||
@@ -2462,6 +2467,7 @@ bounded context Second`;
         );
         documents.push(document);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        expect(isQueryRepositoryReadCompletionPosition(document, offset)).toBe(false);
         const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
             textDocument: { uri: document.uri.toString() },
             position: document.textDocument.positionAt(offset)

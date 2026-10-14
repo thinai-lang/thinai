@@ -3,14 +3,21 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { EmptyFileSystem, URI } from 'langium';
 import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
-import { createThinaiServices, createThinaiSelectionRange, applyConfiguredIndentationToCompletions } from 'thinai-language';
+import {
+    applyConfiguredIndentationToCompletions,
+    createThinaiServices,
+    createThinaiSelectionRange,
+    isQueryRepositoryReadCompletionPosition
+} from 'thinai-language';
 
 let client: LanguageClient;
 
 // This function is called when the extension is activated.
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    registerThinaiSelectionRanges(context);
+    const thinaiServices = createThinaiServices(EmptyFileSystem);
+    registerThinaiSelectionRanges(context, thinaiServices.shared);
     client = await startLanguageClient(context);
+    registerQueryRepositoryReadCompletionTrigger(context, thinaiServices.Thinai);
 }
 
 // This function is called when the extension is deactivated.
@@ -21,8 +28,10 @@ export function deactivate(): Thenable<void> | undefined {
     return undefined;
 }
 
-function registerThinaiSelectionRanges(context: vscode.ExtensionContext): void {
-    const { shared } = createThinaiServices(EmptyFileSystem);
+function registerThinaiSelectionRanges(
+    context: vscode.ExtensionContext,
+    shared: ReturnType<typeof createThinaiServices>['shared']
+): void {
     context.subscriptions.push(vscode.languages.registerSelectionRangeProvider('thinai', {
         provideSelectionRanges(document, positions) {
             const langiumDocument = shared.workspace.LangiumDocumentFactory.fromString(
@@ -35,6 +44,55 @@ function registerThinaiSelectionRanges(context: vscode.ExtensionContext): void {
             }
             return ranges.map(range => toVscodeSelectionRange(range!));
         }
+    }));
+}
+
+function registerQueryRepositoryReadCompletionTrigger(
+    context: vscode.ExtensionContext,
+    services: ReturnType<typeof createThinaiServices>['Thinai']
+): void {
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
+        if (event.document.languageId !== 'thinai' ||
+            !event.contentChanges.some(change => /^\r?\n[\t ]*$/u.test(change.text))) {
+            return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.document.uri.toString() !== event.document.uri.toString() || !editor.selection.isEmpty) {
+            return;
+        }
+        const position = editor.selection.active;
+        if (event.document.lineAt(position.line).text.trim().length > 0) {
+            return;
+        }
+        const langiumDocument = services.shared.workspace.LangiumDocumentFactory.fromString(
+            event.document.getText(),
+            URI.parse(event.document.uri.toString())
+        );
+        const offset = langiumDocument.textDocument.offsetAt({ line: position.line, character: position.character });
+        if (!isQueryRepositoryReadCompletionPosition(langiumDocument, offset)) {
+            return;
+        }
+
+        // Let the language client process the document change before requesting completions.
+        setTimeout(() => {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor || activeEditor.document.uri.toString() !== event.document.uri.toString() ||
+                !activeEditor.selection.isEmpty || event.document.lineAt(activeEditor.selection.active.line).text.trim().length > 0) {
+                return;
+            }
+            const activeDocument = services.shared.workspace.LangiumDocumentFactory.fromString(
+                event.document.getText(),
+                URI.parse(event.document.uri.toString())
+            );
+            const activeOffset = activeDocument.textDocument.offsetAt({
+                line: activeEditor.selection.active.line,
+                character: activeEditor.selection.active.character
+            });
+            if (!isQueryRepositoryReadCompletionPosition(activeDocument, activeOffset)) {
+                return;
+            }
+            void vscode.commands.executeCommand('editor.action.triggerSuggest');
+        }, 0);
     }));
 }
 

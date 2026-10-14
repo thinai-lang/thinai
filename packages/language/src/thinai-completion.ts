@@ -61,9 +61,29 @@ import { ThinaiKeywordContinuations } from './thinai-keyword-continuations.js';
 
 const siblingKeywordPrefixes = getSiblingKeywordPrefixes();
 
+/** True when the cursor is on the blank next-statement position for a query repository read source. */
+export function isQueryRepositoryReadCompletionPosition(document: LangiumDocument, offset: number): boolean {
+    const root = document.parseResult.value;
+    if (!root) {
+        return false;
+    }
+    const text = document.textDocument.getText();
+    const repository = AstUtils.streamAst(root)
+        .filter(isQueryRepository)
+        .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
+            scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
+        .toArray()
+        .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+    const servedReference = repository?.readModel;
+    const referenceEnd = servedReference?.$refNode?.end;
+    return repository !== undefined && typeof servedReference?.$refText === 'string' &&
+        servedReference.$refText.length > 0 && referenceEnd !== undefined && offset >= referenceEnd &&
+        repository.sources.length === 0 && /^[\t \r\n]*$/u.test(text.slice(referenceEnd, offset));
+}
+
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',', '\n']
+        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',']
     };
 
     private readonly thinaiServices: ThinaiServices;
