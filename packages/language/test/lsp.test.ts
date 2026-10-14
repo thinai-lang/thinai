@@ -2425,7 +2425,15 @@ bounded context Second`;
             if (['manages', 'serves', 'reads', 'from', 'reads from'].includes(completionCase.expected)) {
                 expect(item?.kind, completionCase.name).toBe(CompletionItemKind.Keyword);
                 if (completionCase.expected === 'reads from') {
-                    expect(item?.textEdit?.newText, completionCase.name).toMatch(/\r?\n\s*reads from$/u);
+                    const edit = item?.textEdit;
+                    expect(edit?.newText, completionCase.name).toMatch(/^\s*reads from$/u);
+                    const editRange = edit && 'range' in edit ? edit.range : undefined;
+                    expect(editRange).toBeDefined();
+                    expect(editRange?.start.line, completionCase.name).toBe(editRange?.end.line);
+                    if (completionCase.name === 'query repository source after serves on the same line' ||
+                        completionCase.name === 'query repository source after a partially typed served model') {
+                        expect(edit?.newText, completionCase.name).toMatch(/^\r?\n\s+reads from$/u);
+                    }
                 } else {
                     expect(item?.textEdit?.newText, completionCase.name).toContain(completionCase.expected);
                 }

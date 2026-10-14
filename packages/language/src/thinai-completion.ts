@@ -1185,6 +1185,21 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const newline = text.includes('\r\n') ? '\r\n' : '\n';
         const indentation = this.getBlockChildIndentation(document, repository, offset);
+        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const currentLinePrefix = text.slice(lineStart, offset);
+        const partialLinePhrase = this.getReadsFromPrefix(currentLinePrefix);
+        let editStart: number;
+        let newText: string;
+        if (/^[\t ]*$/u.test(currentLinePrefix)) {
+            editStart = lineStart;
+            newText = `${currentLinePrefix}reads from`;
+        } else if (partialLinePhrase) {
+            editStart = lineStart + partialLinePhrase.start;
+            newText = 'reads from';
+        } else {
+            editStart = referenceEnd;
+            newText = `${newline}${indentation}reads from`;
+        }
         return [{
             label: 'reads from',
             kind: CompletionItemKind.Keyword,
@@ -1198,10 +1213,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             sortText: '1',
             textEdit: {
                 range: {
-                    start: document.textDocument.positionAt(referenceEnd),
+                    start: document.textDocument.positionAt(editStart),
                     end: position
                 },
-                newText: `${newline}${indentation}reads from`
+                newText
             }
         }];
     }
