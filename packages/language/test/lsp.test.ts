@@ -2439,6 +2439,41 @@ bounded context Second`;
         }
     });
 
+    test('does not leak enclosing keywords after a query repository read source', async () => {
+        const marker = '__cursor__';
+        const source = `bounded context Ordering in bounded context Ordering {
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            read model OrderSummary {
+                status: string
+            }
+            query repository OrderSummaryRepository {
+                serves OrderSummary
+                reads from Order
+                ${marker}
+            }
+        }`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-repository-read-sibling-completion.tni'), text
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        const forbidden = [
+            'aggregate', 'application service', 'domain service', 'projector', 'query repository',
+            'query service', 'read model', 'repository', 'behavior', 'invokes', 'reads from', 'projects'
+        ];
+        expect(labels.filter(label => forbidden.includes(String(label)))).toEqual([]);
+    });
+
     test('completes partially typed optional continuations', async () => {
         const cases = [
             { source: 'bounded context Ordering r', expected: 'realizes', typed: 'r' },

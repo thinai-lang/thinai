@@ -397,6 +397,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .sort((left, right) =>
                 (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
             )[0];
+        const activeQueryRepository = AstUtils.streamAst(root)
+            .filter(isQueryRepository)
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
+                this.getSourceStructure(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
         const transitionContinuationAllowed = this.keywordContinuations.isTransitionContinuationPosition(document, offset);
         const entityDeclarationsAllowed = braceOwners.at(-1) === 'aggregate';
@@ -421,6 +427,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (item.label === 'reads from' && activeMethod && allowedMethodClauses &&
                     !allowedMethodClauses.has('reads from')) {
                     return false;
+                }
+                if (activeQueryRepository) {
+                    const servedReferenceEnd = activeQueryRepository.readModel?.$refNode?.end;
+                    const queryRepositoryKeywords = !this.hasReferenceText(activeQueryRepository.readModel)
+                        ? ['serves']
+                        : servedReferenceEnd !== undefined && offset >= servedReferenceEnd && activeQueryRepository.sources.length === 0
+                            ? ['reads from']
+                            : [];
+                    if (!queryRepositoryKeywords.includes(item.label)) {
+                        return false;
+                    }
                 }
                 if ((item.label === 'entity' || item.label === 'root entity') && !entityDeclarationsAllowed) {
                     return false;
