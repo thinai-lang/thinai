@@ -32,6 +32,7 @@ import {
     isModule,
     isParameter,
     isProjector,
+    isQueryRepository,
     isReadSourceReference,
     isSpecificationText,
     isSpecificationTextPart,
@@ -233,7 +234,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         ];
         const inProgressKeywordCompletions = [
             ...this.keywordContinuations.getInProgressCompletions(document, params.position),
-            ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position)
+            ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position),
+            ...this.getQueryRepositoryReadCompletions(document, params.position)
         ];
         const blockKeywords = this.getEnclosingBlockKeywordCompletions(document, params.position);
         const modelGapKeywords = this.getModelGapKeywordCompletions(
@@ -1098,6 +1100,53 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         return hasIncompleteStatement ? null : best;
+    }
+
+    private getQueryRepositoryReadCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
+        const root = document.parseResult.value;
+        if (!root) {
+            return [];
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const repository = AstUtils.streamAst(root)
+            .filter(isQueryRepository)
+            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
+                offset <= candidate.$cstNode.end)
+            .toArray()
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) -
+                (right.$cstNode!.end - right.$cstNode!.offset))[0];
+        const servedReference = repository?.readModel;
+        const referenceEnd = servedReference?.$refNode?.end;
+        if (!repository || !servedReference?.ref || referenceEnd === undefined || repository.sources.length > 0 ||
+            offset < referenceEnd) {
+            return [];
+        }
+        const betweenServeAndCursor = text.slice(referenceEnd, offset);
+        if (!/^[\t \r\n]*$/u.test(betweenServeAndCursor)) {
+            return [];
+        }
+        const newline = text.includes('\r\n') ? '\r\n' : '\n';
+        const indentation = this.getBlockChildIndentation(document, repository, offset);
+        return [{
+            label: 'reads from',
+            kind: CompletionItemKind.Keyword,
+            detail: 'Language keyword',
+            preselect: true,
+            insertTextMode: InsertTextMode.asIs,
+            data: {
+                thinaiSiblingCompletion: true,
+                thinaiIndentationDepth: getBlockNestingDepth(repository)
+            },
+            sortText: '1',
+            textEdit: {
+                range: {
+                    start: document.textDocument.positionAt(referenceEnd),
+                    end: position
+                },
+                newText: `${newline}${indentation}reads from`
+            }
+        }];
     }
 
     private isAfterTransitionChangeComma(model: AstNode, text: string, offset: number): boolean {

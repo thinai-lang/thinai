@@ -2340,7 +2340,12 @@ bounded context Second`;
                     serves OrderSummary
                     ${marker}
                 }`,
-                expected: 'reads'
+                expected: 'reads from'
+            },
+            {
+                name: 'query repository source after serves on the same line',
+                body: `query repository OrderSummaryRepository { serves OrderSummary${marker} }`,
+                expected: 'reads from'
             },
             {
                 name: 'query repository reads continuation',
@@ -2381,9 +2386,16 @@ bounded context Second`;
             });
             const item = completion?.items.find(candidate => candidate.label === completionCase.expected);
             expect(item, completionCase.name).toBeDefined();
-            if (['manages', 'serves', 'reads', 'from'].includes(completionCase.expected)) {
+            if (completionCase.name === 'query repository in an empty block') {
+                expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads from');
+            }
+            if (['manages', 'serves', 'reads', 'from', 'reads from'].includes(completionCase.expected)) {
                 expect(item?.kind, completionCase.name).toBe(CompletionItemKind.Keyword);
-                expect(item?.textEdit?.newText, completionCase.name).toContain(completionCase.expected);
+                if (completionCase.expected === 'reads from') {
+                    expect(item?.textEdit?.newText, completionCase.name).toMatch(/\r?\n\s*reads from$/u);
+                } else {
+                    expect(item?.textEdit?.newText, completionCase.name).toContain(completionCase.expected);
+                }
             }
             if (completionCase.expected === 'Order') {
                 expect(completion?.items.map(item => item.label), completionCase.name).not.toContain('OrderRepository');
