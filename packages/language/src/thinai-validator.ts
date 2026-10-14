@@ -899,9 +899,10 @@ export class ThinaiValidator {
         }
         const owner = isMethod(method) ? method.$container : undefined;
         if (!isMethod(method) || !(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
+            const clauseRange = this.getReadDependencyKeywordRange(read);
             accept('error', 'The reads from clause is allowed only in application-service, query-service, projector, or domain-service methods.', {
                 node: read,
-                keyword: 'reads'
+                ...(clauseRange ? { range: clauseRange } : { keyword: 'reads' })
             });
             return;
         }
@@ -957,6 +958,23 @@ export class ThinaiValidator {
                 });
             }
         }
+    }
+
+    private getReadDependencyKeywordRange(read: ReadDependency): import('vscode-languageserver').Range | undefined {
+        const cstNode = read.$cstNode;
+        if (!cstNode) {
+            return undefined;
+        }
+        const readsOffset = findCstTokenOffset(cstNode, 'reads');
+        const fromOffset = findCstTokenOffset(cstNode, 'from');
+        if (readsOffset === undefined || fromOffset === undefined) {
+            return undefined;
+        }
+        const document = AstUtils.getDocument(read);
+        return {
+            start: document.textDocument.positionAt(readsOffset),
+            end: document.textDocument.positionAt(fromOffset + 'from'.length)
+        };
     }
 
     private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {

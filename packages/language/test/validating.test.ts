@@ -1355,7 +1355,10 @@ in bounded context Ordering {
     test('validates CQRS read dependencies by method owner and supports query-repository table sources', async () => {
         const document = await parse(`bounded context Ordering in bounded context Ordering {
             aggregate Order {
-                root entity Order { identifier id: OrderId }
+                root entity Order {
+                    identifier id: OrderId
+                    method invalidRead() { reads from OrderRepository }
+                }
                 value object OrderId { raw: string }
             }
             repository OrderRepository {
@@ -1400,6 +1403,14 @@ in bounded context Ordering {
         expect(diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning &&
             String(diagnostic.message).includes('may produce different results when events are replayed'))).toBe(true);
         expect(errors).not.toContain('A query repository may read aggregate table data only from its own bounded context.');
+        const invalidRead = diagnostics.find(diagnostic => String(diagnostic.message).includes(
+            'The reads from clause is allowed only in application-service, query-service, projector, or domain-service methods.'
+        ));
+        expect(invalidRead).toBeDefined();
+        const invalidReadSource = document.textDocument.getText();
+        const invalidReadsOffset = invalidReadSource.indexOf('reads from OrderRepository', invalidReadSource.indexOf('method invalidRead'));
+        expect(document.textDocument.offsetAt(invalidRead!.range.start)).toBe(invalidReadsOffset);
+        expect(document.textDocument.offsetAt(invalidRead!.range.end)).toBe(invalidReadsOffset + 'reads from'.length);
     });
 
     test('underlines method effects that are not allowed for their owner', async () => {
