@@ -1137,7 +1137,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
         const servedReference = repository?.readModel;
         const referenceEnd = servedReference?.$refNode?.end;
-        if (!repository || !servedReference?.ref || referenceEnd === undefined || offset < referenceEnd) {
+        if (!repository || !this.hasReferenceText(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
             return [];
         }
         const betweenServeAndCursor = text.slice(referenceEnd, offset);

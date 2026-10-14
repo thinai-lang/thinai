@@ -2354,6 +2354,13 @@ bounded context Second`;
                 expected: 'reads from'
             },
             {
+                name: 'query repository source after a partially typed served model',
+                body: `query repository OrderSummaryRepository {
+                    serves OrderSumm${marker}
+                }`,
+                expected: 'reads from'
+            },
+            {
                 name: 'query repository reads continuation',
                 body: `query repository OrderSummaryRepository {
                     serves OrderSummary
@@ -2397,7 +2404,8 @@ bounded context Second`;
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
             }
             if (completionCase.name === 'query repository source after serves' ||
-                completionCase.name === 'query repository source after serves on the same line') {
+                completionCase.name === 'query repository source after serves on the same line' ||
+                completionCase.name === 'query repository source after a partially typed served model') {
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('reads');
                 expect(completion?.items.map(candidate => candidate.label), completionCase.name).not.toContain('from');
             }
