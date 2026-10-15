@@ -8,7 +8,7 @@ import {
     applyConfiguredIndentationToCompletions,
     createThinaiServices,
     isQueryRepositoryReadCompletionPosition
-} from 'thinai-language';
+} from '../src/index.js';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
 import { ThinaiCompletionProvider } from '../src/thinai-completion.js';
 import { ThinaiCompletionDetails } from '../src/thinai-completion-details.js';
