@@ -1,6 +1,14 @@
 import { AstUtils } from 'langium';
 import type { Method, MethodInvocation } from './generated/ast.js';
-import { isAggregate, isApplicationService, isDomainEvent, isEntity, isMethod, isProjector } from './generated/ast.js';
+import {
+    isAggregate,
+    isApplicationService,
+    isDomainEvent,
+    isEntity,
+    isIntegrationEvent,
+    isMethod,
+    isProjector
+} from './generated/ast.js';
 
 export function getInvokedMethod(invocation: MethodInvocation): Method | undefined {
     const target = invocation.targets.at(-1)?.ref;
@@ -42,6 +50,12 @@ export function canDeclareTransition(method: Method): boolean {
 
 export function canDeclareProjects(method: Method): boolean {
     return isProjector(method.$container);
+}
+
+export function isJourneyCommand(method: Method): boolean {
+    return isApplicationService(method.$container) && !method.parameters.some(parameter =>
+        isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+    );
 }
 
 export type EventEmissionMode = 'domain' | 'integration' | undefined;

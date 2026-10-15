@@ -168,6 +168,7 @@ in bounded context Ordering {
         expect(applyConfiguredIndentation(completionText, 2, 2, true)).toBe('\n    method\n  }');
         expect(applyConfiguredIndentation(completionText, 2, 4, true)).toBe('\n        method\n  }');
         expect(applyConfiguredIndentation(completionText, 2, 4, false)).toBe('\n\t\tmethod\n  }');
+        expect(applyConfiguredIndentation('\n  method\n  }', 2, 4, false, 1)).toBe('\n\t\tmethod\n\t}');
         expect(applyConfiguredIndentation('\r\n  method', 1, 2, true)).toBe('\r\n  method');
         const completionItems = [{
             label: 'method',
@@ -181,6 +182,16 @@ in bounded context Ordering {
             .toBe('\n        method');
         expect(applyConfiguredIndentationToCompletions(completionItems, 4, false)[0]?.textEdit?.newText)
             .toBe('\n\t\tmethod');
+        const blockCompletionItems = [{
+            label: 'method',
+            data: { thinaiIndentationDepth: 2, thinaiClosingIndentationDepth: 1 },
+            textEdit: {
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                newText: '\n    method\n  '
+            }
+        }];
+        expect(applyConfiguredIndentationToCompletions(blockCompletionItems, 4, false)[0]?.textEdit?.newText)
+            .toBe('\n\t\tmethod\n\t');
     });
 
     test('offers context members and declaration keywords automatically', async () => {
@@ -2961,6 +2972,8 @@ in bounded context Ordering {
                 },
                 newText: `\n    ${label}\n  `
             });
+            expect(applyConfiguredIndentationToCompletions([item!], 4, false)[0]?.textEdit?.newText)
+                .toBe(`\n\t\t${label}\n\t`);
         }
     });
 

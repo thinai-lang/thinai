@@ -64,6 +64,7 @@ import {
     isValueObject
 } from './generated/ast.js';
 import { getMethodInvocationViolations } from './thinai-method-invocation-policy.js';
+import { isJourneyCommand } from './thinai-operation-utils.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiPathScope } from './thinai-path-scope.js';
 import {
@@ -106,7 +107,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             getDescriptionNode: description => this.getDescriptionNode(description),
             isSupportedInvocationTarget: (container, target) => this.isSupportedInvocationTarget(container, target),
             isSupportedCandidate: (context, target) => this.isSupportedCandidate(context, target),
-            isJourneyCommand: method => this.isJourneyCommand(method)
+            isJourneyCommand
         });
     }
 
@@ -421,12 +422,6 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     canInvokeMethod(context: AstNode, target: Method): boolean {
         return this.isSupportedInvocationTarget(context, target);
-    }
-
-    private isJourneyCommand(method: Method): boolean {
-        return isApplicationService(method.$container) && !method.parameters.some(parameter =>
-            isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
-        );
     }
 
     private isSupportedInvocationTarget(container: AstNode, target: Method): boolean {

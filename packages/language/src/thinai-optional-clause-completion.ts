@@ -2,7 +2,6 @@ import { AstUtils, GrammarUtils, type AstNode, type LangiumDocument } from 'lang
 import { CompletionItemKind, type CompletionItem, type Position } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
 import {
-    isApplicationService,
     isDomainEvent,
     isEventEmission,
     isIntegrationEvent,
@@ -11,7 +10,7 @@ import {
     isMethodInvocation,
     isTransition
 } from './generated/ast.js';
-import { canDeclareTransition, getEventEmissionMode } from './thinai-operation-utils.js';
+import { canDeclareTransition, getEventEmissionMode, isJourneyCommand } from './thinai-operation-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 
 /** Completes optional guards and journey input clauses at completed statements. */
@@ -35,22 +34,18 @@ export class ThinaiOptionalClauseCompletion {
             typeof reference?.$refText === 'string' && reference.$refText.length > 0 &&
             reference.$refNode !== undefined && reference.$refNode.end < offset;
         const getEnclosingMethod = (node: AstNode) => AstUtils.getContainerOfType(node, isMethod);
-        const isJourneyCommand = (targets: Array<{ ref?: AstNode }>): boolean => {
-            const target = targets.at(-1)?.ref;
-            return isMethod(target) && isApplicationService(target.$container) && !target.parameters.some(parameter =>
-                isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
-            );
-        };
         const scopeProvider = this.services.references.ScopeProvider as ThinaiScopeProvider;
         for (const node of AstUtils.streamAst(model)) {
             const nodeSource = node.$cstNode?.text ?? '';
             const whenAlreadyTyped = GrammarUtils.findNodesForKeyword(node.$cstNode, 'when')
                 .some(keyword => keyword.offset < offset);
             let keywords: string[] = [];
-            if (isJourneyStep(node) && isJourneyCommand(node.targets) && !whenAlreadyTyped) {
+            const journeyStep = isJourneyStep(node) ? node : undefined;
+            const journeyTarget = journeyStep?.targets.at(-1)?.ref;
+            if (journeyStep && isMethod(journeyTarget) && isJourneyCommand(journeyTarget) && !whenAlreadyTyped) {
                 keywords = [
-                    ...(!node.arguments ? ['with'] : []),
-                    ...(!node.guard ? ['when'] : [])
+                    ...(!journeyStep.arguments ? ['with'] : []),
+                    ...(!journeyStep.guard ? ['when'] : [])
                 ];
             } else if (isTransition(node)) {
                 const method = getEnclosingMethod(node);

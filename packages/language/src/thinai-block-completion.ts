@@ -301,7 +301,11 @@ export class ThinaiBlockCompletion {
             detail: 'Language keyword',
             preselect: true,
             insertTextMode: InsertTextMode.asIs,
-            data: { thinaiSiblingCompletion: true, thinaiIndentationDepth: indentationDepth },
+            data: {
+                thinaiSiblingCompletion: true,
+                thinaiIndentationDepth: indentationDepth,
+                ...(hasClosingBrace ? { thinaiClosingIndentationDepth: Math.max(0, indentationDepth - 1) } : {})
+            },
             textEdit: {
                 range: {
                     start: document.textDocument.positionAt(openingBrace + 1),
