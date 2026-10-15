@@ -925,6 +925,59 @@ in bounded context Ordering {
         expect(completion?.items.find(item => item.label === 'street' && item.kind === CompletionItemKind.Field)).toBeDefined();
     });
 
+    test('completes specification fields through collection elements and map values', async () => {
+        const text = `bounded context Ordering
+        in bounded context Ordering {
+            data object Line {
+                sku: string
+            }
+            data object Request {
+                lines: List<Line>
+                byId: Map<string, Line>
+                nested: List<Map<string, Line>>
+            }
+            data object Response {
+                lines: List<Line>
+            }
+            application service OrderApplication {
+                method submit(input: Request, items: List<Line>, nested: List<Map<string, Line>>) {
+                    behavior "Use [[input.lines.sku]], [[input.byId.sku]], [[input.nested.sku]], [[items.sku]], and [[nested.sku]]."
+                }
+            }
+            query service OrderQueries {
+                method search() returns Map<string, Response> {
+                    behavior "Use [[result.lines.sku]]."
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/collection-shape-specification.tni'), text
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        const references = [
+            'input.lines.sk',
+            'input.byId.sk',
+            'input.nested.sk',
+            'items.sk',
+            'nested.sk',
+            'result.lines.sk'
+        ];
+        for (const prefix of references) {
+            const referenceStart = text.indexOf(`[[${prefix}`);
+            const offset = referenceStart + 2 + prefix.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.find(item => item.label === 'sku' && item.kind === CompletionItemKind.Field), prefix)
+                .toBeDefined();
+        }
+
+        expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
     test('does not offer language keywords in multiline specification prose', async () => {
         const marker = '__completion_position__';
         const cases = [

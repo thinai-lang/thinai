@@ -10,6 +10,7 @@ import {
     stream,
 } from 'langium';
 import {
+    type CollectionType,
     type ContextMap,
     type Constructor,
     type DataObject,
@@ -375,10 +376,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 this.addShapeFields(pending, parameterType, parameter.name, referenceType, new Set());
             }
             if (parameter.collection) {
-                const elementType = parameter.collection.elementType?.ref;
-                if (elementType && (isDataObject(elementType) || isReadModel(elementType) || isValueObject(elementType))) {
-                    this.addShapeFields(pending, elementType, parameter.name, referenceType, new Set());
-                }
+                this.addCollectionShapeFields(pending, parameter.collection, parameter.name, referenceType, new Set());
             }
         }
 
@@ -391,10 +389,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 this.addShapeFields(pending, resultType, 'result', referenceType, new Set());
             }
             if (operation.returnCollection) {
-                const elementType = operation.returnCollection.elementType?.ref;
-                if (elementType && (isDataObject(elementType) || isReadModel(elementType) || isValueObject(elementType))) {
-                    this.addShapeFields(pending, elementType, 'result', referenceType, new Set());
-                }
+                this.addCollectionShapeFields(pending, operation.returnCollection, 'result', referenceType, new Set());
             }
         }
         if (journeyStep) {
@@ -406,11 +401,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (!queryMethod.returnType && !queryMethod.returnPrimitive && !queryMethod.returnCollection) {
                     continue;
                 }
-                const shape = queryMethod.returnType?.ref ?? queryMethod.returnCollection?.elementType?.ref;
                 const resultPrefix = `${getExportedName(queryMethod as AstNode & { name: string })}.result`;
                 this.addSpecificationSymbol(pending, queryMethod, resultPrefix, referenceType);
+                const shape = queryMethod.returnType?.ref;
                 if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {
                     this.addShapeFields(pending, shape, resultPrefix, referenceType, new Set());
+                }
+                if (queryMethod.returnCollection) {
+                    this.addCollectionShapeFields(pending, queryMethod.returnCollection, resultPrefix, referenceType, new Set());
                 }
             }
         }
@@ -476,8 +474,30 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (nested && (isDataObject(nested) || isReadModel(nested) || isValueObject(nested))) {
                 this.addShapeFields(descriptions, nested, name, referenceType, visited);
             }
+            if (field.collection) {
+                this.addCollectionShapeFields(descriptions, field.collection, name, referenceType, visited);
+            }
         }
         visited.delete(shape);
+    }
+
+    private addCollectionShapeFields(
+        descriptions: AstNodeDescription[],
+        collection: CollectionType,
+        prefix: string,
+        referenceType: string,
+        visited: Set<AstNode>
+    ): void {
+        const nestedCollection = collection.kind === 'Map' ? collection.valueCollection : collection.elementCollection;
+        if (nestedCollection) {
+            this.addCollectionShapeFields(descriptions, nestedCollection, prefix, referenceType, visited);
+            return;
+        }
+
+        const shape = (collection.kind === 'Map' ? collection.valueType : collection.elementType)?.ref;
+        if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {
+            this.addShapeFields(descriptions, shape, prefix, referenceType, visited);
+        }
     }
 
     private addSpecificationSymbol(
