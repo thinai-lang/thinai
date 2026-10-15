@@ -1,6 +1,7 @@
-import { type LangiumDocument, URI, UriUtils } from 'langium';
+import { GrammarUtils, type LangiumDocument, URI, UriUtils } from 'langium';
 import { CompletionItemKind, type CompletionItem } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
+import { isModel } from './generated/ast.js';
 import { toImportPath } from './thinai-scope-utils.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
 
@@ -45,6 +46,17 @@ export class ThinaiImportCompletion {
         if (stringStart === undefined || delimiterLength === undefined) {
             return undefined;
         }
+        const root = document.parseResult.value;
+        if (isModel(root)) {
+            const pathNode = root.imports
+                .map(importDeclaration => GrammarUtils.findNodeForProperty(importDeclaration.$cstNode, 'path'))
+                .find(node => node !== undefined && node.offset <= stringStart && stringStart < node.end && offset <= node.end);
+            if (pathNode) {
+                const pathStart = stringStart + delimiterLength;
+                return { path: text.slice(pathStart, offset), pathStart };
+            }
+        }
+
         const stringLine = document.textDocument.positionAt(stringStart).line;
         let importStart: number | undefined;
         for (let line = stringLine; line >= 0; line--) {

@@ -4,7 +4,6 @@ import {
     AstUtils,
     type ValidationAcceptor,
     type ValidationChecks,
-    URI,
     UriUtils,
     isReference
 } from 'langium';
@@ -15,7 +14,6 @@ import type {
     BoundedContext,
     BoundedContextPart,
     ContextMap,
-    ContextMapEndpoint,
     ContextRelationship,
     CollectionType,
     Constructor,
@@ -26,7 +24,6 @@ import type {
     EnumType,
     Factory,
     Import,
-    ImportComponent,
     IntegrationEvent,
     Field,
     Journey,
@@ -57,12 +54,9 @@ import {
     isEnumValue,
     isField,
     isIntegrationEvent,
-    isCustomerSupplierRelationship,
     isEnumType,
-    isModel,
     isModule,
     isMethod,
-    isPartnershipRelationship,
     isProjector,
     isDataObject,
     isQueryRepository,
@@ -71,9 +65,7 @@ import {
     isQueryService,
     isReadModel,
     isReadSourceReference,
-    isSeparateWaysRelationship,
     isSpecificationTextPart,
-    isSharedKernelRelationship,
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
@@ -87,8 +79,7 @@ import {
     isCrossContextOwned,
     isExposedByModule,
     isIdentifierValueObject,
-    moduleDependsTransitivelyOn,
-    resolveImportUri
+    moduleDependsTransitivelyOn
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import {
@@ -96,16 +87,11 @@ import {
     canDeclareTransition,
     getEventEmissionMode
 } from './thinai-operation-utils.js';
-import { INTEGRATION_PATTERNS } from './thinai-constants.js';
-import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
+import { ThinaiModelValidator } from './thinai-model-validator.js';
+import { ThinaiReadDependencyValidator } from './thinai-read-dependency-validator.js';
 import { formatCollectionType, getTypeReferences } from './thinai-type-utils.js';
-import {
-    areRelationshipPairDefinitionsCompatible,
-    getRelationshipPairSemantics,
-    type ContextRelationshipPairSemantics
-} from './thinai-context-map-utils.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -151,226 +137,44 @@ export function registerValidationChecks(services: ThinaiServices): void {
 
 export class ThinaiValidator {
     private readonly referencePolicy: ThinaiReferencePolicy;
+    private readonly modelValidator: ThinaiModelValidator;
+    private readonly readDependencyValidator: ThinaiReadDependencyValidator;
 
     constructor(private readonly services: ThinaiServices) {
         this.referencePolicy = new ThinaiReferencePolicy(services);
+        this.modelValidator = new ThinaiModelValidator(
+            services,
+            this.referencePolicy,
+            (node, accept) => this.checkDuplicateDeclaration(node, accept)
+        );
+        this.readDependencyValidator = new ThinaiReadDependencyValidator(
+            this.referencePolicy,
+            parameter => this.isEventParameter(parameter)
+        );
     }
 
     checkBoundedContext(context: BoundedContext, accept: ValidationAcceptor): void {
-        this.checkDuplicateDeclaration(context, accept);
+        this.modelValidator.checkBoundedContext(context, accept);
     }
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {
-        if (!part.context.ref) {
-            return;
-        }
-
-        const currentDocument = AstUtils.getDocument(part);
-        const targetDocument = AstUtils.getDocument(part.context.ref);
-        if (UriUtils.equals(currentDocument.uri, targetDocument.uri)) {
-            return;
-        }
-
-        const model = currentDocument.parseResult.value;
-        const imported = isModel(model)
-            ? model.imports.some(importDeclaration => {
-                const uri = resolveImportUri(currentDocument, importDeclaration);
-                return uri !== undefined && UriUtils.equals(uri, targetDocument.uri);
-            })
-            : false;
-        if (!imported) {
-            accept('error', 'A bounded-context contribution must directly import its canonical declaration.', {
-                node: part,
-                keyword: 'in'
-            });
-        }
+        this.modelValidator.checkBoundedContextPart(part, accept);
     }
 
     checkImport(importDeclaration: Import, accept: ValidationAcceptor): void {
-        const path = importDeclaration.path;
-        if (typeof path !== 'string' || path.length === 0) {
-            return;
-        }
-        if (!path.startsWith('./') && !path.startsWith('../')) {
-            accept('error', 'Imports must use a relative path beginning with ./ or ../.', {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
-        if (!path.endsWith('.tni')) {
-            accept('warning', 'Thinai imports should use the .tni file extension.', {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
-
-        const document = AstUtils.getDocument(importDeclaration);
-        const uri = resolveImportUri(document, importDeclaration);
-        if (!uri) {
-            return;
-        }
-        if (UriUtils.equals(document.uri, uri)) {
-            accept('error', 'A file cannot import itself.', {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
-
-        const duplicate = isModel(document.parseResult.value)
-            ? document.parseResult.value.imports.some(other => {
-                const otherUri = resolveImportUri(document, other);
-                return other !== importDeclaration && otherUri !== undefined && UriUtils.equals(otherUri, uri);
-            })
-            : false;
-        if (duplicate) {
-            accept('error', 'The same file is imported more than once.', {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
-
-        if (!this.services.shared.workspace.LangiumDocuments.hasDocument(uri)) {
-            accept('error', `Imported file '${path}' is not part of the workspace.`, {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
-
-        if (this.reachesImportCycle(uri, new Set([document.uri.toString()]))) {
-            accept('error', 'Import cycle detected.', {
-                node: importDeclaration,
-                property: 'path'
-            });
-        }
+        this.modelValidator.checkImport(importDeclaration, accept);
     }
 
     checkModelImports(model: Model, accept: ValidationAcceptor): void {
-        const names = new Map<string, Import | ImportComponent>();
-        for (const importDeclaration of model.imports) {
-            const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
-            for (const component of importDeclaration.components) {
-                declarations.push({
-                    name: component.alias?.$refText ?? component.component.$refText,
-                    node: component,
-                    property: component.alias ? 'alias' : 'component'
-                });
-            }
-            for (const declaration of declarations) {
-                if (names.has(declaration.name)) {
-                    const message = `Import component name '${declaration.name}' is declared more than once.`;
-                    accept('error', message, {
-                        node: declaration.node,
-                        property: declaration.property === 'alias' ? 'alias' : 'component'
-                    });
-                } else {
-                    names.set(declaration.name, declaration.node);
-                }
-            }
-        }
-        this.checkImportedContextMapConsistency(model, accept);
+        this.modelValidator.checkModelImports(model, accept);
     }
 
     checkContextMapRelationships(contextMap: ContextMap, accept: ValidationAcceptor): void {
-        const relationshipsByPair = new Map<string, ContextRelationshipPairSemantics[]>();
-        const reported = new Set<ContextRelationship>();
-        for (const relationship of contextMap.relationships) {
-            if (!isSyntacticallyComplete(relationship)) {
-                continue;
-            }
-            for (const pair of getRelationshipPairSemantics(relationship)) {
-                const existing = relationshipsByPair.get(pair.key) ?? [];
-                const duplicate = existing.some(previous => previous.identity === pair.identity);
-                const conflict = existing.some(previous => !areRelationshipPairDefinitionsCompatible(previous, pair));
-                if ((duplicate || conflict) && !reported.has(relationship)) {
-                    const message = duplicate
-                        ? `A relationship between ${pair.name} may only be declared once in context map '${contextMap.name}'.`
-                        : `Conflicting relationships between ${pair.name} in context map '${contextMap.name}'.`;
-                    accept('error', message, { node: relationship, property: 'relationships' });
-                    reported.add(relationship);
-                }
-                relationshipsByPair.set(pair.key, [...existing, pair]);
-            }
-        }
-    }
-
-    private checkImportedContextMapConsistency(model: Model, accept: ValidationAcceptor): void {
-        const relationshipsByPair = new Map<string, Array<{
-            map: ContextMap;
-            pair: ContextRelationshipPairSemantics;
-        }>>();
-        const reported = new Set<ContextRelationship>();
-
-        for (const contextMap of this.referencePolicy.getImportedContextMaps(model)) {
-            for (const relationship of contextMap.relationships) {
-                if (!isSyntacticallyComplete(relationship)) {
-                    continue;
-                }
-                for (const pair of getRelationshipPairSemantics(relationship)) {
-                    const existing = relationshipsByPair.get(pair.key) ?? [];
-                    for (const previous of existing) {
-                        if (previous.map === contextMap || areRelationshipPairDefinitionsCompatible(previous.pair, pair)) {
-                            continue;
-                        }
-                        if (!reported.has(relationship)) {
-                            accept('error', `Imported context maps '${previous.map.name}' and '${contextMap.name}' define conflicting relationships between ${pair.name}.`, {
-                                node: relationship,
-                                property: 'relationships'
-                            });
-                            reported.add(relationship);
-                        }
-                        break;
-                    }
-                    relationshipsByPair.set(pair.key, [...existing, { map: contextMap, pair }]);
-                }
-            }
-        }
+        this.modelValidator.checkContextMapRelationships(contextMap, accept);
     }
 
     checkModelLineBreaks(model: Model, accept: ValidationAcceptor): void {
-        const siblings = new Map<AstNode, AstNode[]>();
-        for (const node of AstUtils.streamAst(model)) {
-            if (!node.$cstNode || !isLineSeparatedSibling(node) || !node.$container) {
-                continue;
-            }
-            const children = siblings.get(node.$container) ?? [];
-            children.push(node);
-            siblings.set(node.$container, children);
-        }
-
-        const textDocument = AstUtils.getDocument(model).textDocument;
-        const text = textDocument.getText();
-        for (const [parent, children] of siblings) {
-            children.sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
-            const first = children[0];
-            const parentCst = parent.$cstNode;
-            const openingBrace = parentCst ? findCstTokenOffset(parentCst, '{') : undefined;
-            if (first?.$cstNode && openingBrace !== undefined && openingBrace < first.$cstNode.offset &&
-                textDocument.positionAt(openingBrace).line === first.$cstNode.range.start.line) {
-                accept('error', 'Start the first statement on a new line after the opening brace.', {
-                    node: first,
-                    range: first.$cstNode.range,
-                    code: 'line-break-required-after-open-brace'
-                });
-            }
-            for (let index = 1; index < children.length; index++) {
-                const previous = children[index - 1]!;
-                const current = children[index]!;
-                const previousCst = previous.$cstNode!;
-                const currentCst = current.$cstNode!;
-                if (previous.$containerProperty === 'projects' && current.$containerProperty === 'projects' &&
-                    text.slice(previousCst.end, currentCst.offset).includes(',')) {
-                    continue;
-                }
-                if (previousCst.range.end.line < currentCst.range.start.line) {
-                    continue;
-                }
-                accept('error', 'Start each sibling declaration or statement on a new line.', {
-                    node: current,
-                    range: currentCst.range,
-                    code: 'line-break-required'
-                });
-            }
-        }
+        this.modelValidator.checkModelLineBreaks(model, accept);
     }
 
     checkAggregate(aggregate: Aggregate, accept: ValidationAcceptor): void {
@@ -777,16 +581,16 @@ export class ThinaiValidator {
             isAggregateRootMethod: (target, aggregate) => this.isAggregateRootMethod(target, aggregate)
         });
         if (queryService) {
-            this.checkQueryServiceMethod(method, queryService, accept);
+            this.readDependencyValidator.checkQueryServiceMethod(method, queryService, accept);
         }
         if (applicationService) {
-            this.checkApplicationServiceReads(method, accept);
+            this.readDependencyValidator.checkApplicationServiceReads(method, accept);
         }
         if (domainService) {
-            this.checkDomainServiceReads(method, accept);
+            this.readDependencyValidator.checkDomainServiceReads(method, accept);
         }
         if (projectorService) {
-            this.checkProjectorMethod(method, projectorService!, accept);
+            this.readDependencyValidator.checkProjectorMethod(method, projectorService, accept);
         }
         for (const emission of method.emissions) {
             if (queryService) {
@@ -858,197 +662,8 @@ export class ThinaiValidator {
         this.checkDuplicateDeclaration(projector, accept);
     }
 
-    private checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
-        const queryContext = getOwningContextName(service);
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                const target = source.target.ref;
-                if (isRepository(target) || isQueryRepository(target) && getOwningContextName(target) !== queryContext) {
-                    accept('error', 'A query service may read only query repositories in its own bounded context.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
-
-    private checkApplicationServiceReads(method: Method, accept: ValidationAcceptor): void {
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                const target = source.target.ref;
-                if (isQueryRepository(target)) {
-                    accept('error', 'An application-service method must use command-side repositories, not query repositories.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
-
-    private checkDomainServiceReads(method: Method, accept: ValidationAcceptor): void {
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                if (isQueryRepository(source.target.ref)) {
-                    accept('error', 'A domain service must not depend on a query repository; use a domain repository or port.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
-
     checkReadDependency(read: ReadDependency, accept: ValidationAcceptor): void {
-        if (!isSyntacticallyComplete(read)) {
-            return;
-        }
-        let method: AstNode | undefined = read.$container;
-        while (method && !isMethod(method)) {
-            method = method.$container;
-        }
-        const owner = isMethod(method) ? method.$container : undefined;
-        if (!isMethod(method) || !(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
-            const clauseRange = this.getReadDependencyKeywordRange(read);
-            accept('error', 'The reads from clause is allowed only in application-service, query-service, projector, or domain-service methods.', {
-                node: read,
-                ...(clauseRange ? { range: clauseRange } : { keyword: 'reads' })
-            });
-            return;
-        }
-
-        for (const source of read.sources) {
-            const target = source.target.ref;
-            if (!target) {
-                continue;
-            }
-            if (isRepository(target) || isQueryRepository(target)) {
-                if (getOwningContextName(read) !== getOwningContextName(target)) {
-                    accept('error', 'A reads from repository dependency must belong to the same bounded context.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-                if (isProjector(owner) && isRepository(target)) {
-                    accept('warning', 'A projector reading current aggregate state may produce different results when events are replayed.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-                if (isProjector(owner) && isQueryRepository(target)) {
-                    accept('error', 'A projector must not read from a query repository; use event data or an explicit aggregate/reference source.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-                continue;
-            }
-            if (!isMethod(target) || !isQueryService(target.$container) ||
-                getOwningContextName(read) === getOwningContextName(target)) {
-                accept('error', 'A reads from method target must be a published query-service method in another bounded context.', {
-                    node: source,
-                    property: 'target'
-                });
-                continue;
-            }
-            if (!this.referencePolicy.isQueryServiceExposed(target.$container) ||
-                !this.referencePolicy.hasAuthorizedQueryRelationship(read, target)) {
-                accept('error', 'Reading a query service in another bounded context requires an exposed query contract and an imported authorized context map.', {
-                    node: source,
-                    property: 'target'
-                });
-            } else if (!this.referencePolicy.isExposedQueryResult(target)) {
-                accept('error', 'A published query operation must return primitives or explicitly exposed data-object contracts.', {
-                    node: source,
-                    property: 'target'
-                });
-            } else if (isProjector(owner)) {
-                accept('warning', 'A projector reading an external query API may make replay results depend on remote data availability or current state.', {
-                    node: source,
-                    property: 'target'
-                });
-            }
-        }
-    }
-
-    private getReadDependencyKeywordRange(read: ReadDependency): import('vscode-languageserver').Range | undefined {
-        const cstNode = read.$cstNode;
-        if (!cstNode) {
-            return undefined;
-        }
-        const readsOffset = findCstTokenOffset(cstNode, 'reads');
-        const fromOffset = findCstTokenOffset(cstNode, 'from');
-        if (readsOffset === undefined || fromOffset === undefined) {
-            return undefined;
-        }
-        const document = AstUtils.getDocument(read);
-        return {
-            start: document.textDocument.positionAt(readsOffset),
-            end: document.textDocument.positionAt(fromOffset + 'from'.length)
-        };
-    }
-
-    private checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
-        const cstNode = method.$cstNode;
-        const hasClosedBody = cstNode !== undefined && findCstTokenOffset(cstNode, '{') !== undefined &&
-            cstNode.text.trimEnd().endsWith('}') && isSyntacticallyComplete(method);
-        if (method.projects.length === 0 && hasClosedBody) {
-            accept('error', 'A projector method must declare at least one read model with projects.', {
-                node: method,
-                property: 'projects'
-            });
-        }
-        for (const project of method.projects) {
-            if (project.target?.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
-                accept('error', 'A projector and its read models must belong to the same bounded context.', {
-                    node: project,
-                    property: 'target'
-                });
-            }
-        }
-        const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
-        if ((eventParameters.length !== 1 || method.parameters.length !== 1) && hasClosedBody) {
-            accept('error', 'A projector method must handle exactly one domain or integration event.', {
-                node: method,
-                property: 'parameters'
-            });
-        }
-        const returnsKeyword = cstNode ? findCstTokenOffset(cstNode, 'returns') : undefined;
-        const openingBrace = cstNode ? findCstTokenOffset(cstNode, '{') : undefined;
-        const hasReturnsClause = method.returnPrimitive !== undefined || method.returnType !== undefined ||
-            method.returnCollection !== undefined || returnsKeyword !== undefined &&
-            (openingBrace === undefined || returnsKeyword < openingBrace);
-        if (hasReturnsClause) {
-            accept('error', 'A projector handler does not return a value.', {
-                node: method,
-                keyword: 'returns'
-            });
-        }
-        for (const repository of this.getReadRepositoryReferences(method)) {
-            if (isRepository(repository)) {
-                accept('error', 'A projector may describe query-repository output, not writes to an aggregate repository.', {
-                    node: method,
-                    property: 'behaviors'
-                });
-            } else if (!method.projects.some(project => project.target.ref === repository.readModel.ref)) {
-                accept('error', 'A projector method may reference only query repositories for its declared projection targets.', {
-                    node: method,
-                    property: 'behaviors'
-                });
-            }
-        }
-    }
-
-    private getReadRepositoryReferences(node: AstNode): Array<Repository | QueryRepository> {
-        const repositories = new Set<Repository | QueryRepository>();
-        AstUtils.streamAst(node).forEach(child => AstUtils.streamReferences(child).forEach(referenceInfo => {
-            if (isSpecificationTextPart(referenceInfo.container) && isReference(referenceInfo.reference) &&
-                (isQueryRepository(referenceInfo.reference.ref) || isRepository(referenceInfo.reference.ref))) {
-                repositories.add(referenceInfo.reference.ref);
-            }
-        }));
-        return [...repositories];
+        this.readDependencyValidator.checkReadDependency(read, accept);
     }
 
     checkTransition(transition: Transition, accept: ValidationAcceptor): void {
@@ -1317,20 +932,7 @@ export class ThinaiValidator {
     }
 
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
-        this.checkDuplicateDeclaration(sharedKernel, accept);
-        const disallowed = new Set([
-            'Aggregate', 'ApplicationService', 'DomainEvent',
-            'DataObject', 'Factory', 'Journey', 'Actor', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
-        ]);
-        for (const node of AstUtils.streamAst(sharedKernel)) {
-            if (disallowed.has(node.$type)) {
-                accept('error', 'A shared kernel may contain only reusable value objects, enums, domain services, and modules.', {
-                    node: sharedKernel,
-                    property: 'members'
-                });
-                break;
-            }
-        }
+        this.modelValidator.checkSharedKernel(sharedKernel, accept);
     }
 
     checkReferences(node: import('langium').AstNode, accept: ValidationAcceptor): void {
@@ -1522,51 +1124,7 @@ export class ThinaiValidator {
     }
 
     checkContextRelationship(relationship: ContextRelationship, accept: ValidationAcceptor): void {
-        if (!isSyntacticallyComplete(relationship)) {
-            return;
-        }
-        const endpoints = this.getContextMapEndpoints(relationship);
-        const sharedKernelRelationship = isSharedKernelRelationship(relationship);
-        const contexts = sharedKernelRelationship
-            ? relationship.participants
-            : isSeparateWaysRelationship(relationship)
-                ? [relationship.left, relationship.right]
-                : endpoints.map(endpoint => endpoint.context);
-        const resolvedContexts = contexts
-            .filter((context): context is NonNullable<typeof context> => context !== undefined)
-            .map(context => 'target' in context ? context.target?.ref : context?.ref)
-            .filter((context): context is BoundedContext => context !== undefined);
-
-        if (sharedKernelRelationship && resolvedContexts.length < 2) {
-            accept('error', 'A shared-kernel relationship must include at least two bounded contexts.', {
-                node: relationship,
-                property: 'participants'
-            });
-        }
-
-        if (new Set(resolvedContexts).size !== resolvedContexts.length) {
-            accept('error', 'A context relationship must connect different bounded contexts.', {
-                node: relationship,
-                property: sharedKernelRelationship ? 'participants' : isCustomerSupplierRelationship(relationship) ? 'supplier' : 'right'
-            });
-        }
-
-        for (const endpoint of endpoints) {
-            if (new Set(endpoint.integrationPatterns).size !== endpoint.integrationPatterns.length) {
-                accept('error', 'An integration pattern may only be listed once per bounded context.', {
-                    node: endpoint,
-                    property: 'integrationPatterns'
-                });
-            }
-            for (const pattern of endpoint.integrationPatterns) {
-                if (!INTEGRATION_PATTERNS.has(pattern)) {
-                    accept('error', `Unknown integration pattern '${pattern}'. Expected one of: ${[...INTEGRATION_PATTERNS].join(', ')}.`, {
-                        node: endpoint,
-                        property: 'integrationPatterns'
-                    });
-                }
-            }
-        }
+        this.modelValidator.checkContextRelationship(relationship, accept);
     }
 
     checkDomainEvent(event: DomainEvent, accept: ValidationAcceptor): void {
@@ -1616,18 +1174,6 @@ export class ThinaiValidator {
         });
     }
 
-    private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {
-        if (isCustomerSupplierRelationship(relationship)) {
-            return [relationship.customer, relationship.supplier]
-                .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
-        }
-        if (isPartnershipRelationship(relationship)) {
-            return [relationship.left, relationship.right]
-                .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
-        }
-        return [];
-    }
-
     private checkCrossContextTypeUse(
         node: AstNode,
         references: Reference<TypeDeclaration>[],
@@ -1667,37 +1213,4 @@ export class ThinaiValidator {
         }
     }
 
-    private reachesImportCycle(
-        uri: URI,
-        activePath: Set<string>,
-        completed: Set<string> = new Set()
-    ): boolean {
-        const key = uri.toString();
-        if (activePath.has(key)) {
-            return true;
-        }
-        if (completed.has(key)) {
-            return false;
-        }
-        const document = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
-        const model = document?.parseResult.value;
-        if (!document || !isModel(model)) {
-            completed.add(key);
-            return false;
-        }
-
-        activePath.add(key);
-        for (const importDeclaration of model.imports) {
-            const importedUri = resolveImportUri(document, importDeclaration);
-            if (!importedUri) {
-                continue;
-            }
-            if (this.reachesImportCycle(importedUri, activePath, completed)) {
-                return true;
-            }
-        }
-        activePath.delete(key);
-        completed.add(key);
-        return false;
-    }
 }

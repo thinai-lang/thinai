@@ -24,7 +24,7 @@ import {
 } from './generated/ast.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics } from './thinai-context-map-utils.js';
-import { getOwningContextName, getOwningModule, resolveImportUri } from './thinai-scope-utils.js';
+import { getOwningContextName, getOwningModule, isExposedByModule, resolveImportUri } from './thinai-scope-utils.js';
 import { getTypeReferences } from './thinai-type-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
@@ -33,16 +33,12 @@ export class ThinaiReferencePolicy {
 
     isIntegrationEventExposed(event: IntegrationEvent): boolean {
         const module = getOwningModule(event);
-        return module === undefined || module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === event)
-        );
+        return module === undefined || isExposedByModule(module, event);
     }
 
     isQueryServiceExposed(service: QueryService): boolean {
         const module = getOwningModule(service);
-        return module !== undefined && module.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === service)
-        );
+        return module !== undefined && isExposedByModule(module, service);
     }
 
     isExposedQueryResult(method: Method): boolean {
@@ -54,9 +50,7 @@ export class ThinaiReferencePolicy {
                 return false;
             }
             const module = getOwningModule(type);
-            return module !== undefined && module === getOwningModule(method) && module.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.target.ref === type)
-            );
+            return module !== undefined && module === getOwningModule(method) && isExposedByModule(module, type);
         });
     }
 
@@ -123,9 +117,7 @@ export class ThinaiReferencePolicy {
             return false;
         }
         const typeModule = getOwningModule(type);
-        if (!typeModule || !typeModule.exposures.some(exposure =>
-            exposure.declarations.some(declaration => declaration.target.ref === type)
-        )) {
+        if (!typeModule || !isExposedByModule(typeModule, type)) {
             return false;
         }
         const method = AstUtils.getContainerOfType(source, (node): node is Method => node.$type === 'Method');

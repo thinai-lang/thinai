@@ -12,6 +12,7 @@ examples.
 - `ordering.tni` demonstrates aggregates, entities, value objects, enums, primitive and nested collection fields, constructors, all specification clauses, escaped specification markers, and grouped guarded transitions.
 - `ordering-events.tni` demonstrates nested data objects, services, repositories, factories, read models, projectors with multiple targets, multiple emitted contracts, and multi-actor journeys.
 - `shipping.tni` demonstrates a mirrored identifier, an integration-event handler, module exposures, and multiple module dependencies.
+- `cross-context-journey.tni` demonstrates a journey that invokes commands from both Ordering and Shipping.
 - `context-map.tni` demonstrates every relationship form and every integration-pattern label.
 - `common-types.tni` defines shared-kernel values, services, and nested modules.
 
@@ -31,6 +32,7 @@ The model demonstrates root and child entity identities and transitions, constru
 | All behavior clauses, multiple emits/projects targets, guarded and grouped transitions, enum-value links | `ordering.tni`, `ordering-events.tni` |
 | Single- and double-quoted strings, line/block comments, and escaped `\[[` markers | `strategic.tni`, `common-types.tni`, `ordering.tni`, `context-map.tni` |
 | Multiple journey actors/steps with `with` and `when` descriptions | `ordering-events.tni` |
+| A journey spanning commands in multiple bounded contexts | `cross-context-journey.tni` |
 
 ## Try It
 
