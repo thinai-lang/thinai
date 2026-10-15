@@ -301,8 +301,8 @@ type SpecificationTarget = NamedDeclaration | EnumValue | Field | Parameter;
 
 StringLiteral returns string:
     TRIPLE_DOUBLE_STRING_START TRIPLE_DOUBLE_STRING_TEXT? TRIPLE_DOUBLE_STRING_END
-    | DOUBLE_STRING_START DOUBLE_STRING_TEXT DOUBLE_STRING_END
-    | SINGLE_STRING_START SINGLE_STRING_TEXT SINGLE_STRING_END;
+    | DOUBLE_STRING_START DOUBLE_STRING_TEXT? DOUBLE_STRING_END
+    | SINGLE_STRING_START SINGLE_STRING_TEXT? SINGLE_STRING_END;
 
 PrimitiveType returns string:
     'string' | 'number' | 'boolean' | 'date' | 'time' | 'instant';

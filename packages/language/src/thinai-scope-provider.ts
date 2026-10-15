@@ -477,6 +477,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 this.addShapeFields(descriptions, nested, name, referenceType, visited);
             }
         }
+        visited.delete(shape);
     }
 
     private addSpecificationSymbol(
@@ -779,7 +780,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return isIntegrationEvent(target.$container)
                 ? this.referencePolicy.isIntegrationEventExposed(target.$container) &&
                     this.referencePolicy.hasAuthorizedEventRelationship(context.container, target.$container)
-                : isDataObject(target.$container) &&
+                : (isDataObject(target.$container) || isValueObject(target.$container)) &&
                     this.referencePolicy.isPublishedReadResponseType(context.container, target.$container);
         }
         if (isIntegrationEvent(target)) {

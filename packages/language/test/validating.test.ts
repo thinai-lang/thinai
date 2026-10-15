@@ -670,6 +670,19 @@ in bounded context Ordering {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Duplicate constructor signature.'))).toBe(true);
     });
 
+    test('does not conflate unresolved constructor parameter types', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            value object Request {
+                constructor(left: MissingLeft)
+                constructor(right: MissingRight)
+            }
+        }`);
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('Duplicate constructor signature.')
+        )).toBe(false);
+    });
+
     test('accepts domain-value constructor inputs and DataObject application-service inputs', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

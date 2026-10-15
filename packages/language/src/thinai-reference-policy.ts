@@ -12,9 +12,9 @@ import {
     isModel,
     isQueryService,
     isSharedKernelRelationship,
+    isValueObject,
     type ContextMap,
     type ContextRelationship,
-    type DataObject,
     type IntegrationEvent,
     type Method,
     type Model,
@@ -113,18 +113,15 @@ export class ThinaiReferencePolicy {
     }
 
     isPublishedReadResponseType(source: AstNode, type: AstNode): boolean {
-        if (!isDataObject(type)) {
-            return false;
-        }
-        const typeModule = getOwningModule(type);
-        if (!typeModule || !isExposedByModule(typeModule, type)) {
+        if (!isDataObject(type) && !isValueObject(type)) {
             return false;
         }
         const method = AstUtils.getContainerOfType(source, (node): node is Method => node.$type === 'Method');
         return method !== undefined && method.reads.some(read => read.sources.some(reference => {
             const query = reference.target.ref;
             return query?.$type === 'Method' && isQueryService(query.$container) &&
-                this.hasQueryResultType(query, type) && getOwningContextName(query) !== getOwningContextName(method) &&
+                this.isExposedQueryResult(query) && this.hasQueryResultType(query, type) &&
+                getOwningContextName(query) !== getOwningContextName(method) &&
                 this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
         }));
     }
@@ -211,7 +208,21 @@ export class ThinaiReferencePolicy {
         return false;
     }
 
-    private hasQueryResultType(method: Method, type: DataObject): boolean {
-        return getTypeReferences(method.returnType, method.returnCollection).some(reference => reference.ref === type);
+    private hasQueryResultType(method: Method, type: AstNode): boolean {
+        const visited = new Set<AstNode>();
+        const includesType = (candidate: AstNode | undefined): boolean => {
+            if (candidate === type) {
+                return true;
+            }
+            if ((!isDataObject(candidate) && !isValueObject(candidate)) || visited.has(candidate)) {
+                return false;
+            }
+            visited.add(candidate);
+            return candidate.fields.some(field =>
+                getTypeReferences(field.type, field.collection).some(reference => includesType(reference.ref))
+            );
+        };
+        return getTypeReferences(method.returnType, method.returnCollection)
+            .some(reference => includesType(reference.ref));
     }
 }

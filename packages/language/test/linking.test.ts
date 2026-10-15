@@ -336,9 +336,10 @@ describe('Linking tests', () => {
                       exposes ProductQueries, ProductInfo
                       query service ProductQueries {
                           method findProduct(sku: string) returns List<ProductInfo>
-                     }
-                     data object ProductInfo { available: boolean }
-                 }
+                      }
+                      data object ProductInfo { address: ProductAddress }
+                      data object ProductAddress { city: string }
+                  }
              }`
         );
         const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
@@ -359,11 +360,11 @@ describe('Linking tests', () => {
                  }
                  event OrderPlaced
                  domain service ProductEligibility {
-                     method canOrder(sku: string) returns boolean {
-                         reads from Catalog.PublicApi.ProductQueries.findProduct
-                             when "Local product facts are unavailable."
-                         behavior "Use [[Catalog.PublicApi.ProductInfo.available]] from the published product result to evaluate eligibility."
-                     }
+                      method canOrder(sku: string) returns boolean {
+                          reads from Catalog.PublicApi.ProductQueries.findProduct
+                              when "Local product facts are unavailable."
+                          behavior "Use [[Catalog.PublicApi.ProductAddress.city]] from the published product result to evaluate eligibility."
+                      }
                  }
                  application service OrderApplication {
                      method checkCatalog(sku: string) {
@@ -391,6 +392,14 @@ describe('Linking tests', () => {
         expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
         expect(consumer.diagnostics?.some(diagnostic => diagnostic.severity === 2 &&
             String(diagnostic.message).includes('projector reading an external query API'))).toBe(true);
+
+        const nestedFieldOffset = consumer.textDocument.getText().indexOf('ProductAddress.city') +
+            'ProductAddress.ci'.length;
+        const nestedFieldCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(nestedFieldOffset)
+        });
+        expect(nestedFieldCompletion?.items.some(item => item.label === 'city')).toBe(true);
     });
 
     test('pattern labels do not control event authorization', async () => {

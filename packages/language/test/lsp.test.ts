@@ -885,6 +885,46 @@ in bounded context Ordering {
         }
     });
 
+    test('completes and links a nested shape reused by multiple input fields', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            data object Address { street: string }
+            data object Request {
+                billing: Address
+                shipping: Address
+            }
+            application service OrderApplication {
+                method submit(input: Request) {
+                    behavior "Use [[input.shipping.street]] and [[input.shipping.st]]"
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reused-nested-shape-specification.tni'), text
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        const linkedPart = AstUtils.streamAst(document.parseResult.value)
+            .filter(node => node.$type === 'SpecificationTextPart' && node.$cstNode?.text.includes('input.shipping.street'))
+            .toArray()[0];
+        expect(linkedPart).toBeDefined();
+        const linkedReferences = linkedPart
+            ? AstUtils.streamReferences(linkedPart).map(info => info.reference).filter(isReference).toArray()
+            : [];
+        expect(linkedReferences.map(reference => reference.ref && 'name' in reference.ref
+            ? reference.ref.name
+            : undefined)).toEqual(['input', 'shipping', 'street']);
+        expect(linkedReferences.map(reference => reference.error)).toEqual([undefined, undefined, undefined]);
+
+        const typedPrefix = 'input.shipping.st';
+        const offset = text.indexOf(typedPrefix, text.indexOf('and [[')) + typedPrefix.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(item => item.label === 'street' && item.kind === CompletionItemKind.Field)).toBeDefined();
+    });
+
     test('does not offer language keywords in multiline specification prose', async () => {
         const marker = '__completion_position__';
         const cases = [

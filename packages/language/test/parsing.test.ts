@@ -178,6 +178,13 @@ bounded context Ordering`);
         expect(emptyTriple.parseResult.parserErrors).toEqual([]);
         expect(emptyTriple.parseResult.value?.imports[0]?.path).toBe('');
 
+        for (const source of ['import ""\nbounded context Ordering', "import ''\nbounded context Ordering"]) {
+            const emptyQuoted = await parse(source);
+            expect(emptyQuoted.parseResult.lexerErrors).toEqual([]);
+            expect(emptyQuoted.parseResult.parserErrors).toEqual([]);
+            expect(emptyQuoted.parseResult.value?.imports[0]?.path).toBe('');
+        }
+
         const legacy = await parse(`bounded context Legacy in bounded context Legacy {
             aggregate Sample {
                 invariant "first line

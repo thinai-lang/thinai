@@ -366,7 +366,11 @@ export class ThinaiValidator {
     private checkDuplicateConstructorSignatures(constructors: Constructor[], accept: ValidationAcceptor): void {
         const signatures = new Set<string>();
         for (const constructor of constructors) {
-            const signature = constructor.parameters.map(parameter => this.getParameterTypeSignature(parameter)).join(',');
+            const parameterSignatures = constructor.parameters.map(parameter => this.getParameterTypeSignature(parameter));
+            if (parameterSignatures.some(signature => signature === undefined)) {
+                continue;
+            }
+            const signature = parameterSignatures.join(',');
             if (signatures.has(signature)) {
                 accept('error', 'Duplicate constructor signature.', {
                     node: constructor,
@@ -377,7 +381,7 @@ export class ThinaiValidator {
         }
     }
 
-    private getParameterTypeSignature(parameter: Parameter): string {
+    private getParameterTypeSignature(parameter: Parameter): string | undefined {
         const eventType = this.getEventParameterType(parameter);
         if (eventType) {
             return `event:${getExportedName(eventType as AstNode & { name: string })}`;
@@ -385,10 +389,29 @@ export class ThinaiValidator {
         if (parameter.primitive) {
             return parameter.primitive;
         }
-        if (parameter.type?.ref) {
-            return getExportedName(parameter.type.ref as AstNode & { name: string });
+        if (parameter.type) {
+            return parameter.type.ref
+                ? getExportedName(parameter.type.ref as AstNode & { name: string })
+                : undefined;
         }
-        return this.getCollectionTypeSignature(parameter.collection);
+        if (parameter.collection && this.isCompleteCollectionType(parameter.collection)) {
+            return this.getCollectionTypeSignature(parameter.collection);
+        }
+        return undefined;
+    }
+
+    private isCompleteCollectionType(collection: CollectionType): boolean {
+        const hasElement = collection.elementPrimitive !== undefined || collection.elementType?.ref !== undefined ||
+            collection.elementCollection !== undefined && this.isCompleteCollectionType(collection.elementCollection);
+        if (!hasElement) {
+            return false;
+        }
+        if (collection.kind !== 'Map') {
+            return collection.valuePrimitive === undefined && collection.valueType === undefined &&
+                collection.valueCollection === undefined;
+        }
+        return collection.valuePrimitive !== undefined || collection.valueType?.ref !== undefined ||
+            collection.valueCollection !== undefined && this.isCompleteCollectionType(collection.valueCollection);
     }
 
     private getEventParameterType(parameter: Parameter): DomainEvent | IntegrationEvent | undefined {
@@ -960,7 +983,7 @@ export class ThinaiValidator {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
                 const authorizedPublicField = event !== undefined && this.referencePolicy.isIntegrationEventExposed(event) &&
                     this.referencePolicy.hasAuthorizedEventRelationship(referenceInfo.container, event);
-                const publishedReadField = isDataObject(target.$container) &&
+                const publishedReadField = (isDataObject(target.$container) || isValueObject(target.$container)) &&
                     this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target.$container);
                 if (!authorizedPublicField && !publishedReadField) {
                     accept('error', isDomainEvent(target.$container)
