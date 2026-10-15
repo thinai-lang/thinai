@@ -27,12 +27,20 @@ import {
 
 /** Builds the imported, module-visible, and document-local symbol scopes. */
 export class ThinaiExternalScope {
+    private readonly importedSymbolsCache = new Map<string, AstNodeDescription[]>();
+    private readonly documentSymbolsCache = new Map<string, AstNodeDescription[]>();
+
     constructor(
         private readonly reflection: AstReflection,
         private readonly nameProvider: NameProvider,
         private readonly descriptions: AstNodeDescriptionProvider,
         private readonly indexManager: IndexManager
     ) {}
+
+    clearCache(): void {
+        this.importedSymbolsCache.clear();
+        this.documentSymbolsCache.clear();
+    }
 
     getModuleSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
         const module = getOwningModule(context.container);
@@ -76,6 +84,11 @@ export class ThinaiExternalScope {
     }
 
     getImportedSymbols(document: import('langium').LangiumDocument, referenceType: string): AstNodeDescription[] {
+        const cacheKey = JSON.stringify([document.uri.toString(), referenceType]);
+        const cached = this.importedSymbolsCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
         const root = document.parseResult.value;
         if (!isModel(root) || root.imports.length === 0) {
             return [];
@@ -108,10 +121,21 @@ export class ThinaiExternalScope {
                 }
             }
         }
-        return this.getUniqueScopeCandidates(candidates);
+        const result = this.getUniqueScopeCandidates(candidates);
+        this.importedSymbolsCache.set(cacheKey, result);
+        return result;
     }
 
     getDocumentSymbols(context: ReferenceInfo, document: import('langium').LangiumDocument, referenceType: string): AstNodeDescription[] {
+        const cacheKey = JSON.stringify([
+            document.uri.toString(),
+            referenceType,
+            this.getLexicalContextName(context) ?? null
+        ]);
+        const cached = this.documentSymbolsCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
         const descriptions = this.indexManager.allElements(referenceType, new Set([document.uri.toString()]));
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
         const owningContextName = this.getLexicalContextName(context);
@@ -125,7 +149,9 @@ export class ThinaiExternalScope {
                 }
             }
         }
-        return this.getUniqueScopeCandidates(candidates);
+        const result = this.getUniqueScopeCandidates(candidates);
+        this.documentSymbolsCache.set(cacheKey, result);
+        return result;
     }
 
     private getLexicalContextName(context: ReferenceInfo): string | undefined {

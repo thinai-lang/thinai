@@ -15,7 +15,7 @@ export class ThinaiParserErrorMessageProvider extends LangiumParserErrorMessageP
         if (options.expected.name === 'ID' && isEnumValuePosition && isQuotedValue) {
             return 'Enum values must be unquoted identifiers declared by the field\'s enum type.';
         }
-        if (options.expected.name === 'ID' && options.previous.image.toLowerCase() === 'emits' && isQuotedValue) {
+        if (options.expected.name === 'ID' && options.ruleName.startsWith('EventReference') && isQuotedValue) {
             return 'Event names must be unquoted identifiers declared in the model.';
         }
         return super.buildMismatchTokenMessage(options);

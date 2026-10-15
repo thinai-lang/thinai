@@ -8,6 +8,7 @@ import {
     type Stream,
     type LangiumCoreServices,
     stream,
+    DocumentState,
 } from 'langium';
 import {
     type CollectionType,
@@ -97,6 +98,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             this.nameProvider,
             this.descriptions,
             this.indexManager
+        );
+        services.shared.workspace.DocumentBuilder.onUpdate(() => this.externalScope.clearCache());
+        services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.IndexedContent, () =>
+            this.externalScope.clearCache()
         );
         this.referencePolicy = new ThinaiReferencePolicy(services);
         this.pathScope = new ThinaiPathScope(services, {

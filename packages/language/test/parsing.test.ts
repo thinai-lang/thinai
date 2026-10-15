@@ -51,7 +51,7 @@ describe('Parsing tests', () => {
         const document = await parse(`bounded context Ordering in bounded context Ordering {
             aggregate Order {
                 root entity Order {
-                    method place() { emits "OrderPlaced" }
+                    method place() { emits "OrderPlaced", OrderPaid, 'OrderCancelled' }
                     identifier id: OrderId
                 }
                 value object OrderId { raw: string }
@@ -59,9 +59,9 @@ describe('Parsing tests', () => {
             }
         }`);
 
-        expect(document.parseResult.parserErrors.some(error =>
+        expect(document.parseResult.parserErrors.filter(error =>
             error.message === 'Event names must be unquoted identifiers declared in the model.'
-        )).toBe(true);
+        )).toHaveLength(2);
     });
 
     test('rejects entity inheritance syntax', async () => {
