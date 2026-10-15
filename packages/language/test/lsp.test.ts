@@ -989,6 +989,57 @@ in bounded context Ordering {
         expect(document.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
+    test('resolves and completes journey query results through an aliased context import', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-query-catalog.tni'),
+            `bounded context Catalog in bounded context Catalog {
+                module PublicApi {
+                    query service ProductQueries {
+                        method findProduct() returns ProductInfo
+                    }
+                    data object ProductInfo { available: boolean }
+                }
+            }`
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-query-ordering.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                application service Commands { method placeOrder() }
+            }`
+        );
+        const source = `import { Catalog as Products } from "./aliased-query-catalog.tni"
+            import "./aliased-query-ordering.tni"
+            actor Customer
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.Commands.placeOrder when "Product is [[Products.PublicApi.ProductQueries.findProduct.result.available]]."
+                }
+            }`;
+        const journey = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-query-journey.tni'), source
+        );
+        documents.push(catalog, ordering, journey);
+        await services.shared.workspace.DocumentBuilder.build([catalog, ordering, journey], { validation: true });
+
+        const referencePart = AstUtils.streamAst(journey.parseResult.value)
+            .find(node => node.$type === 'SpecificationTextPart' && 'target' in node && node.target);
+        expect(referencePart).toBeDefined();
+        const references = referencePart
+            ? AstUtils.streamReferences(referencePart).map(info => info.reference).filter(isReference).toArray()
+            : [];
+        expect(references.at(-1)?.ref?.$type).toBe('Field');
+        expect(references.map(reference => reference.error)).toEqual(references.map(() => undefined));
+
+        const typedPath = 'Products.PublicApi.ProductQueries.findProduct.result.av';
+        const offset = source.indexOf(typedPath) + typedPath.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(journey, {
+            textDocument: { uri: journey.uri.toString() },
+            position: journey.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(item => item.label === 'available' && item.kind === CompletionItemKind.Field))
+            .toBeDefined();
+    });
+
     test('does not offer language keywords in multiline specification prose', async () => {
         const marker = '__completion_position__';
         const cases = [
@@ -2723,7 +2774,11 @@ in bounded context Ordering {
             'aggregate', 'application service', 'module', 'value object'
         ]));
         const sameLineSibling = sameLineCompletion?.items.find(item => item.label === 'aggregate');
+        expect(sameLineSibling?.kind).toBe(CompletionItemKind.Keyword);
+        expect(sameLineSibling?.data).toMatchObject({ thinaiIndentationDepth: 1 });
         expect(sameLineSibling?.textEdit).toMatchObject({ newText: '\n    aggregate' });
+        expect(applyConfiguredIndentationToCompletions([sameLineSibling!], 2, false)[0]?.textEdit?.newText)
+            .toBe('\n\taggregate');
 
         const nextLineText = 'bounded context Ordering\nin bounded context Ordering {\n    event OrderPlaced\n    \n}';
         const nextLine = services.shared.workspace.LangiumDocuments.createDocument(

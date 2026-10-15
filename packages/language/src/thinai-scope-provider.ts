@@ -68,7 +68,6 @@ import { isJourneyCommand } from './thinai-operation-utils.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiPathScope } from './thinai-path-scope.js';
 import {
-    getExportedName,
     getOwningAggregate,
     getOwningContextName,
     getOwningModule,
@@ -394,6 +393,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
         if (journeyStep) {
+            const resultPrefixes = new Set<string>();
             for (const description of this.getUnsegmentedScope(context, 'Method').getAllElements()) {
                 const queryMethod = description.node;
                 if (!isMethod(queryMethod) || !isQueryService(queryMethod.$container)) {
@@ -402,7 +402,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (!queryMethod.returnType && !queryMethod.returnPrimitive && !queryMethod.returnCollection) {
                     continue;
                 }
-                const resultPrefix = `${getExportedName(queryMethod as AstNode & { name: string })}.result`;
+                const resultPrefix = `${description.name}.result`;
+                if (resultPrefixes.has(resultPrefix)) {
+                    continue;
+                }
+                resultPrefixes.add(resultPrefix);
                 this.addSpecificationSymbol(pending, queryMethod, resultPrefix, referenceType);
                 const shape = queryMethod.returnType?.ref;
                 if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {

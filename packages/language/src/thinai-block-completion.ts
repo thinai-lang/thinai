@@ -241,9 +241,7 @@ export class ThinaiBlockCompletion {
         const lineStart = getLineStartOffset(document, siblingStart ?? end);
         const prefixBeforeSibling = text.slice(lineStart, siblingStart ?? end);
         const requiresStructuralIndentation = !/^[\t ]*$/.test(prefixBeforeSibling);
-        const indentationDepth = requiresStructuralIndentation
-            ? getBlockNestingDepth(sibling.$container)
-            : undefined;
+        const indentationDepth = getBlockNestingDepth(sibling.$container);
         const indent = requiresStructuralIndentation
             ? this.getBlockChildIndentation(document, sibling.$container, offset)
             : prefixBeforeSibling;
@@ -256,7 +254,7 @@ export class ThinaiBlockCompletion {
             insertTextMode: InsertTextMode.asIs,
             data: {
                 thinaiSiblingCompletion: true,
-                ...(indentationDepth === undefined ? {} : { thinaiIndentationDepth: indentationDepth })
+                thinaiIndentationDepth: indentationDepth
             },
             sortText: '1',
             textEdit: {
