@@ -511,6 +511,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
 
+        if (isJourneyStep(context.container)) {
+            const targetModule = getOwningModule(target);
+            return !targetModule || isExposedByModule(targetModule, target);
+        }
+
         const exposure = context.container.$type === 'Exposure'
             ? context.container
             : context.container.$container?.$type === 'Exposure'

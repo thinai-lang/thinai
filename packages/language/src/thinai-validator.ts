@@ -66,6 +66,7 @@ import {
     isReadModel,
     isReadSourceReference,
     isSpecificationTextPart,
+    isJourneyStep,
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
@@ -979,6 +980,14 @@ export class ThinaiValidator {
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
             const crossesContext = isCrossContextOwned(referenceInfo.container, target);
+            if (isJourneyStep(referenceInfo.container) && targetModule && !isModule(target) &&
+                !isExposedByModule(targetModule, target)) {
+                accept('error', 'A journey may reference a module declaration only when its module exposes it.', {
+                    node: referenceInfo.container,
+                    property: 'targets'
+                });
+                return;
+            }
             if (isField(target) && crossesContext && !isInSharedKernel(target)) {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
                 const authorizedPublicField = event !== undefined && this.referencePolicy.isIntegrationEventExposed(event) &&
@@ -1083,18 +1092,12 @@ export class ThinaiValidator {
                 ? AstUtils.streamAst(document.parseResult.value).filter(isRepository)
                     .filter(candidate => candidate.root.ref && getOwningAggregate(candidate.root.ref) === aggregate).toArray()
                 : []);
-        const ordered = writeRepositories.sort((left, right) => this.getDeclarationKey(left).localeCompare(this.getDeclarationKey(right)));
-        if (ordered.length > 1 && ordered[0] !== repository) {
+        if (writeRepositories.length > 1) {
             accept('error', 'An aggregate may have only one write repository; use query repositories for read models.', {
                 node: repository,
                 property: 'root'
             });
         }
-    }
-
-    private getDeclarationKey(node: AstNode): string {
-        const document = AstUtils.getDocument(node);
-        return `${document.uri.toString()}#${this.services.workspace.AstNodeLocator.getAstNodePath(node)}`;
     }
 
     checkQueryRepository(repository: QueryRepository, accept: ValidationAcceptor): void {

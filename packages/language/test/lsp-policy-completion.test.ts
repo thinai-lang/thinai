@@ -889,6 +889,52 @@ describe('LSP policy completion', () => {
         expect(labels).not.toContain('findOrder');
     });
 
+    test('journey references require exposed module commands', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Internal {
+                application service PrivateCommands {
+                    method run()
+                }
+            }
+            module Public {
+                exposes PublicCommands, placeOrder
+                application service PublicCommands {
+                    method placeOrder()
+                }
+            }
+        }
+        actor Customer
+        journey PlaceOrder {
+            by Customer {
+                invoke Ordering.Internal.PrivateCommands.ru
+                invoke Ordering.Public.PublicCommands.pla
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-module-visibility.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
+
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'A journey may reference a module declaration only when its module exposes it.'
+        ))).toBe(true);
+
+        const privateOffset = text.indexOf('Ordering.Internal.PrivateCommands.ru') + 'Ordering.Internal.PrivateCommands.ru'.length;
+        const privateCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(privateOffset)
+        });
+        expect(privateCompletion?.items.map(item => item.label)).not.toContain('run');
+
+        const publicOffset = text.indexOf('Ordering.Public.PublicCommands.pla') + 'Ordering.Public.PublicCommands.pla'.length;
+        const publicCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(publicOffset)
+        });
+        expect(publicCompletion?.items.map(item => item.label)).toContain('placeOrder');
+    });
+
     test('offers an import code action for an unresolved indexed declaration', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),

@@ -22,8 +22,7 @@ export function getSpecificationCompletionContext(
             if (offset < cstNode.end) {
                 return true;
             }
-            const delimiter = cstNode.text[0];
-            return offset === cstNode.end && (delimiter !== '"' && delimiter !== "'" || !cstNode.text.endsWith(delimiter));
+            return offset === cstNode.end && !hasClosingDelimiter(cstNode.text);
         })
         .toArray()
         .sort((left, right) =>
@@ -40,4 +39,19 @@ export function getSpecificationCompletionContext(
         return isReferencePart && part.$cstNode.offset <= offset && offset <= part.$cstNode.end;
     });
     return inReference ? 'reference' : 'text';
+}
+
+function hasClosingDelimiter(text: string): boolean {
+    const delimiter = text.startsWith('"""') ? '"""' : text[0];
+    if (delimiter !== '"""' && delimiter !== '"' && delimiter !== "'") {
+        return false;
+    }
+    if (!text.endsWith(delimiter)) {
+        return false;
+    }
+    let precedingBackslashes = 0;
+    for (let index = text.length - delimiter.length - 1; index >= 0 && text[index] === '\\'; index--) {
+        precedingBackslashes++;
+    }
+    return precedingBackslashes % 2 === 0;
 }

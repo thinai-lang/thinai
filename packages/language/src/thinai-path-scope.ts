@@ -146,7 +146,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         for (const description of scope.getAllElements()) {
             const target = this.callbacks.getDescriptionNode(description);
             if (isMethod(target) && (isJourneyStep(context.container)
-                ? this.callbacks.isJourneyCommand(target)
+                ? this.callbacks.isJourneyCommand(target) && this.callbacks.isSupportedCandidate(context, target)
                 : this.callbacks.isSupportedInvocationTarget(context.container, target) &&
                     this.callbacks.isSupportedCandidate(context, target))) {
                 allowedTargets.add(target);

@@ -66,6 +66,42 @@ describe('Linking tests', () => {
         ]))).toBe(true);
     });
 
+    test('reports a duplicate write repository when the new declaration sorts first', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/z-context.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        const existingRepository = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/z-repository.tni'),
+            `import "./z-context.tni"
+             in bounded context Ordering {
+                 repository ExistingRepository { manages Order.Order }
+             }`
+        );
+        documents = [context, existingRepository];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        expect(semanticDiagnostics(existingRepository).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+
+        const addedRepository = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/a-repository.tni'),
+            `import "./z-context.tni"
+             in bounded context Ordering {
+                 repository AddedRepository { manages Order.Order }
+             }`
+        );
+        documents.push(addedRepository);
+        await services.shared.workspace.DocumentBuilder.build([addedRepository], { validation: true });
+
+        expect(semanticDiagnostics(addedRepository).some(diagnostic => String(diagnostic.message).includes(
+            'An aggregate may have only one write repository'
+        ))).toBe(true);
+    });
+
     test('links descriptive guards on method invocations', async () => {
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/guarded-invocation.tni'),

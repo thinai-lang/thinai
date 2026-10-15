@@ -1021,6 +1021,19 @@ in bounded context Ordering {
                         method run() { behavior '
                             The order\'s status is still being described.
                             tran${marker}`
+            },
+            {
+                name: 'open double-quoted specification ending in an escaped quote',
+                source: String.raw`bounded context Ordering in bounded context Ordering {
+                    application service App {
+                        method run() { behavior "Still prose with an escaped quote \"${marker}`
+            },
+            {
+                name: 'open triple-double-quoted specification ending in one quote',
+                source: `bounded context Ordering in bounded context Ordering {
+                    application service App {
+                        method run() { behavior """
+                            Still prose with an incomplete delimiter "${marker}`
             }
         ];
 
