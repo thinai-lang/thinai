@@ -1,31 +1,36 @@
 import { AstUtils, DefaultScopeComputation, type AstNode, type AstNodeDescription, type LangiumDocument } from 'langium';
 import type { CancellationToken } from 'vscode-jsonrpc';
-import { isBoundedContext, isBoundedContextPart, isModel, isSharedKernel } from './generated/ast.js';
+import {
+    isBoundedContext,
+    isBoundedContextPart,
+    isModel,
+    isSharedKernel,
+    type BoundedContext,
+    type BoundedContextPart,
+    type SharedKernel
+} from './generated/ast.js';
 import { getDeclarationPath, isNamedExport } from './thinai-scope-utils.js';
 
 function getContextNameForIndexing(node: AstNode): string | undefined {
-    let current: AstNode | undefined = node;
-    while (current) {
-        if (isBoundedContext(current)) {
-            return current.name;
-        }
-        if (isBoundedContextPart(current)) {
-            const referenceText = current.context.$refText;
-            const root = AstUtils.getDocument(current).parseResult.value;
-            if (isModel(root)) {
-                const selectedComponent = root.imports
-                    .flatMap(importDeclaration => importDeclaration.components)
-                    .find(component => component.alias?.$refText === referenceText);
-                if (selectedComponent) {
-                    return selectedComponent.component.$refText;
-                }
+    const owner = AstUtils.getContainerOfType(node,
+        (candidate): candidate is BoundedContext | BoundedContextPart | SharedKernel =>
+            isBoundedContext(candidate) || isBoundedContextPart(candidate) || isSharedKernel(candidate)
+    );
+    if (isBoundedContext(owner) || isSharedKernel(owner)) {
+        return owner.name;
+    }
+    if (isBoundedContextPart(owner)) {
+        const referenceText = owner.context.$refText;
+        const root = AstUtils.getDocument(owner).parseResult.value;
+        if (isModel(root)) {
+            const selectedComponent = root.imports
+                .flatMap(importDeclaration => importDeclaration.components)
+                .find(component => component.alias?.$refText === referenceText);
+            if (selectedComponent) {
+                return selectedComponent.component.$refText;
             }
-            return referenceText;
         }
-        if (isSharedKernel(current)) {
-            return current.name;
-        }
-        current = current.$container;
+        return referenceText;
     }
     return undefined;
 }

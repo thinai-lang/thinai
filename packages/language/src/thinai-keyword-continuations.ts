@@ -1,6 +1,7 @@
 import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
 import { type CompletionItem, type Position } from 'vscode-languageserver';
 import {
+    type TransitionChange,
     isApplicationService,
     isBoundedContext,
     isDomainService,
@@ -163,7 +164,7 @@ export class ThinaiKeywordContinuations {
             .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
             .toArray()
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0] as
-                import('./generated/ast.js').TransitionChange | undefined;
+            TransitionChange | undefined;
         const field = change?.field?.ref;
         return isField(field) && isEnumType(field.type?.ref);
     }

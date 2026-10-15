@@ -11,6 +11,7 @@ import {
     type Parameter
 } from './generated/ast.js';
 import { getExportedName } from './thinai-scope-utils.js';
+import { formatCollectionType } from './thinai-type-utils.js';
 
 /** Builds concise symbol and type details for Thinai completion items. */
 export class ThinaiCompletionDetails {
@@ -65,15 +66,8 @@ export class ThinaiCompletionDetails {
     }
 
     private getCollectionDetail(collection: CollectionType): string {
-        const element = collection.elementPrimitive ??
-            (collection.elementType?.ref ? this.getCanonicalName(collection.elementType.ref, collection.elementType.$refText) :
-                collection.elementCollection ? this.getCollectionDetail(collection.elementCollection) : 'unknown');
-        if (collection.kind !== 'Map') {
-            return `${collection.kind}<${element}>`;
-        }
-        const value = collection.valuePrimitive ??
-            (collection.valueType?.ref ? this.getCanonicalName(collection.valueType.ref, collection.valueType.$refText) :
-                collection.valueCollection ? this.getCollectionDetail(collection.valueCollection) : 'unknown');
-        return `Map<${element}, ${value}>`;
+        return formatCollectionType(collection, reference =>
+            this.getCanonicalName(reference.ref!, reference.$refText)
+        );
     }
 }

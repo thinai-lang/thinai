@@ -43,6 +43,7 @@ import type {
     Repository,
     Subdomain,
     ThinaiAstType,
+    Transition,
     TypeDeclaration,
     ValueObject,
     SharedKernel
@@ -95,6 +96,7 @@ import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
+import { formatCollectionType, getTypeReferences } from './thinai-type-utils.js';
 import {
     areRelationshipPairDefinitionsCompatible,
     getRelationshipPairSemantics,
@@ -294,7 +296,7 @@ export class ThinaiValidator {
         }>>();
         const reported = new Set<ContextRelationship>();
 
-        for (const contextMap of this.referencePolicy.getVisibleContextMaps(model)) {
+        for (const contextMap of this.referencePolicy.getImportedContextMaps(model)) {
             for (const relationship of contextMap.relationships) {
                 if (!isSyntacticallyComplete(relationship)) {
                     continue;
@@ -425,7 +427,7 @@ export class ThinaiValidator {
     }
 
     checkField(field: Field, accept: ValidationAcceptor): void {
-        const typeReferences = this.collectTypeReferences(field.type, field.collection);
+        const typeReferences = getTypeReferences(field.type, field.collection);
         this.checkCrossContextTypeUse(field, typeReferences, accept);
         this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModel(field.$container));
         const isDataObjectField = isDataObject(field.$container);
@@ -591,18 +593,11 @@ export class ThinaiValidator {
     }
 
     private getCollectionTypeSignature(collection?: CollectionType): string {
-        if (!collection) {
-            return '?';
-        }
-        const element = collection.elementPrimitive ??
-            (collection.elementType?.ref
-                ? getExportedName(collection.elementType.ref as AstNode & { name: string })
-                : this.getCollectionTypeSignature(collection.elementCollection));
-        const value = collection.valuePrimitive ??
-            (collection.valueType?.ref
-                ? getExportedName(collection.valueType.ref as AstNode & { name: string })
-                : this.getCollectionTypeSignature(collection.valueCollection));
-        return collection.kind === 'Map' ? `Map<${element},${value}>` : `${collection.kind}<${element}>`;
+        return formatCollectionType(
+            collection,
+            reference => getExportedName(reference.ref as AstNode & { name: string }),
+            { missingType: '?', mapSeparator: ',' }
+        );
     }
 
     private checkEntityStateGraph(entity: Entity, accept: ValidationAcceptor): void {
@@ -756,7 +751,7 @@ export class ThinaiValidator {
             }
         }
         if (method.returnType || method.returnCollection) {
-            const returnTypes = this.collectTypeReferences(method.returnType, method.returnCollection);
+            const returnTypes = getTypeReferences(method.returnType, method.returnCollection);
             this.checkCrossContextTypeUse(method, returnTypes, accept, 'returnType');
             this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', applicationService !== undefined || queryService !== undefined);
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
@@ -1052,7 +1047,7 @@ export class ThinaiValidator {
         return [...repositories];
     }
 
-    checkTransition(transition: import('./generated/ast.js').Transition, accept: ValidationAcceptor): void {
+    checkTransition(transition: Transition, accept: ValidationAcceptor): void {
         const aggregate = getOwningAggregate(transition);
         const method = transition.$container;
         const entity = method.$container;
@@ -1159,7 +1154,7 @@ export class ThinaiValidator {
                 });
                 continue;
             }
-            const typeReferences = this.collectTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
+            const typeReferences = getTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
             if (typeReferences.some(reference => isDataObject(reference.ref))) {
                 accept('error', 'Constructors must accept domain values, not DataObjects; map DataObjects at the application boundary.', {
                     node: parameter,
@@ -1196,7 +1191,7 @@ export class ThinaiValidator {
         if (this.isEventParameter(parameter)) {
             return;
         }
-        const typeReferences = this.collectTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
+        const typeReferences = getTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
         this.checkCrossContextTypeUse(parameter, typeReferences, accept, 'type');
         this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
             isApplicationService(parameter.$container.$container) || isQueryService(parameter.$container.$container));
@@ -1517,7 +1512,7 @@ export class ThinaiValidator {
                 property: 'readModel'
             });
         }
-        const seen = new Set<import('./generated/ast.js').Aggregate>();
+        const seen = new Set<Aggregate>();
         for (const source of repository.sources) {
             const aggregate = source.target.ref;
             if (!aggregate) {
@@ -1663,20 +1658,6 @@ export class ThinaiValidator {
                 .filter((endpoint): endpoint is ContextMapEndpoint => endpoint !== undefined);
         }
         return [];
-    }
-
-    private collectTypeReferences(
-        type?: Reference<TypeDeclaration>,
-        collection?: CollectionType
-    ): Reference<TypeDeclaration>[] {
-        const references = type ? [type] : [];
-        if (collection) {
-            references.push(
-                ...this.collectTypeReferences(collection.elementType, collection.elementCollection),
-                ...this.collectTypeReferences(collection.valueType, collection.valueCollection)
-            );
-        }
-        return references;
     }
 
     private checkCrossContextTypeUse(

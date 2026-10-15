@@ -3,7 +3,6 @@ import {
     type AstNode,
     type LangiumCoreServices,
     type LangiumDocument,
-    isReference,
     type URI,
     UriUtils
 } from 'langium';
@@ -14,16 +13,19 @@ import {
     isQueryService,
     isSharedKernelRelationship,
     type ContextMap,
+    type ContextRelationship,
     type DataObject,
     type IntegrationEvent,
     type Method,
     type Model,
     type QueryService,
-    type SharedKernel
+    type SharedKernel,
+    type TypeDeclaration
 } from './generated/ast.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics } from './thinai-context-map-utils.js';
 import { getOwningContextName, getOwningModule, resolveImportUri } from './thinai-scope-utils.js';
+import { getTypeReferences } from './thinai-type-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
 export class ThinaiReferencePolicy {
@@ -44,15 +46,9 @@ export class ThinaiReferencePolicy {
     }
 
     isExposedQueryResult(method: Method): boolean {
-        const resultTypes = [
-            ...(method.returnType?.ref ? [method.returnType.ref] : []),
-            ...(method.returnCollection
-                ? AstUtils.streamReferences(method.returnCollection)
-                    .map(referenceInfo => isReference(referenceInfo.reference) ? referenceInfo.reference.ref : undefined)
-                    .filter((type): type is AstNode => type !== undefined)
-                    .toArray()
-                : [])
-        ];
+        const resultTypes = getTypeReferences(method.returnType, method.returnCollection)
+            .map(reference => reference.ref)
+            .filter((type): type is TypeDeclaration => type !== undefined);
         return resultTypes.length === 0 || resultTypes.every(type => {
             if (!isDataObject(type)) {
                 return false;
@@ -113,7 +109,7 @@ export class ThinaiReferencePolicy {
             !this.importsDocument(model, document, AstUtils.getDocument(target).uri)) {
             return false;
         }
-        const contextMaps = this.getVisibleContextMaps(model);
+        const contextMaps = this.getImportedContextMaps(model);
         if (!this.haveCompatibleRelationshipDefinitions(contextMaps, consumer, provider, purpose)) {
             return false;
         }
@@ -143,6 +139,14 @@ export class ThinaiReferencePolicy {
 
     getVisibleContextMaps(model: Model): ContextMap[] {
         const contextMaps = new Set(model.declarations.filter(isContextMap));
+        for (const contextMap of this.getImportedContextMaps(model)) {
+            contextMaps.add(contextMap);
+        }
+        return [...contextMaps];
+    }
+
+    getImportedContextMaps(model: Model): ContextMap[] {
+        const contextMaps = new Set<ContextMap>();
         const document = AstUtils.getDocument(model);
         for (const declaration of model.imports) {
             const uri = resolveImportUri(document, declaration);
@@ -196,7 +200,7 @@ export class ThinaiReferencePolicy {
     }
 
     private authorizesTeamRelationship(
-        relationship: import('./generated/ast.js').ContextRelationship,
+        relationship: ContextRelationship,
         consumer: string,
         provider: string
     ): boolean {
@@ -216,9 +220,6 @@ export class ThinaiReferencePolicy {
     }
 
     private hasQueryResultType(method: Method, type: DataObject): boolean {
-        return method.returnType?.ref === type || method.returnCollection !== undefined &&
-            AstUtils.streamReferences(method.returnCollection).some(referenceInfo =>
-                isReference(referenceInfo.reference) && referenceInfo.reference.ref === type
-            );
+        return getTypeReferences(method.returnType, method.returnCollection).some(reference => reference.ref === type);
     }
 }

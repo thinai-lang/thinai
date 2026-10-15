@@ -561,6 +561,70 @@ describe('Linking tests', () => {
         expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
     });
 
+    test('does not use a local context map to authorize external event or query references', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-contexts.tni'),
+            `bounded context Ordering
+             bounded context Shipping
+             bounded context Catalog
+             in bounded context Ordering {
+                 integration event OrderPlacedV1
+             }`
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-catalog.tni'),
+            `import "./local-map-authorization-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries, ProductInfo
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns ProductInfo
+                     }
+                     data object ProductInfo { available: boolean }
+                 }
+             }`
+        );
+        const consumerText = `import "./local-map-authorization-contexts.tni"
+            import "./local-map-authorization-catalog.tni"
+            context map LocalRelations {
+                customer Shipping -> supplier Ordering
+                customer Shipping -> supplier Catalog
+            }
+            context map LocalSeparation {
+                separateWays Shipping -x- Ordering
+            }
+            in bounded context Shipping {
+                application service ShipmentApplication {
+                    method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                    method checkCatalog(sku: string) {
+                        reads from Catalog.PublicApi.ProductQueries.findProduct
+                    }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-consumer.tni'), consumerText
+        );
+        documents = [contexts, catalog, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('requires an imported context map with an authorized relationship')
+        )).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('requires an exposed query contract and an imported authorized context map')
+        )).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('Imported context maps')
+        )).toBe(false);
+
+        const eventPrefixEnd = consumerText.indexOf('Ordering.OrderPlacedV1') + 'Ordering.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(eventPrefixEnd)
+        });
+        expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
+    });
+
     test('treats different integration patterns across imported maps as a conflict', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/pattern-conflict-contexts.tni'),
