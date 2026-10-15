@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { AstUtils, EmptyFileSystem, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
+import { AstUtils, EmptyFileSystem, isReference, type AstNode, type AstNodeDescription, type LangiumDocument, URI } from 'langium';
 import { SemanticTokensDecoder } from 'langium/lsp';
 import { clearDocuments } from 'langium/test';
 import {
@@ -233,6 +233,62 @@ in bounded context Ordering {
             textDocument: { uri: formattedDocument.uri.toString() },
             options: { tabSize: 2, insertSpaces: true }
         })).toEqual([]);
+    });
+
+    test('dedents and formats multiline specification text with CR and CRLF line endings', async () => {
+        const lines = [
+            'bounded context Formatting',
+            'in bounded context Formatting {',
+            '  aggregate Order {',
+            '    root entity Order {',
+            '      method place() {',
+            '        behavior """',
+            '            Keep this line.',
+            '              Preserve relative indentation.',
+            '        """',
+            '      }',
+            '    }',
+            '  }',
+            '}'
+        ];
+
+        for (const [index, newline] of ['\r', '\r\n'].entries()) {
+            const source = lines.join(newline);
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/specification-formatting-newline-${index}.tni`), source
+            );
+            documents.push(document);
+
+            const specification = AstUtils.streamAst(document.parseResult.value)
+                .find(node => node.$type === 'SpecificationText') as AstNode & { parts?: Array<{ text?: string }> };
+            expect(specification.parts?.map(part => part.text ?? '').join(''))
+                .toBe('Keep this line.\n  Preserve relative indentation.');
+
+            const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+                textDocument: { uri: document.uri.toString() },
+                options: { tabSize: 2, insertSpaces: true }
+            });
+            const formatted = edits
+                .slice()
+                .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+                .reduce((text, edit) => {
+                    const start = document.textDocument.offsetAt(edit.range.start);
+                    const end = document.textDocument.offsetAt(edit.range.end);
+                    return text.slice(0, start) + edit.newText + text.slice(end);
+                }, source);
+            const lineEndings = [...formatted.matchAll(/\r\n|\r|\n/gu)].map(match => match[0]);
+            expect(lineEndings.length).toBeGreaterThan(0);
+            expect(new Set(lineEndings)).toEqual(new Set([newline]));
+
+            const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/specification-formatting-newline-${index}-formatted.tni`), formatted
+            );
+            documents.push(formattedDocument);
+            expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+                textDocument: { uri: formattedDocument.uri.toString() },
+                options: { tabSize: 2, insertSpaces: true }
+            })).toEqual([]);
+        }
     });
 
     test('formats repository blocks and method read dependencies', async () => {
@@ -1244,6 +1300,57 @@ bounded context Second`;
             }
         });
 
+        const tripleQuotedText = 'import """./order';
+        const tripleQuoted = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/triple-quoted-import.tni'), tripleQuotedText
+        );
+        documents.push(tripleQuoted);
+        const tripleCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(tripleQuoted, {
+            textDocument: { uri: tripleQuoted.uri.toString() },
+            position: tripleQuoted.textDocument.positionAt(tripleQuotedText.length)
+        });
+        expect(tripleCompletion?.items.find(item => item.label === "./order's.tni")?.textEdit).toMatchObject({
+            newText: "./order's.tni",
+            range: {
+                start: tripleQuoted.textDocument.positionAt('import """'.length),
+                end: tripleQuoted.textDocument.positionAt(tripleQuotedText.length)
+            }
+        });
+
+        const multilineTripleText = 'import """\r\n    ./order';
+        const multilineTriple = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multiline-triple-quoted-import.tni'), multilineTripleText
+        );
+        documents.push(multilineTriple);
+        const multilineTripleCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(multilineTriple, {
+            textDocument: { uri: multilineTriple.uri.toString() },
+            position: multilineTriple.textDocument.positionAt(multilineTripleText.length)
+        });
+        expect(multilineTripleCompletion?.items.find(item => item.label === "./order's.tni")?.textEdit).toMatchObject({
+            newText: "./order's.tni",
+            range: {
+                start: multilineTriple.textDocument.positionAt('import """'.length),
+                end: multilineTriple.textDocument.positionAt(multilineTripleText.length)
+            }
+        });
+
+        const separatedImportText = 'import\r\n"""\r\n    ./order';
+        const separatedImport = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/separated-triple-quoted-import.tni'), separatedImportText
+        );
+        documents.push(separatedImport);
+        const separatedImportCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(separatedImport, {
+            textDocument: { uri: separatedImport.uri.toString() },
+            position: separatedImport.textDocument.positionAt(separatedImportText.length)
+        });
+        expect(separatedImportCompletion?.items.find(item => item.label === "./order's.tni")?.textEdit).toMatchObject({
+            newText: "./order's.tni",
+            range: {
+                start: separatedImport.textDocument.positionAt('import\r\n"""'.length),
+                end: separatedImport.textDocument.positionAt(separatedImportText.length)
+            }
+        });
+
         workspaceFolders.mockRestore();
         searchFolder.mockRestore();
 
@@ -1349,24 +1456,33 @@ bounded context Second`;
         );
     });
 
-    test('navigates only from within single- or double-quoted import paths', async () => {
+    test('navigates only from within quoted import paths, including triple-quoted paths', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/common-types.tni'), 'shared kernel CommonTypes {}'
         );
-        const sourceText = `import './common-types.tni'\nimport { CommonTypes } from "./common-types.tni"`;
+        const sourceText = `import './common-types.tni'\nimport { CommonTypes } from "./common-types.tni"\nimport """./common-types.tni"""`;
         const source = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/quoted-imports.tni'), sourceText
         );
         documents = [target, source];
         const provider = services.Thinai.lsp.DefinitionProvider!;
 
-        for (const pathStart of [sourceText.indexOf('./common-types.tni'), sourceText.lastIndexOf('./common-types.tni')]) {
+        const pathStarts = [
+            sourceText.indexOf('./common-types.tni'),
+            sourceText.indexOf('./common-types.tni', sourceText.indexOf('from')),
+            sourceText.lastIndexOf('./common-types.tni')
+        ];
+        for (const pathStart of pathStarts) {
             const definition = await provider.getDefinition(source, {
                 textDocument: { uri: source.uri.toString() },
                 position: source.textDocument.positionAt(pathStart)
             });
             expect(definition).toHaveLength(1);
             expect(definition?.[0]?.targetUri).toBe(target.uri.toString());
+            expect(definition?.[0]?.originSelectionRange?.start)
+                .toEqual(source.textDocument.positionAt(pathStart));
+            expect(definition?.[0]?.originSelectionRange?.end)
+                .toEqual(source.textDocument.positionAt(pathStart + './common-types.tni'.length));
         }
 
         const closingQuote = sourceText.indexOf("'./common-types.tni'") + './common-types.tni'.length + 1;
@@ -1590,7 +1706,10 @@ bounded context Second`;
         if (!referencePart || !('target' in referencePart)) {
             return;
         }
-        const references = [referencePart.target, ...referencePart.targets];
+        const references = AstUtils.streamReferences(referencePart)
+            .map(info => info.reference)
+            .filter(isReference)
+            .toArray();
         expect(references.map(reference => reference.ref?.$type)).toEqual(['Aggregate', 'Entity', 'Field']);
         expect(references.map(reference => reference.error)).toEqual([undefined, undefined, undefined]);
 
@@ -1962,6 +2081,13 @@ bounded context Second`;
                 text: `actor Customer
                     ${common.replace('CLAUSE', '')}
                     journey PlaceOrder { by Customer { invoke Ordering.OrderApplication.placeOrder with "Order input" ${marker} } }`
+            },
+            {
+                name: 'journey step argument contains the word when',
+                expected: ['when'],
+                text: `actor Customer
+                    ${common.replace('CLAUSE', '')}
+                    journey PlaceOrder { by Customer { invoke Ordering.OrderApplication.placeOrder with "Choose when ready" ${marker} } }`
             },
             {
                 name: 'journey step clauses',
@@ -2432,6 +2558,25 @@ bounded context Second`;
         }
     });
 
+    test('does not suggest integration patterns from comment text', async () => {
+        const cases = [
+            '// bounded c',
+            '/* bounded c',
+            'actor Customer /* bounded c */'
+        ];
+        for (const [index, text] of cases.entries()) {
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/keyword-comment-completion-${index}.tni`), text
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(text.indexOf('bounded c') + 'bounded c'.length)
+            });
+            expect(completion?.items, text).toEqual([]);
+        }
+    });
+
     test('completes repository block statements and query-repository sources', async () => {
         const marker = '__cursor__';
         const cases = [
@@ -2590,6 +2735,34 @@ bounded context Second`;
             'query service', 'read model', 'repository', 'behavior', 'invokes', 'reads from', 'projects'
         ];
         expect(labels.filter(label => forbidden.includes(String(label)))).toEqual([]);
+    });
+
+    test('does not treat a closed query repository as active in a later aggregate block', async () => {
+        const marker = '__cursor__';
+        const source = `bounded context Ordering in bounded context Ordering {
+            read model OrderSummary { status: string }
+            query repository OrderSummaryRepository { serves OrderSummary }
+            aggregate Order {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+                ${marker}
+            }
+        }`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/closed-query-repository-completion.tni'), text
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('entity');
+        expect(labels).not.toContain('reads from');
     });
 
     test('completes partially typed optional continuations', async () => {
@@ -3003,6 +3176,18 @@ bounded context Second`;
         });
         expect(crlfCompletion?.items.find(item => item.label === 'bounded context')?.textEdit)
             .toMatchObject({ newText: '\r\nbounded context' });
+
+        const crText = 'subdomain Commerce\rbounded context Ordering realizes OrderManagement ';
+        const crDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/top-level-cr-sibling-completion.tni'), crText
+        );
+        documents.push(crDocument);
+        const crCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(crDocument, {
+            textDocument: { uri: crDocument.uri.toString() },
+            position: crDocument.textDocument.positionAt(crText.length)
+        });
+        expect(crCompletion?.items.find(item => item.label === 'bounded context')?.textEdit)
+            .toMatchObject({ newText: '\rbounded context' });
 
         const nextLineText = `${sameLineText.trimEnd()}\n`;
         const nextLine = services.shared.workspace.LangiumDocuments.createDocument(

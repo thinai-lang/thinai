@@ -2,7 +2,11 @@
 export interface ThinaiSourceStructure {
     braces: Array<{ character: '{' | '}'; offset: number }>;
     openBraces: number;
+    openBraceOffsets: number[];
     unterminatedString: boolean;
+    inComment: boolean;
+    openStringStart: number | undefined;
+    openStringDelimiterLength: number | undefined;
 }
 
 /**
@@ -13,11 +17,14 @@ export interface ThinaiSourceStructure {
 export function scanThinaiSource(source: string): ThinaiSourceStructure {
     let quote: '"' | "'" | undefined;
     let tripleQuoted = false;
+    let stringStart: number | undefined;
+    let stringDelimiterLength: number | undefined;
     let escaped = false;
     let blockComment = false;
     let lineComment = false;
     let openBraces = 0;
     const braces: ThinaiSourceStructure['braces'] = [];
+    const openBraceOffsets: number[] = [];
 
     for (let offset = 0; offset < source.length; offset++) {
         const character = source[offset]!;
@@ -43,10 +50,14 @@ export function scanThinaiSource(source: string): ThinaiSourceStructure {
             if (character === '"' && source.slice(offset, offset + 3) === '"""') {
                 quote = undefined;
                 tripleQuoted = false;
+                stringStart = undefined;
+                stringDelimiterLength = undefined;
                 offset += 2;
             }
         } else if (quote && character === quote) {
             quote = undefined;
+            stringStart = undefined;
+            stringDelimiterLength = undefined;
         } else if (quote) {
             continue;
         } else if (character === '/' && next === '/') {
@@ -58,14 +69,31 @@ export function scanThinaiSource(source: string): ThinaiSourceStructure {
         } else if (character === '"' && source.slice(offset, offset + 3) === '"""') {
             quote = '"';
             tripleQuoted = true;
+            stringStart = offset;
+            stringDelimiterLength = 3;
             offset += 2;
         } else if (character === '"' || character === "'") {
             quote = character;
+            stringStart = offset;
+            stringDelimiterLength = 1;
         } else if (character === '{' || character === '}') {
             braces.push({ character, offset });
             openBraces += character === '{' ? 1 : -1;
+            if (character === '{') {
+                openBraceOffsets.push(offset);
+            } else if (openBraceOffsets.length > 0) {
+                openBraceOffsets.pop();
+            }
         }
     }
 
-    return { braces, openBraces, unterminatedString: quote !== undefined };
+    return {
+        braces,
+        openBraces,
+        openBraceOffsets,
+        unterminatedString: quote !== undefined,
+        inComment: lineComment || blockComment,
+        openStringStart: stringStart,
+        openStringDelimiterLength: stringDelimiterLength
+    };
 }

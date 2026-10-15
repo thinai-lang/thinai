@@ -14,6 +14,7 @@ import {
     getSiblingStatementPolicy,
     isLineSeparatedSibling
 } from './thinai-layout.js';
+import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
 
 interface BlockCompletionCallbacks {
     createKeywordCompletionItem(
@@ -49,7 +50,7 @@ export class ThinaiBlockCompletion {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const rawPrefix = text.slice(lineStart, offset);
         const typedPrefix = rawPrefix.trimStart();
         const labels = getSiblingCompletionKeywords('Model');
@@ -99,7 +100,7 @@ export class ThinaiBlockCompletion {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const linePrefixStart = (openingBrace: number) => openingBrace >= lineStart ? openingBrace + 1 : lineStart;
         const container = AstUtils.streamAst(root)
             .filter(candidate => this.keywordContinuations.getSiblingKeywordLabels(candidate).length > 0)
@@ -141,9 +142,9 @@ export class ThinaiBlockCompletion {
 
     getBlockChildIndentation(document: LangiumDocument, parent: AstNode | undefined, offset: number): string {
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const depth = getBlockNestingDepth(parent);
-        const indentationCandidates = text.slice(0, offset).split(/\r?\n/u)
+        const indentationCandidates = text.slice(0, offset).split(/\r\n|\r|\n/u)
             .map(line => /^[\t ]+/u.exec(line)?.[0] ?? '')
             .filter(indentation => indentation.length > 0);
         const unit = indentationCandidates.some(indentation => indentation.startsWith('\t')) ? '\t' : '  ';
@@ -237,7 +238,7 @@ export class ThinaiBlockCompletion {
             return [];
         }
 
-        const lineStart = text.lastIndexOf('\n', Math.max(0, (siblingStart ?? end) - 1)) + 1;
+        const lineStart = getLineStartOffset(document, siblingStart ?? end);
         const prefixBeforeSibling = text.slice(lineStart, siblingStart ?? end);
         const requiresStructuralIndentation = !/^[\t ]*$/.test(prefixBeforeSibling);
         const indentationDepth = requiresStructuralIndentation
@@ -246,7 +247,7 @@ export class ThinaiBlockCompletion {
         const indent = requiresStructuralIndentation
             ? this.getBlockChildIndentation(document, sibling.$container, offset)
             : prefixBeforeSibling;
-        const newline = text.includes('\r\n') ? '\r\n' : '\n';
+        const newline = getNewline(text);
         return matchingLabels.map(label => ({
             label,
             kind: CompletionItemKind.Keyword,
@@ -287,10 +288,10 @@ export class ThinaiBlockCompletion {
         if (!/^[\t ]*(?:[\p{L}_][\p{L}_ ]*)?$/u.test(bodyPrefix)) {
             return completions;
         }
-        const newline = text.includes('\r\n') ? '\r\n' : '\n';
+        const newline = getNewline(text);
         const childIndent = this.getBlockChildIndentation(document, parent, offset);
         const indentationDepth = getBlockNestingDepth(parent);
-        const parentLineStart = text.lastIndexOf('\n', Math.max(0, openingBrace - 1)) + 1;
+        const parentLineStart = getLineStartOffset(document, openingBrace);
         const parentIndent = /^[\t ]*/u.exec(text.slice(parentLineStart, openingBrace))?.[0] ?? '';
         const closeBrace = /^[\t ]*\}/u.exec(text.slice(offset));
         const closeOffset = closeBrace ? offset + closeBrace[0].lastIndexOf('}') : offset;
@@ -319,7 +320,7 @@ export class ThinaiBlockCompletion {
     ): CompletionItem[] {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const currentPrefix = text.slice(lineStart, offset);
         if (!/^[\t ]*(?:[\p{L}_][\p{L}_ ]*)?$/u.test(currentPrefix)) {
             return completions;
@@ -359,7 +360,7 @@ export class ThinaiBlockCompletion {
         if (!cstNode) {
             return undefined;
         }
-        const lineStart = text.lastIndexOf('\n', Math.max(0, cstNode.offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, cstNode.offset);
         const prefix = text.slice(lineStart, cstNode.offset);
         return /^[\t ]*$/.test(prefix) ? prefix : undefined;
     }

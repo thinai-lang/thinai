@@ -55,4 +55,13 @@ describe('workspace utilities', () => {
             await rm(directory, { recursive: true, force: true });
         }
     });
+
+    test('rejects unsupported source extensions without terminating the process', async () => {
+        const services = {
+            LanguageMetaData: { fileExtensions: ['.tni'] }
+        } as unknown as LangiumCoreServices;
+
+        await expect(extractDocuments('/models/readme.md', services))
+            .rejects.toThrow('Please choose a file with one of these extensions: .tni.');
+    });
 });

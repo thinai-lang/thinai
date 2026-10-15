@@ -53,7 +53,7 @@ function registerQueryRepositoryReadCompletionTrigger(
 ): void {
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document.languageId !== 'thinai' ||
-            !event.contentChanges.some(change => /^\r?\n[\t ]*$/u.test(change.text))) {
+            !event.contentChanges.some(change => /^(?:\r\n|\r|\n)[\t ]*$/u.test(change.text))) {
             return;
         }
         const editor = vscode.window.activeTextEditor;

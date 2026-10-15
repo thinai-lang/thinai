@@ -1,4 +1,4 @@
-import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
+import { AstUtils, GrammarUtils, type AstNode, type LangiumDocument } from 'langium';
 import {
     CompletionItemKind,
     InsertTextMode,
@@ -14,7 +14,32 @@ import {
     isQueryService
 } from './generated/ast.js';
 import { getBlockNestingDepth } from './thinai-layout.js';
-import { scanThinaiSource } from './thinai-source-scanner.js';
+import { scanThinaiSource, type ThinaiSourceStructure } from './thinai-source-scanner.js';
+import { hasReferenceText } from './thinai-ast-utils.js';
+import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
+
+export function findQueryRepositoryAtOffset(
+    document: LangiumDocument,
+    offset: number,
+    sourceStructure?: ThinaiSourceStructure
+) {
+    const root = document.parseResult.value;
+    if (!root) {
+        return undefined;
+    }
+    const structure = sourceStructure ?? scanThinaiSource(document.textDocument.getText().slice(0, offset));
+    const openBraceOffsets = new Set(structure.openBraceOffsets);
+    return AstUtils.streamAst(root)
+        .filter(isQueryRepository)
+        .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
+        .toArray()
+        .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)
+        .find(candidate => {
+            const openingBrace = GrammarUtils.findNodeForKeyword(candidate.$cstNode, '{');
+            return openingBrace !== undefined && openingBrace.offset < offset &&
+                openBraceOffsets.has(openingBrace.offset);
+        });
+}
 
 interface QueryRepositoryCompletionCallbacks {
     createKeywordCompletionItem(
@@ -33,22 +58,17 @@ interface QueryRepositoryCompletionCallbacks {
 export class ThinaiQueryRepositoryCompletion {
     constructor(private readonly callbacks: QueryRepositoryCompletionCallbacks) {}
 
-    getQueryRepositoryReadCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
-        const root = document.parseResult.value;
-        if (!root) {
-            return [];
-        }
+    getQueryRepositoryReadCompletions(
+        document: LangiumDocument,
+        position: Position,
+        sourceStructure?: ThinaiSourceStructure
+    ): CompletionItem[] {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const repository = AstUtils.streamAst(root)
-            .filter(isQueryRepository)
-            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
-            .toArray()
-            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+        const repository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
         const servedReference = repository?.readModel;
         const referenceEnd = servedReference?.$refNode?.end;
-        if (!repository || !this.hasReferenceText(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
+        if (!repository || !hasReferenceText(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
             return [];
         }
         const betweenServeAndCursor = text.slice(referenceEnd, offset);
@@ -57,9 +77,9 @@ export class ThinaiQueryRepositoryCompletion {
             repository.sources.length > 0 && !partialPhrase) {
             return [];
         }
-        const newline = text.includes('\r\n') ? '\r\n' : '\n';
+        const newline = getNewline(text);
         const indentation = this.callbacks.getBlockChildIndentation(document, repository, offset);
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const currentLinePrefix = text.slice(lineStart, offset);
         const partialLinePhrase = this.getReadsFromPrefix(currentLinePrefix);
         let editStart: number;
@@ -102,7 +122,7 @@ export class ThinaiQueryRepositoryCompletion {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset);
         const partial = this.getReadsFromPrefix(prefix);
         if (!partial) {
@@ -145,25 +165,12 @@ export class ThinaiQueryRepositoryCompletion {
         };
     }
 
-    private hasReferenceText(reference: unknown): boolean {
-        return typeof reference === 'object' && reference !== null &&
-            '$refText' in reference && typeof reference.$refText === 'string' && reference.$refText.length > 0;
-    }
 }
 
 /** True when the cursor is on the blank next-statement position for a query repository read source. */
 export function isQueryRepositoryReadCompletionPosition(document: LangiumDocument, offset: number): boolean {
-    const root = document.parseResult.value;
-    if (!root) {
-        return false;
-    }
     const text = document.textDocument.getText();
-    const repository = AstUtils.streamAst(root)
-        .filter(isQueryRepository)
-        .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-            scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
-        .toArray()
-        .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+    const repository = findQueryRepositoryAtOffset(document, offset);
     const servedReference = repository?.readModel;
     const referenceEnd = servedReference?.$refNode?.end;
     return repository !== undefined && typeof servedReference?.$refText === 'string' &&

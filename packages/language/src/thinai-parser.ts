@@ -1,5 +1,6 @@
 import { AstUtils, createLangiumParser, LangiumParserErrorMessageProvider, type LangiumCoreServices } from 'langium';
 import { isSpecificationText, type SpecificationText } from './generated/ast.js';
+import { getNewlineLengthAt, normalizeNewlines } from './thinai-text-utils.js';
 
 const REFERENCE_MARKER_START = '\uE000thinai-reference-';
 const REFERENCE_MARKER_END = '\uE001';
@@ -43,8 +44,7 @@ function dedentBehaviorText(node: SpecificationText): void {
     }
 
     const openingDelimiterLength = source.startsWith('"""') ? 3 : 1;
-    const openingNewline = source[openingDelimiterLength] === '\n' ? 1
-        : source.slice(openingDelimiterLength, openingDelimiterLength + 2) === '\r\n' ? 2 : 0;
+    const openingNewline = getNewlineLengthAt(source, openingDelimiterLength);
     if (openingNewline === 0 && !/[\r\n]/u.test(source)) {
         return;
     }
@@ -61,10 +61,10 @@ function dedentBehaviorText(node: SpecificationText): void {
     ]));
     let content = node.parts.map(part => part.text ?? markers.get(part) ?? '').join('');
     if (openingNewline > 0) {
-        content = content.replace(/^\r?\n/, '');
+        content = content.slice(openingNewline);
     }
-    content = content.replace(/\r?\n[ \t]*$/, '');
-    content = content.replace(/\r\n/g, '\n');
+    content = content.replace(/(?:\r\n|\r|\n)[ \t]*$/u, '');
+    content = normalizeNewlines(content);
 
     const lines = content.split('\n');
     const indents = lines

@@ -1,11 +1,11 @@
 import type { LangiumDocument } from 'langium';
 import type { Model } from 'thinai-language';
 import { expandToNode, toString } from 'langium/generate';
-import * as fs from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { extractDestinationAndName } from './util.js';
 
-export function generateJavaScript(documents: LangiumDocument<Model>[], filePath: string, destination: string | undefined): string {
+export async function generateJavaScript(documents: LangiumDocument<Model>[], filePath: string, destination: string | undefined): Promise<string> {
     const data = extractDestinationAndName(filePath, destination);
     const generatedFilePath = `${path.join(data.destination, data.name)}.js`;
 
@@ -25,9 +25,7 @@ export function generateJavaScript(documents: LangiumDocument<Model>[], filePath
         console.log(JSON.stringify(thinaiModel, undefined, 2));
     `.appendNewLineIfNotEmpty();
 
-    if (!fs.existsSync(data.destination)) {
-        fs.mkdirSync(data.destination, { recursive: true });
-    }
-    fs.writeFileSync(generatedFilePath, toString(fileNode));
+    await fs.mkdir(data.destination, { recursive: true });
+    await fs.writeFile(generatedFilePath, toString(fileNode));
     return generatedFilePath;
 }

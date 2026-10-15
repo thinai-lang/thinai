@@ -1,4 +1,4 @@
-import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
+import { AstUtils, GrammarUtils, type AstNode, type LangiumDocument } from 'langium';
 import { CompletionItemKind, type CompletionItem, type Position } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
 import {
@@ -44,7 +44,8 @@ export class ThinaiOptionalClauseCompletion {
         const scopeProvider = this.services.references.ScopeProvider as ThinaiScopeProvider;
         for (const node of AstUtils.streamAst(model)) {
             const nodeSource = node.$cstNode?.text ?? '';
-            const whenAlreadyTyped = /\bwhen\b/iu.test(nodeSource);
+            const whenAlreadyTyped = GrammarUtils.findNodesForKeyword(node.$cstNode, 'when')
+                .some(keyword => keyword.offset < offset);
             let keywords: string[] = [];
             if (isJourneyStep(node) && isJourneyCommand(node.targets) && !whenAlreadyTyped) {
                 keywords = [

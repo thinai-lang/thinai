@@ -19,3 +19,8 @@ export function isSyntacticallyComplete(node: AstNode): boolean {
     const hasLexerError = lexerErrors.some(error => error.offset >= cstNode.offset && error.offset <= cstNode.end);
     return !hasParserError && !hasLexerError;
 }
+
+export function hasReferenceText(reference: unknown): boolean {
+    return typeof reference === 'object' && reference !== null &&
+        '$refText' in reference && typeof reference.$refText === 'string' && reference.$refText.length > 0;
+}

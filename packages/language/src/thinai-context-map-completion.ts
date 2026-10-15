@@ -11,6 +11,20 @@ import type { ContextMap } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getSiblingCompletionKeywords } from './thinai-layout.js';
+import { getLineStartOffset } from './thinai-text-utils.js';
+
+const contextEndpointPattern = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+const integrationPatternsClause = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
+const relationshipContinuationPatterns: ReadonlyArray<readonly [RegExp, string]> = [
+    [new RegExp(String.raw`^\s*customer\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '-> supplier'],
+    [new RegExp(String.raw`^\s*partner\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '<-> partner'],
+    [new RegExp(String.raw`^\s*separateWays\s+${contextEndpointPattern}\s+$`), '-x-']
+];
+const rightContextPatterns = [
+    new RegExp(String.raw`^\s*customer\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
+    new RegExp(String.raw`^\s*partner\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
+    new RegExp(String.raw`^\s*separateWays\s+(${contextEndpointPattern})\s+-x-\s*([\w.]*)$`, 'i')
+];
 
 interface ContextMapCompletionCallbacks {
     isCompleteSameLineSibling(node: AstNode, document: LangiumDocument, position: Position): boolean;
@@ -81,7 +95,7 @@ export class ThinaiContextMapCompletion {
             return [];
         }
 
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const prefixes = AstUtils.streamAst(contextMap)
             .filter(node => node.$type === 'CustomerSupplierRelationship' ||
                 node.$type === 'PartnershipRelationship' || node.$type === 'SeparateWaysRelationship')
@@ -91,15 +105,8 @@ export class ThinaiContextMapCompletion {
             .sort((left, right) => right.offset - left.offset)
             .map(cstNode => text.slice(cstNode.offset, offset));
         prefixes.push(text.slice(lineStart, offset));
-        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
-        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
-        const continuations: ReadonlyArray<readonly [RegExp, string]> = [
-            [new RegExp(String.raw`^\s*customer\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '-> supplier'],
-            [new RegExp(String.raw`^\s*partner\s+${endpoint}(?:\s*${integrationPatterns})?\s+$`), '<-> partner'],
-            [new RegExp(String.raw`^\s*separateWays\s+${endpoint}\s+$`), '-x-']
-        ];
         const continuation = prefixes.flatMap(prefix =>
-            continuations.filter(([pattern]) => pattern.test(prefix)).map(([, label]) => label)
+            relationshipContinuationPatterns.filter(([pattern]) => pattern.test(prefix)).map(([, label]) => label)
         )[0];
         if (!continuation) {
             return [];
@@ -123,14 +130,7 @@ export class ThinaiContextMapCompletion {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
-        const endpoint = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
-        const integrationPatterns = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
-        const rightContextPatterns = [
-            new RegExp(String.raw`^\s*customer\s+(${endpoint})(?:\s*${integrationPatterns})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
-            new RegExp(String.raw`^\s*partner\s+(${endpoint})(?:\s*${integrationPatterns})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
-            new RegExp(String.raw`^\s*separateWays\s+(${endpoint})\s+-x-\s*([\w.]*)$`, 'i')
-        ];
+        const lineStart = getLineStartOffset(document, offset);
         const contextMap = AstUtils.streamAst(root)
             .filter(candidate => candidate.$type === 'ContextMap')
             .find(candidate => {
@@ -193,7 +193,7 @@ export class ThinaiContextMapCompletion {
     private getRelationshipLineState(document: LangiumDocument, position: Position): 'incomplete' | 'complete' | undefined {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const relationshipPrefix = text.slice(lineStart, offset).trim();
         if (!/^(?:customer|partner|separateWays)\b/i.test(relationshipPrefix)) {
             return undefined;

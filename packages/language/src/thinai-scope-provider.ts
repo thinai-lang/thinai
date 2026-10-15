@@ -60,8 +60,7 @@ import {
     isSpecificationTextPart,
     isQueryService,
     isParameter,
-    isValueObject,
-    type Module
+    isValueObject
 } from './generated/ast.js';
 import { getMethodInvocationViolations } from './thinai-method-invocation-policy.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
@@ -73,6 +72,10 @@ import {
     getOwningModule,
     getOwningSharedKernel,
     isInSharedKernel,
+    isCrossContextOwned,
+    isExposedByModule,
+    isIdentifierValueObject,
+    moduleDependsTransitivelyOn,
     resolveAstNodeDescription,
     resolveImportUri
 } from './thinai-scope-utils.js';
@@ -447,18 +450,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             hasVisibleSharedKernel: (node, sharedKernel) => this.referencePolicy.hasVisibleSharedKernel(node, sharedKernel),
             hasSharedKernelRelationship: (node, sharedKernel) =>
                 this.referencePolicy.hasSharedKernelRelationship(node, sharedKernel),
-            isCrossContextOwned: (left, right) => this.isCrossContext(left, right),
+            isCrossContextOwned,
             isEventParameter: parameter => isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref),
             getOwningAggregate,
             isAggregateRootMethod: (method, aggregate) =>
                 method.$container === aggregate.members.find(member => isEntity(member) && member.root)
         }).length === 0;
-    }
-
-    private isCrossContext(source: AstNode, target: AstNode): boolean {
-        const sourceContext = getOwningContextName(source);
-        const targetContext = getOwningContextName(target);
-        return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
     }
 
     private addShapeFields(
@@ -518,30 +515,18 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const dependencySource = context.container.$container;
             return isModule(target) && target !== dependencySource &&
                 getOwningContextName(dependencySource) === getOwningContextName(target) &&
-                !this.moduleDependsTransitivelyOn(target, dependencySource);
+                !moduleDependsTransitivelyOn(target, dependencySource);
         }
         if (!sourceModule && targetModule && !isModule(target) &&
             getOwningContextName(context.container) === getOwningContextName(targetModule)) {
-            const exposedTarget = isField(target) || isParameter(target) || isEnumValue(target)
-                ? target.$container
-                : target;
-            const exposed = targetModule.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.target.ref === exposedTarget)
-            );
-            if (!exposed) {
+            if (!isExposedByModule(targetModule, target)) {
                 return false;
             }
         }
         if (sourceModule && targetModule && sourceModule !== targetModule && !isModule(target) &&
             getOwningContextName(sourceModule) === getOwningContextName(targetModule)) {
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
-            const exposedTarget = isField(target) || isParameter(target) || isEnumValue(target)
-                ? target.$container
-                : target;
-            const exposed = targetModule.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.target.ref === exposedTarget)
-            );
-            if (!dependsOn || !exposed) {
+            if (!dependsOn || !isExposedByModule(targetModule, target)) {
                 return false;
             }
         }
@@ -584,7 +569,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const sourceContext = getOwningContextName(context.container);
             const targetContext = getOwningContextName(target);
             return isValueObject(target) && sourceContext !== undefined && targetContext !== undefined &&
-                sourceContext !== targetContext && this.isIdentifierValueObject(target);
+                sourceContext !== targetContext && isIdentifierValueObject(target);
         }
 
         if (context.property === 'readModel' && isQueryRepository(context.container)) {
@@ -756,31 +741,6 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return true;
     }
 
-    private isIdentifierValueObject(valueObject: ValueObject, visited = new Set<AstNode>()): boolean {
-        if (visited.has(valueObject)) {
-            return false;
-        }
-        visited.add(valueObject);
-        const aggregate = valueObject.$container;
-        const isRootIdentifier = isAggregate(aggregate) && aggregate.members.some(member =>
-            isEntity(member) && member.root && member.fields.some(field => field.identifier && field.type?.ref === valueObject)
-        );
-        return isRootIdentifier || (valueObject.mirrors?.ref !== undefined &&
-            this.isIdentifierValueObject(valueObject.mirrors.ref, visited));
-    }
-
-    private moduleDependsTransitivelyOn(module: Module, target: Module, visited = new Set<Module>()): boolean {
-        if (module === target) {
-            return true;
-        }
-        if (visited.has(module)) {
-            return false;
-        }
-        visited.add(module);
-        return module.dependencies.some(dependency => dependency.target.ref !== undefined &&
-            this.moduleDependsTransitivelyOn(dependency.target.ref, target, visited));
-    }
-
     private isValidRepositoryRootPathCandidate(repository: Repository, target: AstNode): boolean {
         const contextName = getOwningContextName(repository);
         if (!contextName) {
@@ -844,7 +804,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return false;
         }
         const current = AstUtils.getContainerOfType(context.container, isMethod);
-        if (!current || this.isCrossContext(current, target)) {
+        if (!current || isCrossContextOwned(current, target)) {
             return false;
         }
 

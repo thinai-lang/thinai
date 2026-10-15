@@ -4,6 +4,7 @@ import {
     type LangiumDocument,
     type ReferenceInfo,
     AstUtils,
+    GrammarUtils,
     stream
 } from 'langium';
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
@@ -29,7 +30,6 @@ import {
     isModule,
     isParameter,
     isProjector,
-    isQueryRepository,
     isReadSourceReference,
     isSpecificationTextPart,
     isTransition
@@ -53,9 +53,12 @@ import { ThinaiKeywordContinuations } from './thinai-keyword-continuations.js';
 import { ThinaiBlockCompletion } from './thinai-block-completion.js';
 import {
     ThinaiQueryRepositoryCompletion,
+    findQueryRepositoryAtOffset,
     isQueryRepositoryReadCompletionPosition
 } from './thinai-query-repository-completion.js';
 import { getSpecificationCompletionContext } from './thinai-specification-completion-context.js';
+import { hasReferenceText } from './thinai-ast-utils.js';
+import { getLineStartOffset } from './thinai-text-utils.js';
 
 export { isQueryRepositoryReadCompletionPosition };
 
@@ -159,10 +162,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         params: CompletionParams,
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
+        const offset = document.textDocument.offsetAt(params.position);
+        const sourceStructure = scanThinaiSource(document.textDocument.getText().slice(0, offset));
+        if (sourceStructure.inComment) {
+            return { isIncomplete: false, items: [] };
+        }
         const defaultCompletion = await super.getCompletion(document, params, cancelToken);
         const specificationContext = getSpecificationCompletionContext(
             document,
-            document.textDocument.offsetAt(params.position)
+            offset
         );
         if (specificationContext === 'text') {
             return { isIncomplete: false, items: [] };
@@ -183,7 +191,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 isIncomplete: defaultCompletion?.isIncomplete ?? false,
                 items
             }, optionalClauseCompletions.map(item => item.label));
-            return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
+            return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
         }
         const relationshipContinuations = this.contextMapCompletion.getRelationshipContinuations(document, params.position);
         const hasBoundedContextCandidates = defaultCompletion?.items.some(item =>
@@ -199,7 +207,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const inProgressKeywordCompletions = [
             ...this.keywordContinuations.getInProgressCompletions(document, params.position),
             ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position),
-            ...this.queryRepositoryCompletion.getQueryRepositoryReadCompletions(document, params.position),
+            ...this.queryRepositoryCompletion.getQueryRepositoryReadCompletions(
+                document,
+                params.position,
+                sourceStructure
+            ),
             ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
         ];
         const blockKeywords = this.blockCompletion.getEnclosingBlockKeywordCompletions(document, params.position);
@@ -249,13 +261,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             if (constrainedValueCompletions.length === 0 && inProgressKeywordCompletions.length === 0 &&
                 modelGapKeywords.length === 0) {
                 const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, completionWithEmptyBlockEdits);
-                return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
+                return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
             }
             const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, {
                 isIncomplete: completionWithKeywords?.isIncomplete ?? false,
                 items: [...completionItems, ...constrainedValueCompletions]
             }, sameLineKeywordContinuations);
-            return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
+            return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
         }
 
         const importItems = await this.importCompletion.getCompletions(document, importContext.path, importContext.pathStart);
@@ -263,13 +275,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             isIncomplete: completionWithKeywords?.isIncomplete ?? false,
             items: [...completionItems, ...constrainedValueCompletions, ...importItems]
         }, sameLineKeywordContinuations);
-        return this.filterContextSensitiveKeywordCompletions(document, params.position, completion);
+        return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
     }
 
     private filterContextSensitiveKeywordCompletions(
         document: LangiumDocument,
         position: Position,
-        completion: CompletionList | undefined
+        completion: CompletionList | undefined,
+        sourceStructure: ReturnType<typeof scanThinaiSource>
     ): CompletionList | undefined {
         const root = document.parseResult.value;
         if (!root || !completion) {
@@ -280,7 +293,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const braceOwners: Array<'aggregate' | 'other'> = [];
         let previousBrace = -1;
         const sourcePrefix = text.slice(0, offset);
-        for (const brace of scanThinaiSource(sourcePrefix).braces) {
+        for (const brace of sourceStructure.braces) {
             if (brace.character === '{') {
                 const declaration = sourcePrefix.slice(previousBrace + 1, brace.offset).trim();
                 braceOwners.push(/\baggregate\s+[_a-zA-Z][\w]*\s*$/iu.test(declaration) ? 'aggregate' : 'other');
@@ -321,12 +334,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .sort((left, right) =>
                 (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
             )[0];
-        const activeQueryRepository = AstUtils.streamAst(root)
-            .filter(isQueryRepository)
-            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset &&
-                scanThinaiSource(text.slice(candidate.$cstNode.offset, offset)).openBraces > 0)
-            .toArray()
-            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+        const activeQueryRepository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
         const transitionContinuationAllowed = this.keywordContinuations.isTransitionContinuationPosition(document, offset);
         const entityDeclarationsAllowed = braceOwners.at(-1) === 'aggregate';
@@ -354,7 +362,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 }
                 if (activeQueryRepository) {
                     const servedReferenceEnd = activeQueryRepository.readModel?.$refNode?.end;
-                    const queryRepositoryKeywords = !this.hasReferenceText(activeQueryRepository.readModel)
+                    const queryRepositoryKeywords = !hasReferenceText(activeQueryRepository.readModel)
                         ? ['serves']
                         : servedReferenceEnd !== undefined && offset >= servedReferenceEnd && activeQueryRepository.sources.length === 0
                             ? ['reads from']
@@ -643,7 +651,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const currentLine = position.line;
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const linePrefix = text.slice(lineStart, offset);
         if (this.hasUnterminatedStringLiteral(linePrefix) || this.hasIncompleteStatementSuffix(linePrefix) ||
             this.isAfterTransitionChangeComma(model, text, offset)) {
@@ -731,7 +739,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (parameters.some(parameter => this.isInIncompleteTypePosition(parameter, document, position))) {
             return false;
         }
-        if (isField(node) && !this.hasReferenceText(node.initialState) && /\binitial\s*$/iu.test(source)) {
+        if (isField(node) && !hasReferenceText(node.initialState) && /\binitial\s*$/iu.test(source)) {
             return false;
         }
         const policy = getSiblingStatementPolicy(node.$type);
@@ -749,11 +757,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return true;
     }
 
-    private hasReferenceText(reference: unknown): boolean {
-        return typeof reference === 'object' && reference !== null &&
-            '$refText' in reference && typeof reference.$refText === 'string' && reference.$refText.length > 0;
-    }
-
     private hasCompleteSiblingReferences(
         node: AstNode,
         policy: ReturnType<typeof getSiblingStatementPolicy>
@@ -763,7 +766,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ...(policy.requiredReferences ?? []).map(property => [property]),
             ...(policy.requiredReferencePaths ?? [])
         ];
-        if (paths.some(path => !this.hasReferenceText(this.getNodePropertyPath(properties, path)))) {
+        if (paths.some(path => !hasReferenceText(this.getNodePropertyPath(properties, path)))) {
             return false;
         }
         return (policy.referenceLists ?? []).every(referenceList => {
@@ -774,12 +777,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return items.every(item => {
                 if (referenceList.nestedReferences) {
                     return referenceList.nestedReferences.every(property =>
-                        this.hasReferenceText(this.getNodePropertyPath(item, [property]))
+                        hasReferenceText(this.getNodePropertyPath(item, [property]))
                     );
                 }
                 const path = referenceList.targetProperty ? [referenceList.targetProperty] : [];
                 const reference = path.length > 0 ? this.getNodePropertyPath(item, path) : item;
-                return this.hasReferenceText(reference);
+                return hasReferenceText(reference);
             });
         });
     }
@@ -857,7 +860,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     private isStandalonePartialKeywordPrefix(document: LangiumDocument, position: Position): boolean {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset).trim().toLowerCase().replace(/\s+/g, ' ');
         return prefix.length > 0 && siblingKeywordPrefixes.some(keyword => keyword.toLowerCase().startsWith(prefix));
     }
@@ -958,11 +961,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const values = [...INTEGRATION_PATTERNS];
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const propertyStart = text.lastIndexOf('integrationPatterns', offset);
-        if (propertyStart < 0) {
+        const root = document.parseResult.value;
+        if (!root) {
             return [];
         }
-        const propertyMatch = /^integrationPatterns\s*:\s*\[/.exec(text.slice(propertyStart));
+        const endpoint = AstUtils.streamAst(root)
+            .filter(node => node.$type === 'ContextMapEndpoint')
+            .filter(node => node.$cstNode !== undefined && node.$cstNode.offset <= offset && offset <= node.$cstNode.end)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+        const property = endpoint?.$cstNode
+            ? (GrammarUtils.findNodesForKeyword(endpoint.$cstNode, 'integrationPatterns')
+                .filter(node => node.offset < offset)
+                .sort((left, right) => right.offset - left.offset)[0])
+            : undefined;
+        if (!property) {
+            return [];
+        }
+        const propertyStart = property.offset;
+        const propertyMatch = /^integrationPatterns\s*:\s*\[/u.exec(text.slice(propertyStart));
         if (!propertyMatch) {
             return [];
         }
@@ -984,7 +1001,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     quote = undefined;
                     valueStart = -1;
                 }
-            } else if (character === ']' || character === '\n' && text.slice(index, offset).trim().length === 0) {
+            } else if (character === ']' || (character === '\n' || character === '\r') &&
+                text.slice(index, offset).trim().length === 0) {
                 return [];
             } else if (character === '"' || character === "'") {
                 quote = character;

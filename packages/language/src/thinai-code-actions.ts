@@ -21,6 +21,7 @@ import {
 } from './generated/ast.js';
 import { resolveAstNodeDescription, resolveImportUri, toImportPath } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
+import { getNewline } from './thinai-text-utils.js';
 
 interface UnresolvedReference {
     name: string;
@@ -66,7 +67,7 @@ export class ThinaiCodeActionProvider {
                     };
                     newText = `, ${component.name}`;
                 } else {
-                    const newline = textDocument.getText().includes('\r\n') ? '\r\n' : '\n';
+                    const newline = getNewline(textDocument.getText());
                     range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
                     newText = `import "${importPath}"${newline}`;
                 }

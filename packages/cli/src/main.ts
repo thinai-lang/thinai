@@ -15,7 +15,7 @@ const packageContent = await fs.readFile(packagePath, 'utf-8');
 export const generateAction = async (fileName: string, opts: GenerateOptions): Promise<void> => {
     const services = createThinaiServices(NodeFileSystem).Thinai;
     const documents = await extractDocuments(fileName, services);
-    const generatedFilePath = generateJavaScript(documents, fileName, opts.destination);
+    const generatedFilePath = await generateJavaScript(documents, fileName, opts.destination);
     console.log(chalk.green(`JavaScript code generated successfully: ${generatedFilePath}`));
 };
 
@@ -23,7 +23,7 @@ export type GenerateOptions = {
     destination?: string;
 }
 
-export default function(): void {
+export default async function(): Promise<void> {
     const program = new Command();
 
     program.version(JSON.parse(packageContent).version);
@@ -34,7 +34,15 @@ export default function(): void {
         .argument('<file>', `source file (possible file extensions: ${fileExtensions})`)
         .option('-d, --destination <dir>', 'destination directory of generating')
         .description('generates a JavaScript summary from a Thinai model and its imported files')
-        .action(generateAction);
+        .action(async (fileName: string, options: GenerateOptions) => {
+            try {
+                await generateAction(fileName, options);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                console.error(chalk.red(message));
+                process.exitCode = 1;
+            }
+        });
 
-    program.parse(process.argv);
+    await program.parseAsync(process.argv);
 }

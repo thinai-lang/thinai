@@ -2,6 +2,7 @@ import { type LangiumDocument, URI, UriUtils } from 'langium';
 import { CompletionItemKind, type CompletionItem } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
 import { toImportPath } from './thinai-scope-utils.js';
+import { scanThinaiSource } from './thinai-source-scanner.js';
 
 export interface ImportPathContext {
     path: string;
@@ -38,14 +39,30 @@ export class ThinaiImportCompletion {
     getPathContext(document: LangiumDocument, position: import('vscode-languageserver').Position): ImportPathContext | undefined {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
-        const prefix = text.slice(lineStart, offset);
-        const match = /^\s*import\s+"([^"]*)$/.exec(prefix) ?? /^\s*import\s+'([^']*)$/.exec(prefix);
-        if (!match) {
+        const lexicalState = scanThinaiSource(text.slice(0, offset));
+        const stringStart = lexicalState.openStringStart;
+        const delimiterLength = lexicalState.openStringDelimiterLength;
+        if (stringStart === undefined || delimiterLength === undefined) {
             return undefined;
         }
-        const path = match[1]!;
-        return { path, pathStart: offset - path.length };
+        const stringLine = document.textDocument.positionAt(stringStart).line;
+        let importStart: number | undefined;
+        for (let line = stringLine; line >= 0; line--) {
+            const lineStart = document.textDocument.offsetAt({ line, character: 0 });
+            const lineEnd = line === stringLine
+                ? stringStart
+                : document.textDocument.offsetAt({ line: line + 1, character: 0 });
+            if (/^\s*import\b/u.test(text.slice(lineStart, lineEnd))) {
+                importStart = lineStart;
+                break;
+            }
+        }
+        if (importStart === undefined ||
+            !/^\s*import\s+(?:\{[^}]*\}\s+from\s+)?$/u.test(text.slice(importStart, stringStart))) {
+            return undefined;
+        }
+        const pathStart = stringStart + delimiterLength;
+        return { path: text.slice(pathStart, offset), pathStart };
     }
 
     async getCompletions(
@@ -84,13 +101,14 @@ export class ThinaiImportCompletion {
         }
 
         const currentDirectory = UriUtils.dirname(document.uri);
+        const matchPrefix = typedPath.replace(/^(?:(?:\r\n|\r|\n)[\t ]*)+/u, '');
         const items: CompletionItem[] = [];
         for (const uri of files.values()) {
             if (UriUtils.equals(uri, document.uri)) {
                 continue;
             }
             const relativePath = toImportPath(currentDirectory, uri);
-            if (!relativePath.startsWith(typedPath)) {
+            if (!relativePath.startsWith(matchPrefix)) {
                 continue;
             }
             items.push({

@@ -20,10 +20,13 @@ import {
     isIntegrationEvent,
     isReadModel,
     isValueObject,
+    isEnumValue,
+    isParameter,
     type Aggregate,
     type Import,
     type Module,
-    type SharedKernel
+    type SharedKernel,
+    type ValueObject
 } from './generated/ast.js';
 
 const exportedTypes = new Set([
@@ -83,6 +86,44 @@ export function getExportedName(node: NamedNode): string {
 
 export function getOwningModule(node: AstNode): Module | undefined {
     return AstUtils.getContainerOfType(node, isModule);
+}
+
+export function isIdentifierValueObject(valueObject: ValueObject, visited = new Set<ValueObject>()): boolean {
+    if (visited.has(valueObject)) {
+        return false;
+    }
+    visited.add(valueObject);
+    const aggregate = valueObject.$container;
+    const isRootIdentifier = isAggregate(aggregate) && aggregate.members.some(member =>
+        isEntity(member) && member.root && member.fields.some(field => field.identifier && field.type?.ref === valueObject)
+    );
+    return isRootIdentifier || (valueObject.mirrors?.ref !== undefined &&
+        isIdentifierValueObject(valueObject.mirrors.ref, visited));
+}
+
+export function moduleDependsTransitivelyOn(module: Module, target: Module, visited = new Set<Module>()): boolean {
+    if (module === target) {
+        return true;
+    }
+    if (visited.has(module)) {
+        return false;
+    }
+    visited.add(module);
+    return module.dependencies.some(dependency => dependency.target.ref !== undefined &&
+        moduleDependsTransitivelyOn(dependency.target.ref, target, visited));
+}
+
+export function isCrossContextOwned(source: AstNode, target: AstNode): boolean {
+    const sourceContext = getOwningContextName(source);
+    const targetContext = getOwningContextName(target);
+    return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
+}
+
+export function isExposedByModule(module: Module, target: AstNode): boolean {
+    const declaration = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
+    return module.exposures.some(exposure =>
+        exposure.declarations.some(candidate => candidate.target.ref === declaration)
+    );
 }
 
 export function isInSharedKernel(node: AstNode): boolean {

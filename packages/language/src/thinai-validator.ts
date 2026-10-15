@@ -84,6 +84,10 @@ import {
     getOwningModule,
     getOwningSharedKernel,
     isInSharedKernel,
+    isCrossContextOwned,
+    isExposedByModule,
+    isIdentifierValueObject,
+    moduleDependsTransitivelyOn,
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
@@ -499,7 +503,7 @@ export class ThinaiValidator {
                         return false;
                     }
                     return !contractModule || getOwningModule(target) !== contractModule ||
-                        !contractModule.exposures.some(exposure => exposure.declarations.some(declaration => declaration.target.ref === target));
+                        !isExposedByModule(contractModule, target);
                 });
                 if (privateContractType) {
                     accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
@@ -740,7 +744,7 @@ export class ThinaiValidator {
                     property: 'type'
                 });
             }
-            if (event && isIntegrationEvent(event) && this.isCrossContextOwned(method, event) &&
+            if (event && isIntegrationEvent(event) && isCrossContextOwned(method, event) &&
                 !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
                 accept('error', this.referencePolicy.isIntegrationEventExposed(event)
                     ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
@@ -767,7 +771,7 @@ export class ThinaiValidator {
             getOwningSharedKernel,
             hasVisibleSharedKernel: (source, sharedKernel) => this.referencePolicy.hasVisibleSharedKernel(source, sharedKernel),
             hasSharedKernelRelationship: (source, sharedKernel) => this.referencePolicy.hasSharedKernelRelationship(source, sharedKernel),
-            isCrossContextOwned: (source, target) => this.isCrossContextOwned(source, target),
+            isCrossContextOwned,
             isEventParameter: parameter => this.isEventParameter(parameter),
             getOwningAggregate,
             isAggregateRootMethod: (target, aggregate) => this.isAggregateRootMethod(target, aggregate)
@@ -807,7 +811,7 @@ export class ThinaiValidator {
                 if (!emittedEvent) {
                     continue;
                 }
-                if (this.isCrossContextOwned(method, emittedEvent)) {
+                if (isCrossContextOwned(method, emittedEvent)) {
                     accept('error', 'A method may emit only events owned by its bounded context.', {
                         node: emitted,
                         property: 'target'
@@ -1261,7 +1265,7 @@ export class ThinaiValidator {
         this.checkDuplicateConstructorSignatures(valueObject.constructors, accept);
         if (valueObject.mirrors?.ref) {
             const source = valueObject.mirrors.ref;
-            if (!this.isIdentifierValueObject(source)) {
+            if (!isIdentifierValueObject(source)) {
                 accept('error', 'A mirrored value object must target a value object used as an aggregate-root identifier.', {
                     node: valueObject,
                     property: 'mirrors'
@@ -1274,22 +1278,6 @@ export class ThinaiValidator {
                 });
             }
         }
-    }
-
-    private isIdentifierValueObject(valueObject: ValueObject, visited = new Set<ValueObject>()): boolean {
-        if (visited.has(valueObject)) {
-            return false;
-        }
-        visited.add(valueObject);
-
-        const aggregate = valueObject.$container;
-        const isRootIdentifier = isAggregate(aggregate) && aggregate.members.some(member =>
-            isEntity(member) && member.root && member.fields.some(field =>
-                field.identifier && field.type?.ref === valueObject
-            )
-        );
-        return isRootIdentifier || (valueObject.mirrors?.ref !== undefined &&
-            this.isIdentifierValueObject(valueObject.mirrors.ref, visited));
     }
 
     checkModule(module: Module, accept: ValidationAcceptor): void {
@@ -1307,7 +1295,8 @@ export class ThinaiValidator {
                     property: 'dependencies'
                 });
             }
-            if (dependency.target.ref && dependency.target.ref !== module && this.dependsTransitivelyOn(dependency.target.ref, module, new Set())) {
+            if (dependency.target.ref && dependency.target.ref !== module &&
+                moduleDependsTransitivelyOn(dependency.target.ref, module)) {
                 accept('error', 'Module dependencies cannot contain a cycle.', {
                     node: module,
                     property: 'dependencies'
@@ -1325,17 +1314,6 @@ export class ThinaiValidator {
                 }
             }
         }
-    }
-
-    private dependsTransitivelyOn(current: Module, target: Module, visited: Set<Module>): boolean {
-        if (current === target) {
-            return true;
-        }
-        if (visited.has(current)) {
-            return false;
-        }
-        visited.add(current);
-        return current.dependencies.some(dependency => dependency.target.ref && this.dependsTransitivelyOn(dependency.target.ref, target, visited));
     }
 
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
@@ -1375,7 +1353,7 @@ export class ThinaiValidator {
             }
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
-            const crossesContext = this.isCrossContextOwned(referenceInfo.container, target);
+            const crossesContext = isCrossContextOwned(referenceInfo.container, target);
             if (isField(target) && crossesContext && !isInSharedKernel(target)) {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
                 const authorizedPublicField = event !== undefined && this.referencePolicy.isIntegrationEventExposed(event) &&
@@ -1431,13 +1409,7 @@ export class ThinaiValidator {
             }
             if (!sourceModule && targetModule && !isModule(target) &&
                 getOwningContextName(referenceInfo.container) === getOwningContextName(targetModule)) {
-                const exposureTarget = isField(target) || isParameter(target) || isEnumValue(target)
-                    ? target.$container
-                    : target;
-                const exposed = targetModule.exposures.some(exposure =>
-                    exposure.declarations.some(declaration => declaration.target.ref === exposureTarget)
-                );
-                if (!exposed) {
+                if (!isExposedByModule(targetModule, target)) {
                     accept('error', 'A declaration outside a module may reference a module declaration only when its module exposes it.', {
                         node: referenceInfo.container,
                         property: referenceInfo.property
@@ -1452,11 +1424,7 @@ export class ThinaiValidator {
                 return;
             }
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
-            const exposureTarget = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
-            const exposed = targetModule.exposures.some(exposure =>
-                exposure.declarations.some(declaration => declaration.target.ref === exposureTarget)
-            );
-            if (!dependsOn || !exposed) {
+            if (!dependsOn || !isExposedByModule(targetModule, target)) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
@@ -1479,7 +1447,7 @@ export class ThinaiValidator {
             });
             return;
         }
-        if (this.isCrossContextOwned(repository, root)) {
+        if (isCrossContextOwned(repository, root)) {
             accept('error', 'A repository and its aggregate root must belong to the same bounded context.', {
                 node: repository,
                 property: 'root'
@@ -1544,7 +1512,7 @@ export class ThinaiValidator {
         for (const method of factory.methods) {
             const result = method.returnType?.ref;
             if (isSyntacticallyComplete(method) &&
-                (!isEntity(result) || !result.root || !getOwningAggregate(result) || this.isCrossContextOwned(factory, result))) {
+                (!isEntity(result) || !result.root || !getOwningAggregate(result) || isCrossContextOwned(factory, result))) {
                 accept('error', 'A factory method must return an aggregate-root entity in its own bounded context.', {
                     node: method,
                     property: 'returnType'
@@ -1699,34 +1667,37 @@ export class ThinaiValidator {
         }
     }
 
-    private isCrossContextOwned(source: AstNode, target: AstNode): boolean {
-        const sourceContext = getOwningContextName(source);
-        const targetContext = getOwningContextName(target);
-        return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
-    }
-
-    private reachesImportCycle(uri: URI, visited: Set<string>): boolean {
+    private reachesImportCycle(
+        uri: URI,
+        activePath: Set<string>,
+        completed: Set<string> = new Set()
+    ): boolean {
+        const key = uri.toString();
+        if (activePath.has(key)) {
+            return true;
+        }
+        if (completed.has(key)) {
+            return false;
+        }
         const document = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
         const model = document?.parseResult.value;
         if (!document || !isModel(model)) {
+            completed.add(key);
             return false;
         }
 
+        activePath.add(key);
         for (const importDeclaration of model.imports) {
             const importedUri = resolveImportUri(document, importDeclaration);
             if (!importedUri) {
                 continue;
             }
-            const importedKey = importedUri.toString();
-            if (visited.has(importedKey)) {
-                return true;
-            }
-            const nextVisited = new Set(visited);
-            nextVisited.add(importedKey);
-            if (this.reachesImportCycle(importedUri, nextVisited)) {
+            if (this.reachesImportCycle(importedUri, activePath, completed)) {
                 return true;
             }
         }
+        activePath.delete(key);
+        completed.add(key);
         return false;
     }
 }

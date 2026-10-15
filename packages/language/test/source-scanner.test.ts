@@ -19,4 +19,12 @@ describe('Thinai source scanner', () => {
         expect(structure.openBraces).toBe(0);
         expect(structure.unterminatedString).toBe(true);
     });
+
+    test('reports comment state at the cursor without mistaking quoted comment markers', () => {
+        expect(scanThinaiSource('// comment').inComment).toBe(true);
+        expect(scanThinaiSource('/* comment').inComment).toBe(true);
+        expect(scanThinaiSource('/* comment */ code').inComment).toBe(false);
+        expect(scanThinaiSource('"// not a comment"').inComment).toBe(false);
+        expect(scanThinaiSource('"/* not a comment */"').inComment).toBe(false);
+    });
 });

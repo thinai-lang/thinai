@@ -34,16 +34,16 @@ export class ThinaiDefinitionProvider extends DefaultDefinitionProvider {
                 continue;
             }
             const pathText = document.textDocument.getText(pathNode.range);
-            const quoteOffset = pathText.search(/["']/);
-            if (quoteOffset < 0) {
+            const delimiter = pathText.startsWith('"""') ? '"""' : pathText[0];
+            if (delimiter !== '"' && delimiter !== "'" && delimiter !== '"""') {
                 continue;
             }
-            const quote = pathText[quoteOffset];
-            const quoteEnd = pathText.lastIndexOf(quote);
-            if (quoteEnd <= quoteOffset) {
+            const delimiterOffset = pathText.indexOf(delimiter);
+            const quoteEnd = pathText.lastIndexOf(delimiter);
+            if (quoteEnd <= delimiterOffset) {
                 continue;
             }
-            const startOffset = pathNode.offset + quoteOffset + 1;
+            const startOffset = pathNode.offset + delimiterOffset + delimiter.length;
             const endOffset = pathNode.offset + quoteEnd;
             if (offset < startOffset || offset >= endOffset) {
                 continue;

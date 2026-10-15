@@ -1,13 +1,12 @@
 import type { LangiumCoreServices, LangiumDocument } from 'langium';
-import chalk from 'chalk';
 import { createHash } from 'node:crypto';
 import * as path from 'node:path';
-import * as fs from 'node:fs';
+import * as fs from 'node:fs/promises';
 import { URI } from 'langium';
 import { isModel, resolveImportUri, type Model } from 'thinai-language';
 
 export async function extractDocuments(fileName: string, services: LangiumCoreServices): Promise<LangiumDocument<Model>[]> {
-    validateFileName(fileName, services);
+    await validateFileName(fileName, services);
 
     const rootUri = URI.file(path.resolve(fileName));
     const documents = new Map<string, LangiumDocument<Model>>();
@@ -53,28 +52,31 @@ export async function extractDocuments(fileName: string, services: LangiumCoreSe
             .map(diagnostic => ({ document, diagnostic }))
     );
     if (validationErrors.length > 0) {
-        console.error(chalk.red('There are validation errors:'));
-        for (const { document, diagnostic } of validationErrors) {
-            console.error(chalk.red(
-                `${document.uri.fsPath}:${diagnostic.range.start.line + 1}: ${diagnostic.message} [${document.textDocument.getText(diagnostic.range)}]`
-            ));
-        }
-        process.exit(1);
+        const details = validationErrors.map(({ document, diagnostic }) =>
+            `${document.uri.fsPath}:${diagnostic.range.start.line + 1}: ${diagnostic.message} [${document.textDocument.getText(diagnostic.range)}]`
+        );
+        throw new Error(['There are validation errors:', ...details].join('\n'));
     }
 
     return loadedDocuments;
 }
 
-function validateFileName(fileName: string, services: LangiumCoreServices): void {
+async function validateFileName(fileName: string, services: LangiumCoreServices): Promise<void> {
     const extensions = services.LanguageMetaData.fileExtensions;
     if (!extensions.includes(path.extname(fileName))) {
-        console.error(chalk.yellow(`Please choose a file with one of these extensions: ${extensions}.`));
-        process.exit(1);
+        throw new Error(`Please choose a file with one of these extensions: ${extensions.join(', ')}.`);
     }
 
-    if (!fs.existsSync(fileName)) {
-        console.error(chalk.red(`File ${fileName} does not exist.`));
-        process.exit(1);
+    try {
+        const file = await fs.stat(fileName);
+        if (!file.isFile()) {
+            throw new Error(`File ${fileName} is not a regular file.`);
+        }
+    } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+            throw new Error(`File ${fileName} does not exist.`);
+        }
+        throw error;
     }
 }
 

@@ -19,6 +19,8 @@ import {
 import { canDeclareProjects, canDeclareTransition, getEventEmissionMode } from './thinai-operation-utils.js';
 import { getSiblingCompletionKeywords } from './thinai-layout.js';
 import { isInSharedKernel } from './thinai-scope-utils.js';
+import { hasReferenceText } from './thinai-ast-utils.js';
+import { getLineStartOffset } from './thinai-text-utils.js';
 
 interface KeywordContinuationCallbacks {
     createKeywordCompletionItem(
@@ -39,7 +41,7 @@ export class ThinaiKeywordContinuations {
     getInProgressCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset);
         const continuations: ReadonlyArray<readonly [RegExp, string[]]> = [
             [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context']],
@@ -171,7 +173,7 @@ export class ThinaiKeywordContinuations {
 
     isTransitionContinuationContext(document: LangiumDocument, offset: number): boolean {
         const text = document.textDocument.getText();
-        const lineStart = text.lastIndexOf('\n', Math.max(0, offset - 1)) + 1;
+        const lineStart = getLineStartOffset(document, offset);
         return this.getTransitionRequiredKeywordMatch(text.slice(lineStart, offset)) !== undefined;
     }
 
@@ -207,7 +209,7 @@ export class ThinaiKeywordContinuations {
             const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
             return node.mirrors === undefined && !source.includes('{') ? ['mirrors'] : [];
         }
-        if (isField(node) && isEntity(node.$container) && !node.optional && !this.hasReferenceText(node.initialState) && isEnumType(node.type?.ref)) {
+        if (isField(node) && isEntity(node.$container) && !node.optional && !hasReferenceText(node.initialState) && isEnumType(node.type?.ref)) {
             return ['initial'];
         }
         if (isMethod(node) && !isProjector(node.$container) && !node.returnPrimitive && !node.returnType && !node.returnCollection) {
@@ -243,8 +245,4 @@ export class ThinaiKeywordContinuations {
         ];
     }
 
-    private hasReferenceText(reference: unknown): boolean {
-        return typeof reference === 'object' && reference !== null &&
-            '$refText' in reference && typeof reference.$refText === 'string' && reference.$refText.length > 0;
-    }
 }

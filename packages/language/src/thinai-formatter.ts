@@ -3,6 +3,7 @@ import { AbstractFormatter, Formatting } from 'langium/lsp';
 import type { FormattingOptions, Range, TextEdit } from 'vscode-languageserver';
 import { isSpecificationText } from './generated/ast.js';
 import { getBlockNestingDepth, isBlockNodeType } from './thinai-layout.js';
+import { getNewline, getNewlineLengthAt, normalizeNewlines } from './thinai-text-utils.js';
 
 const commaSeparatedTypes = new Set([
     'Import',
@@ -91,17 +92,16 @@ export class ThinaiFormatter extends AbstractFormatter {
                 continue;
             }
             const delimiterLength = delimiter.length;
-            const openingNewline = source[delimiterLength] === '\n' ? 1
-                : source.slice(delimiterLength, delimiterLength + 2) === '\r\n' ? 2 : 0;
+            const openingNewline = getNewlineLengthAt(source, delimiterLength);
             const inlineFirstLine = openingNewline === 0;
             if (inlineFirstLine && !/[\r\n]/u.test(source)) {
                 continue;
             }
-            const newline = source.match(/\r\n|\r|\n/u)?.[0] ?? '\n';
+            const newline = getNewline(source);
 
             const contentStart = delimiterLength + openingNewline;
             const closingQuote = source.length - delimiterLength;
-            const trailingWhitespaceLine = /\r?\n[ \t]*$/u.exec(source.slice(contentStart, closingQuote));
+            const trailingWhitespaceLine = /(?:\r\n|\r|\n)[ \t]*$/u.exec(source.slice(contentStart, closingQuote));
             const contentEnd = trailingWhitespaceLine
                 ? closingQuote - trailingWhitespaceLine[0].length
                 : closingQuote;
@@ -160,8 +160,8 @@ export class ThinaiFormatter extends AbstractFormatter {
             }
 
             if (trailingWhitespaceLine) {
-                const closingLineStart = closingQuote - trailingWhitespaceLine[0].length +
-                    (trailingWhitespaceLine[0].startsWith('\r\n') ? 2 : 1);
+                const trailingLineStart = closingQuote - trailingWhitespaceLine[0].length;
+                const closingLineStart = trailingLineStart + getNewlineLengthAt(source, trailingLineStart);
                 const closingIndent = source.slice(closingLineStart, closingQuote);
                 if (/^[\t ]*$/u.test(closingIndent) && closingIndent !== statementIndent) {
                     const absoluteStart = cstNode.offset + closingLineStart;
@@ -189,9 +189,11 @@ export class ThinaiFormatter extends AbstractFormatter {
 
     protected override createLineTextEdit(...args: Parameters<AbstractFormatter['createLineTextEdit']>) {
         const [range, lines, context, options] = args;
+        const newline = getNewline(context.document.getText());
         const alignment = this.continuationColumns.get(`${range.end.line}:${range.end.character}`);
         if (!alignment) {
-            return super.createLineTextEdit(...args);
+            const edit = super.createLineTextEdit(...args);
+            return { ...edit, newText: edit.newText.replace(/\n/gu, newline) };
         }
 
         const lineCount = this.fitIntoOptions(lines, range.end.line - range.start.line, options);
@@ -200,7 +202,18 @@ export class ThinaiFormatter extends AbstractFormatter {
         const indentation = context.options.insertSpaces
             ? ' '.repeat(column)
             : '\t'.repeat(Math.floor(column / tabSize)) + ' '.repeat(column % tabSize);
-        return { range, newText: `${'\n'.repeat(lineCount)}${indentation}` };
+        return { range, newText: `${newline.repeat(lineCount)}${indentation}` };
+    }
+
+    protected override createTabTextEdit(...args: Parameters<AbstractFormatter['createTabTextEdit']>) {
+        const edit = super.createTabTextEdit(...args);
+        const newline = getNewline(args[2].document.getText());
+        return { ...edit, newText: edit.newText.replace(/\n/gu, newline) };
+    }
+
+    protected override isNecessary(...args: Parameters<AbstractFormatter['isNecessary']>): boolean {
+        const [edit, document] = args;
+        return normalizeNewlines(edit.newText) !== normalizeNewlines(document.getText(edit.range));
     }
 
     protected override format(node: AstNode): void {
