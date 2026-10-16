@@ -192,6 +192,18 @@ in bounded context Ordering {
         }];
         expect(applyConfiguredIndentationToCompletions(blockCompletionItems, 4, false)[0]?.textEdit?.newText)
             .toBe('\n\t\tmethod\n\t');
+        const crlfCompletionItems = [{
+            label: 'method',
+            data: { thinaiIndentationDepth: 2, thinaiClosingIndentationDepth: 1 },
+            textEdit: {
+                range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                newText: '\r\n  method\r\n  '
+            }
+        }];
+        expect(applyConfiguredIndentationToCompletions(crlfCompletionItems, 4, true)[0]?.textEdit?.newText)
+            .toBe('\r\n        method\r\n    ');
+        expect(applyConfiguredIndentationToCompletions(crlfCompletionItems, 4, false)[0]?.textEdit?.newText)
+            .toBe('\r\n\t\tmethod\r\n\t');
     });
 
     test('offers context members and declaration keywords automatically', async () => {

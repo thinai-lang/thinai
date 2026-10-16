@@ -144,6 +144,31 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return this.getUnsegmentedScope(context, referenceType);
     }
 
+    /**
+     * Thinai's outer scopes depend on the referencing document and declaration,
+     * so they cannot use Langium's workspace-wide global-scope cache.
+     */
+    protected override getGlobalScope(referenceType: string, context: ReferenceInfo): Scope {
+        const document = AstUtils.getDocument(context.container);
+        let result = this.createScope(this.filterUnqualifiedSpecificationFields(
+            context,
+            referenceType,
+            this.externalScope.getImportedSymbols(document, referenceType)
+        ));
+        result = this.createScope(this.filterUnqualifiedSpecificationFields(
+            context,
+            referenceType,
+            this.externalScope.getDocumentSymbols(context, document, referenceType)
+        ), result);
+        const moduleSymbols = context.property === 'dependencies'
+            ? []
+            : this.externalScope.getModuleSymbols(context, referenceType);
+        return this.createScope(
+            this.filterUnqualifiedSpecificationFields(context, referenceType, moduleSymbols),
+            result
+        );
+    }
+
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
         return stream(candidates).filter(description =>
             this.isAllowedUnqualifiedSpecificationField(context, description) &&
@@ -273,37 +298,34 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private getUnsegmentedScope(context: ReferenceInfo, referenceType: string): Scope {
-        const document = AstUtils.getDocument(context.container);
-        const localScopes: Stream<AstNodeDescription>[] = [];
-
-        if (document.localSymbols) {
-            let current: AstNode | undefined = context.container;
-            while (current) {
-                if (document.localSymbols.has(current)) {
-                    localScopes.push(document.localSymbols.getStream(current).filter(description =>
-                        this.reflection.isSubtype(description.type, referenceType)
-                    ));
+        let result: Scope;
+        const declaredReferenceType = this.reflection
+            .getTypeMetaData(context.container.$type)
+            .properties[context.property]?.referenceType;
+        if (declaredReferenceType === referenceType) {
+            // Reuse Langium's standard local-scope traversal and only customize
+            // the document/context-specific outer scope via getGlobalScope.
+            result = super.getScope(context);
+        } else {
+            // Some path-completion queries intentionally ask for a broader
+            // intermediate type than the AST reference's declared target type.
+            const document = AstUtils.getDocument(context.container);
+            const localScopes: Stream<AstNodeDescription>[] = [];
+            if (document.localSymbols) {
+                let current: AstNode | undefined = context.container;
+                while (current) {
+                    if (document.localSymbols.has(current)) {
+                        localScopes.push(document.localSymbols.getStream(current).filter(description =>
+                            this.reflection.isSubtype(description.type, referenceType)
+                        ));
+                    }
+                    current = current.$container;
                 }
-                current = current.$container;
             }
-        }
-
-        let result = this.createScope(this.filterUnqualifiedSpecificationFields(
-            context,
-            referenceType,
-            this.externalScope.getImportedSymbols(document, referenceType)
-        ));
-        result = this.createScope(this.filterUnqualifiedSpecificationFields(
-            context,
-            referenceType,
-            this.externalScope.getDocumentSymbols(context, document, referenceType)
-        ), result);
-        const moduleSymbols = context.property === 'dependencies'
-            ? []
-            : this.externalScope.getModuleSymbols(context, referenceType);
-        result = this.createScope(this.filterUnqualifiedSpecificationFields(context, referenceType, moduleSymbols), result);
-        for (let index = localScopes.length - 1; index >= 0; index--) {
-            result = this.createScope(localScopes[index], result);
+            result = this.getGlobalScope(referenceType, context);
+            for (let index = localScopes.length - 1; index >= 0; index--) {
+                result = this.createScope(localScopes[index]!, result);
+            }
         }
         const specificationSymbols = this.getSpecificationSymbols(context, referenceType);
         if (specificationSymbols.length > 0) {

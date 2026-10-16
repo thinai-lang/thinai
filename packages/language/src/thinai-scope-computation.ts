@@ -1,5 +1,12 @@
-import { AstUtils, DefaultScopeComputation, type AstNode, type AstNodeDescription, type LangiumDocument } from 'langium';
-import type { CancellationToken } from 'vscode-jsonrpc';
+import {
+    AstUtils,
+    CancellationToken,
+    DefaultScopeComputation,
+    interruptAndCheck,
+    type AstNode,
+    type AstNodeDescription,
+    type LangiumDocument
+} from 'langium';
 import {
     isBoundedContext,
     isBoundedContextPart,
@@ -38,14 +45,16 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
 export class ThinaiScopeComputation extends DefaultScopeComputation {
     override async collectExportedSymbols(
         document: LangiumDocument,
-        _cancelToken?: CancellationToken
+        cancelToken?: CancellationToken
     ): Promise<AstNodeDescription[]> {
         const root = document.parseResult.value;
         if (!root) {
             return [];
         }
         const exports: AstNodeDescription[] = [];
+        const token = cancelToken ?? CancellationToken.None;
         for (const node of AstUtils.streamAst(root)) {
+            await interruptAndCheck(token);
             if (!isNamedExport(node)) {
                 continue;
             }

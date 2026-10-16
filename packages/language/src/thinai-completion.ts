@@ -337,7 +337,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const activeQueryRepository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
         const transitionContinuationAllowed = this.keywordContinuations.isTransitionContinuationPosition(document, offset);
-        const entityDeclarationsAllowed = braceOwners.at(-1) === 'aggregate';
+        const entityDeclarationsAllowed = innermostBlock?.$type === 'Aggregate' || braceOwners.at(-1) === 'aggregate';
         const rootEntityAlreadyDeclared = entityDeclarationsAllowed && innermostBlock?.$type === 'Aggregate' &&
             'members' in innermostBlock && Array.isArray(innermostBlock.members) &&
             innermostBlock.members.some(member => isEntity(member) && member.root);

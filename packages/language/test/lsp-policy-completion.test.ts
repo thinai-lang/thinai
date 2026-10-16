@@ -17,6 +17,31 @@ afterEach(async () => {
 });
 
 describe('LSP policy completion', () => {
+    test('uses the document newline style in empty-block sibling edits', async () => {
+        const source = [
+            'bounded context Ordering',
+            'in bounded context Ordering {',
+            '    application service App {',
+            '        method execute() { }',
+            '    }',
+            '}'
+        ].join('\r\n');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/crlf-block-completion.tni'), source
+        );
+        documents = [document];
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+
+        const offset = source.indexOf('{ }', source.indexOf('method execute')) + 2;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'behavior');
+
+        expect(item?.textEdit).toMatchObject({ newText: '\r\n        behavior\r\n        ' });
+    });
+
     test('offers the allowed declaration and method-body keywords in each block', async () => {
         const marker = '__completion_position__';
         const cases = [
@@ -74,6 +99,11 @@ describe('LSP policy completion', () => {
                 expected: ['entity', 'value object', 'enum', 'invariant'],
                 forbidden: ['transition', 'projects', 'emits'],
                 source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { ${marker} root entity Order { identifier id: OrderId }\nvalue object OrderId { raw: string } } }`
+            },
+            {
+                name: 'aggregate body when a comment precedes the opening brace',
+                expected: ['entity', 'root entity', 'value object', 'enum', 'invariant'],
+                source: `bounded context Ordering\nin bounded context Ordering { aggregate Order /* comment */ { ${marker} } }`
             },
             {
                 name: 'entity fields allow identifier',
