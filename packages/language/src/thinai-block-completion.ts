@@ -1,4 +1,4 @@
-import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
+import { AstUtils, CstUtils, type AstNode, type LangiumDocument } from 'langium';
 import {
     CompletionItemKind,
     InsertTextMode,
@@ -15,6 +15,7 @@ import {
     isLineSeparatedSibling
 } from './thinai-layout.js';
 import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
+import { scanThinaiSource } from './thinai-source-scanner.js';
 
 interface BlockCompletionCallbacks {
     createKeywordCompletionItem(
@@ -101,6 +102,7 @@ export class ThinaiBlockCompletion {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         const lineStart = getLineStartOffset(document, offset);
+        const openingBrace = scanThinaiSource(text.slice(0, offset)).openBraceOffsets.at(-1) ?? -1;
         const linePrefixStart = (openingBrace: number) => openingBrace >= lineStart ? openingBrace + 1 : lineStart;
         const container = AstUtils.streamAst(root)
             .filter(candidate => this.keywordContinuations.getSiblingKeywordLabels(candidate).length > 0)
@@ -112,8 +114,7 @@ export class ThinaiBlockCompletion {
             .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))
             .find(candidate => {
                 const cstNode = candidate.$cstNode!;
-                const beforeCursor = text.slice(cstNode.offset, offset);
-                if (!beforeCursor.includes('{')) {
+                if (openingBrace < cstNode.offset) {
                     return false;
                 }
                 const directChildren = AstUtils.streamAst(candidate).toArray().filter(child => child.$container === candidate);
@@ -124,7 +125,6 @@ export class ThinaiBlockCompletion {
                 if (!directChildAtCursor) {
                     return true;
                 }
-                const openingBrace = text.lastIndexOf('{', offset - 1);
                 const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
                 return this.matchesKeywordPrefix(this.keywordContinuations.getSiblingKeywordLabels(candidate), prefix);
             });
@@ -132,7 +132,6 @@ export class ThinaiBlockCompletion {
             return [];
         }
         const labels = this.keywordContinuations.getSiblingKeywordLabels(container);
-        const openingBrace = text.lastIndexOf('{', offset - 1);
         const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
         const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
         const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
@@ -284,7 +283,9 @@ export class ThinaiBlockCompletion {
             return this.normalizeBlockStatementIndentation(completions, document, position, parent);
         }
         if (!/^[\t ]*(?:[\p{L}_][\p{L}_ ]*)?$/u.test(bodyPrefix)) {
-            return completions;
+            return this.moveCommentOnlyBlockContentsToNextLine(
+                completions, document, position, parent, openingBrace, bodyPrefix
+            );
         }
         const newline = getNewline(text);
         const childIndent = this.getBlockChildIndentation(document, parent, offset);
@@ -310,6 +311,67 @@ export class ThinaiBlockCompletion {
                     end: document.textDocument.positionAt(closeOffset)
                 },
                 newText: `${newline}${childIndent}${item.label}${hasClosingBrace ? `${newline}${parentIndent}` : ''}`
+            }
+        }));
+    }
+
+    private moveCommentOnlyBlockContentsToNextLine(
+        completions: CompletionItem[],
+        document: LangiumDocument,
+        position: Position,
+        parent: AstNode,
+        openingBrace: number,
+        bodyPrefix: string
+    ): CompletionItem[] {
+        const cstNode = parent.$cstNode;
+        if (!cstNode || openingBrace < 0) {
+            return completions;
+        }
+        const text = document.textDocument.getText();
+        const offset = document.textDocument.offsetAt(position);
+        const comments = CstUtils.flattenCst(cstNode)
+            .filter(node => (node.tokenType.name === 'SL_COMMENT' || node.tokenType.name === 'ML_COMMENT') &&
+                node.offset >= openingBrace + 1 && node.end <= offset)
+            .toArray()
+            .sort((left, right) => left.offset - right.offset);
+        if (comments.length === 0) {
+            return completions;
+        }
+        let cursor = openingBrace + 1;
+        for (const comment of comments) {
+            if (!/^[\t \r\n]*$/u.test(text.slice(cursor, comment.offset))) {
+                return completions;
+            }
+            cursor = comment.end;
+        }
+        if (!/^[\t \r\n]*$/u.test(text.slice(cursor, offset))) {
+            return completions;
+        }
+
+        const newline = getNewline(text);
+        const childIndent = this.getBlockChildIndentation(document, parent, offset);
+        const indentationDepth = getBlockNestingDepth(parent);
+        const parentLineStart = getLineStartOffset(document, openingBrace);
+        const parentIndent = /^[\t ]*/u.exec(text.slice(parentLineStart, openingBrace))?.[0] ?? '';
+        const closeBrace = /^[\t ]*\}/u.exec(text.slice(offset));
+        const closeOffset = closeBrace ? offset + closeBrace[0].lastIndexOf('}') : offset;
+        const commentText = bodyPrefix.trim();
+        return completions.map(item => ({
+            ...item,
+            detail: 'Language keyword',
+            preselect: true,
+            insertTextMode: InsertTextMode.asIs,
+            data: {
+                thinaiSiblingCompletion: true,
+                thinaiIndentationDepth: indentationDepth,
+                ...(closeBrace ? { thinaiClosingIndentationDepth: Math.max(0, indentationDepth - 1) } : {})
+            },
+            textEdit: {
+                range: {
+                    start: document.textDocument.positionAt(openingBrace + 1),
+                    end: document.textDocument.positionAt(closeOffset)
+                },
+                newText: `${newline}${childIndent}${commentText}${newline}${childIndent}${item.label}${closeBrace ? `${newline}${parentIndent}` : ''}`
             }
         }));
     }

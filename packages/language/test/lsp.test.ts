@@ -3057,6 +3057,31 @@ in bounded context Ordering {
         }
     });
 
+    test('preserves comments and ignores braces inside them when completing the first block member', async () => {
+        const prefix = `bounded context Ordering
+in bounded context Ordering {
+  module Api { /* { */ `;
+        const source = `${prefix}}
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/comment-brace-empty-block-completion.tni'), source
+        );
+        documents.push(document);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'value object');
+
+        expect(item?.textEdit).toMatchObject({
+            range: {
+                start: document.textDocument.positionAt(prefix.indexOf('{', prefix.indexOf('module Api')) + 1),
+                end: document.textDocument.positionAt(source.indexOf('}', prefix.length))
+            },
+            newText: '\n    /* { */\n    value object\n  '
+        });
+    });
+
     test('corrects indentation when completing a member on an already-indented next line', async () => {
         const prefix = `bounded context Ordering
 in bounded context Ordering {
