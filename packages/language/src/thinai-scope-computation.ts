@@ -1,6 +1,6 @@
 import {
     AstUtils,
-    CancellationToken,
+    Cancellation,
     DefaultScopeComputation,
     interruptAndCheck,
     type AstNode,
@@ -45,14 +45,14 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
 export class ThinaiScopeComputation extends DefaultScopeComputation {
     override async collectExportedSymbols(
         document: LangiumDocument,
-        cancelToken?: CancellationToken
+        cancelToken?: Cancellation.CancellationToken
     ): Promise<AstNodeDescription[]> {
         const root = document.parseResult.value;
         if (!root) {
             return [];
         }
         const exports: AstNodeDescription[] = [];
-        const token = cancelToken ?? CancellationToken.None;
+        const token = cancelToken ?? Cancellation.CancellationToken.None;
         for (const node of AstUtils.streamAst(root)) {
             await interruptAndCheck(token);
             if (!isNamedExport(node)) {
