@@ -364,6 +364,7 @@ export class ThinaiBlockCompletion {
             data: {
                 thinaiSiblingCompletion: true,
                 thinaiIndentationDepth: indentationDepth,
+                thinaiIndentationLines: [commentText.split(/\r\n|\r|\n/u).length + 1],
                 ...(closeBrace ? { thinaiClosingIndentationDepth: Math.max(0, indentationDepth - 1) } : {})
             },
             textEdit: {

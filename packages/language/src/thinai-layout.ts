@@ -3,6 +3,7 @@ import { CstUtils, type AstNode, type CstNode } from 'langium';
 export interface SiblingStatementPolicy {
     block?: 'required' | 'optional';
     blockContainer?: boolean;
+    firstStatementKeyword?: string;
     bareNameBoundary?: boolean;
     requiredReferences?: readonly string[];
     requiredReferencePaths?: readonly (readonly string[])[];
@@ -123,7 +124,9 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
     SeparateWaysRelationship: {
         statement: { bareNameBoundary: true, requiredReferences: ['left', 'right'] }
     },
-    ContextMapEndpoint: { statement: { blockContainer: true } },
+    ContextMapEndpoint: {
+        statement: { blockContainer: true, firstStatementKeyword: 'integrationPatterns' }
+    },
     EventEmission: {
         statement: {
             bareNameBoundary: true,
@@ -150,13 +153,28 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
         statement: { referenceLists: [{ property: 'targets' }], incompleteSuffixes: ['invokes', 'when'] }
     },
     QueryRepository: {
-        statement: { block: 'required', requiredReferences: ['readModel'], bareNameBoundary: true, incompleteSuffixes: ['serves'] }
+        statement: {
+            block: 'required',
+            firstStatementKeyword: 'serves',
+            requiredReferences: ['readModel'],
+            bareNameBoundary: true,
+            incompleteSuffixes: ['serves']
+        }
     },
     ReadModelReference: { statement: { requiredReferences: ['target'], bareNameBoundary: true } },
-    Repository: { statement: { block: 'required', requiredReferences: ['root'], bareNameBoundary: true, incompleteSuffixes: ['manages'] } },
+    Repository: {
+        statement: {
+            block: 'required',
+            firstStatementKeyword: 'manages',
+            requiredReferences: ['root'],
+            bareNameBoundary: true,
+            incompleteSuffixes: ['manages']
+        }
+    },
     SharedKernelRelationship: {
         statement: {
             block: 'required',
+            firstStatementKeyword: 'participants',
             requiredReferences: ['sharedKernel'],
             referenceLists: [{ property: 'participants', targetProperty: 'target' }],
             incompleteSuffixes: ['participants']

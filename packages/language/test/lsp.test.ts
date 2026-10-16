@@ -204,6 +204,9 @@ in bounded context Ordering {
             .toBe('\r\n        method\r\n    ');
         expect(applyConfiguredIndentationToCompletions(crlfCompletionItems, 4, false)[0]?.textEdit?.newText)
             .toBe('\r\n\t\tmethod\r\n\t');
+        expect(applyConfiguredIndentation(
+            '\n    /* note */\n    method\n  ', 2, 4, false, 1, [2]
+        )).toBe('\n\t\t/* note */\n\t\tmethod\n\t');
     });
 
     test('offers context members and declaration keywords automatically', async () => {
@@ -3080,6 +3083,32 @@ in bounded context Ordering {
             },
             newText: '\n    /* { */\n    value object\n  '
         });
+        expect(applyConfiguredIndentationToCompletions([item!], 4, false)[0]?.textEdit?.newText)
+            .toBe('\n\t\t/* { */\n\t\tvalue object\n\t');
+    });
+
+    test('keeps a resolved user type named String complete for same-line sibling completion', async () => {
+        const source = `bounded context Types in bounded context Types {
+            value object String { raw: string }
+            value object Holder {
+                content: String${' '}
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/string-named-type-completion.tni'), source
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const offset = source.indexOf('content: String') + 'content: String '.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const method = completion?.items.find(item => item.label === 'method');
+
+        expect(method?.data?.thinaiSiblingCompletion).toBe(true);
+        expect(method?.textEdit).toMatchObject({ newText: '\n                method' });
     });
 
     test('corrects indentation when completing a member on an already-indented next line', async () => {

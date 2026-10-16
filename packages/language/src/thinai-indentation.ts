@@ -3,7 +3,8 @@ export function applyConfiguredIndentation(
     depth: number,
     tabSize: number,
     insertSpaces: boolean,
-    closingDepth?: number
+    closingDepth?: number,
+    additionalIndentationLines: readonly number[] = []
 ): string {
     const lines = text.split(/\r\n|\r|\n/u);
     if (lines.length < 2) {
@@ -15,10 +16,18 @@ export function applyConfiguredIndentation(
         const safeLineDepth = Math.max(0, Math.floor(lineDepth));
         return insertSpaces ? ' '.repeat(safeLineDepth * safeTabSize) : '\t'.repeat(safeLineDepth);
     };
-    lines[1] = `${getIndentation(safeDepth)}${lines[1]!.replace(/^[\t ]*/u, '')}`;
+    const indentLine = (line: number, lineDepth: number) => {
+        if (line > 0 && line < lines.length) {
+            lines[line] = `${getIndentation(lineDepth)}${lines[line]!.replace(/^[\t ]*/u, '')}`;
+        }
+    };
+    indentLine(1, safeDepth);
+    for (const line of additionalIndentationLines) {
+        indentLine(line, safeDepth);
+    }
     if (closingDepth !== undefined && lines.length > 2) {
         const lastLine = lines.length - 1;
-        lines[lastLine] = `${getIndentation(closingDepth)}${lines[lastLine]!.replace(/^[\t ]*/u, '')}`;
+        indentLine(lastLine, closingDepth);
     }
     return lines.join(text.match(/\r\n|\r|\n/u)?.[0] ?? '\n');
 }
@@ -30,12 +39,16 @@ export function applyConfiguredIndentationToCompletions<
         const data = item.data as {
             thinaiIndentationDepth?: unknown;
             thinaiClosingIndentationDepth?: unknown;
+            thinaiIndentationLines?: unknown;
         } | undefined;
         const depth = data?.thinaiIndentationDepth;
         if (typeof depth !== 'number' || !item.textEdit) {
             return item;
         }
         const closingDepth = data?.thinaiClosingIndentationDepth;
+        const indentationLines = Array.isArray(data?.thinaiIndentationLines)
+            ? data.thinaiIndentationLines.filter((line): line is number => typeof line === 'number')
+            : [];
         return {
             ...item,
             textEdit: {
@@ -45,7 +58,8 @@ export function applyConfiguredIndentationToCompletions<
                     depth,
                     tabSize,
                     insertSpaces,
-                    typeof closingDepth === 'number' ? closingDepth : undefined
+                    typeof closingDepth === 'number' ? closingDepth : undefined,
+                    indentationLines
                 )
             }
         } as T;

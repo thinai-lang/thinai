@@ -913,9 +913,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return false;
     }
 
-    private hasCompletedTypeReference(reference: { $refText: string } | undefined): boolean {
+    private hasCompletedTypeReference(reference: { $refText: string; ref?: unknown } | undefined): boolean {
         if (!reference?.$refText) {
             return false;
+        }
+        if (reference.ref !== undefined) {
+            return true;
         }
         return !['string', 'number', 'boolean', 'date', 'time', 'instant'].some(primitive =>
             primitive.startsWith(reference.$refText.toLowerCase())

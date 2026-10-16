@@ -288,6 +288,40 @@ in bounded context Ordering {
             .toEqual([]);
     });
 
+    test('requires first body clauses on a new line in reference-only blocks', async () => {
+        const document = await parse(`bounded context Ordering
+bounded context Shipping
+shared kernel Common {}
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+        }
+        value object OrderId {
+            raw: string
+        }
+    }
+    read model Summary {}
+    repository Orders { manages Order.Order }
+    query repository SummaryQueries { serves Summary }
+}
+context map Relations {
+    sharedKernel Common { participants: [Ordering, Shipping] }
+    customer Ordering { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Shipping
+}`);
+
+        const diagnostics = document.diagnostics?.filter(diagnostic =>
+            diagnostic.code === 'line-break-required-after-open-brace'
+        ) ?? [];
+        const source = document.textDocument.getText();
+        const expectedOffsets = ['manages', 'serves', 'participants', 'integrationPatterns']
+            .map(keyword => source.indexOf(keyword))
+            .sort((left, right) => left - right);
+
+        expect(diagnostics.map(diagnostic => document.textDocument.offsetAt(diagnostic.range.start))
+            .sort((left, right) => left - right)).toEqual(expectedOffsets);
+    });
+
     test('allows entity and value-object members in source order', async () => {
         const document = await parse(`bounded context Ordering
 in bounded context Ordering {

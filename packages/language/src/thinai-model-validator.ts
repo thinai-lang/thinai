@@ -24,7 +24,7 @@ import {
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics, type ContextRelationshipPairSemantics } from './thinai-context-map-utils.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { findCstTokenOffset, isLineSeparatedSibling } from './thinai-layout.js';
+import { findCstTokenOffset, getSiblingStatementPolicy, isLineSeparatedSibling } from './thinai-layout.js';
 import { resolveImportUri } from './thinai-scope-utils.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
@@ -191,6 +191,27 @@ export class ThinaiModelValidator {
 
         const textDocument = AstUtils.getDocument(model).textDocument;
         const text = textDocument.getText();
+        for (const node of AstUtils.streamAst(model)) {
+            const keyword = getSiblingStatementPolicy(node.$type).firstStatementKeyword;
+            const cstNode = node.$cstNode;
+            if (!keyword || !cstNode) {
+                continue;
+            }
+            const openingBrace = findCstTokenOffset(cstNode, '{');
+            const statementOffset = findCstTokenOffset(cstNode, keyword);
+            if (openingBrace === undefined || statementOffset === undefined || statementOffset <= openingBrace ||
+                textDocument.positionAt(openingBrace).line < textDocument.positionAt(statementOffset).line) {
+                continue;
+            }
+            accept('error', 'Start the first statement on a new line after the opening brace.', {
+                node,
+                range: {
+                    start: textDocument.positionAt(statementOffset),
+                    end: textDocument.positionAt(statementOffset + keyword.length)
+                },
+                code: 'line-break-required-after-open-brace'
+            });
+        }
         for (const [parent, children] of siblings) {
             children.sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
             const first = children[0];
