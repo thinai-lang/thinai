@@ -136,13 +136,17 @@ declared `projects` targets. CQRS projectors do not read query repositories.
 Aggregate-repository and external query-API reads are explicit projector
 exceptions, since current-state lookups can make replay results differ. Domain
 services may read domain repositories when a business rule requires it. An
-external query API must be published and authorized by a context map; prefer a
-domain-facing port or anti-corruption layer when domain behavior needs one.
+external query API must be published and authorized by an imported context map.
+Application services, query services, projectors, and domain services may use
+such a published query API; prefer event data or a domain-facing port or
+anti-corruption layer when replay or domain isolation matters.
 Method-level `behavior` describes how returned data is used—there are no result
 aliases or per-read behavior clauses. A read model remains a query-result shape,
 not necessarily a materialized projection or separate database.
-Queries may return primitives, data objects, read models, or collections. Data
-objects are identity-free input/output shapes; they may nest value objects,
+Local query methods may return primitives, data objects, read models, domain
+values such as value objects and enums, or collections of those results.
+Published cross-context query APIs expose primitives or explicitly exposed
+data-object contracts. Data objects are identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.
 Multiple application services may invoke the same aggregate. A top-level
 `journey` sequences user-invoked application-service commands across bounded
@@ -202,6 +206,10 @@ which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
 declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
+Exposing a query service publishes its query API; direct module-to-module
+method references still require the method itself to be exposed. Journeys are
+model-level timelines and do not require either form of module exposure merely
+to invoke an application-service command.
 
 ## Behavior and Journeys
 
@@ -232,11 +240,37 @@ scope, then reference it in a `by Actor { ... }` block. A journey does not
 represent background event handoffs, a synchronous remote call, or a shared
 transaction; event-triggered reactions remain in their contexts. Steps may
 include optional descriptive `with "..."` input text and `when "..."` guard
-text with linked references; commands enforce their own invariants. Journey
-prose is explicitly cross-context: it may link read models, query results,
-data objects, value objects, enums, integration events, and user-facing
-operations from imported contexts, while private aggregate and DomainEvent
-internals remain off-limits.
+text with linked references; commands enforce their own invariants.
+
+A journey is a model-level command timeline, not a module or a bounded context.
+Steps are ordered in source order across actor blocks. A later step's `with` or
+`when` prose may refer to inputs or results of earlier command invocations.
+The current command's result becomes visible only to later steps. References to
+a command result name the nearest earlier invocation of that command; a journey
+that invokes the same command more than once produces a warning because those
+references are inherently ambiguous. The language deliberately has no step
+variables, step labels, result aliases, or executable condition blocks.
+
+Journey command targets are application-service commands and do not require
+module exposure merely because a journey invokes them. The invoked command's
+declared input/output contract is visible to the journey, including nested
+fields, collections, field types, and enum values, even when those types live in
+nested modules or aggregates. Aggregate-owned value objects and enums are
+therefore reusable in command contracts without creating duplicate DTOs.
+Visibility is based on the command contract and timeline, not on blanket module
+exposure. Private aggregate internals that are not reachable through a command
+contract and private DomainEvent internals remain off-limits. An exposed
+command whose contract publishes aggregate-owned or otherwise private contract
+types produces a warning, because the command is effectively publishing those
+types; use public or shared contract types if that is not intended. Journey prose is
+cross-context by design and does not require a context-map authorization;
+context maps remain relevant to actual event and query consumption.
+
+Journey prose may also link visible read models, query results, data objects,
+value objects, enums, public integration events, and user-facing operations from
+imported contexts. `with` describes the inputs of the step; `when` describes the
+conditions under which the command is invoked. Both are descriptive prose, not
+executable expressions.
 
 Thinai supports modules, aggregates, root and child entities, identifiers and
 mirrored value objects, data objects, read models, projectors, query services and repositories,

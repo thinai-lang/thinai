@@ -3708,6 +3708,145 @@ journey PlaceOrder {
         expect(completion?.items.map(item => item.label)).not.toContain('secret');
     });
 
+    test('completes structural segments of cross-context specification paths', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cross-context-spec-catalog.tni'),
+            `bounded context Catalog
+in bounded context Catalog {
+    module PublicApi {
+        exposes ProductQueries, ProductInfo
+        data object ProductInfo {
+            address: ProductAddress
+        }
+        data object ProductAddress {
+            city: string
+        }
+        query service ProductQueries {
+            method find(sku: string) returns ProductInfo
+        }
+    }
+}`
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cross-context-spec-contexts.tni'),
+            'bounded context Ordering'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cross-context-spec-map.tni'),
+            `import "./cross-context-spec-contexts.tni"
+import "./cross-context-spec-catalog.tni"
+context map Commerce {
+    customer Ordering -> supplier Catalog
+}`
+        );
+        const consumerTemplate = `import "./cross-context-spec-contexts.tni"
+import "./cross-context-spec-catalog.tni"
+import { Commerce } from "./cross-context-spec-map.tni"
+in bounded context Ordering {
+    application service App {
+        method check(sku: string) {
+            reads from Catalog.PublicApi.ProductQueries.find
+            behavior "Use __CURSOR__"
+        }
+    }
+}`;
+
+        const completionAt = async (marker: string, index: number) => {
+            const consumerText = consumerTemplate.replace('__CURSOR__', marker);
+            const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/cross-context-spec-consumer-${index}.tni`), consumerText
+            );
+            documents.push(consumer);
+            await services.shared.workspace.DocumentBuilder.build([catalog, contexts, contextMap, consumer], { validation: false });
+            const offset = consumerText.indexOf(marker) + marker.length;
+            return services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+                textDocument: { uri: consumer.uri.toString() },
+                position: consumer.textDocument.positionAt(offset)
+            });
+        };
+
+        const root = await completionAt('[[', 0);
+        expect(root?.items.map(item => item.label)).toContain('Catalog');
+
+        const catalogSegment = await completionAt('[[Catalog.', 1);
+        expect(catalogSegment?.items.map(item => item.label)).toContain('PublicApi');
+
+        const moduleSegment = await completionAt('[[Catalog.PublicApi.', 2);
+        expect(moduleSegment?.items.map(item => item.label)).toContain('ProductInfo');
+    });
+
+    test('completes prior command results but not the current command result in journeys', async () => {
+        const marker = '__CURSOR__';
+        const makeSource = (path: string) => `bounded context Ordering
+in bounded context Ordering {
+    data object PlaceOrderResult {
+        orderId: string
+    }
+    data object PayResult {
+        paid: boolean
+    }
+    application service OrderApplication {
+        method placeOrder() returns PlaceOrderResult
+        method pay() returns PayResult
+    }
+}
+actor Customer
+journey PlaceOrder {
+    by Customer {
+        invoke Ordering.OrderApplication.placeOrder
+        invoke Ordering.OrderApplication.pay
+            when "Result [[${path}${marker}]]"
+    }
+}`;
+
+        const priorText = makeSource('Ordering.OrderApplication.placeOrder.result.');
+        const prior = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-prior-result-completion.tni'), priorText.replace(marker, '')
+        );
+        documents.push(prior);
+        await services.shared.workspace.DocumentBuilder.build([prior], { validation: false });
+        const priorOffset = priorText.indexOf(marker);
+        const priorCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(prior, {
+            textDocument: { uri: prior.uri.toString() },
+            position: prior.textDocument.positionAt(priorOffset)
+        });
+        expect(priorCompletion?.items.map(item => item.label)).toContain('orderId');
+
+        const currentText = makeSource('Ordering.OrderApplication.pay.result.');
+        const current = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-current-result-completion.tni'), currentText.replace(marker, '')
+        );
+        documents.push(current);
+        await services.shared.workspace.DocumentBuilder.build([current], { validation: false });
+        const currentOffset = currentText.indexOf(marker);
+        const currentCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(current, {
+            textDocument: { uri: current.uri.toString() },
+            position: current.textDocument.positionAt(currentOffset)
+        });
+        expect(currentCompletion?.items.map(item => item.label)).not.toContain('paid');
+    });
+
+    test('completes from after a multiline import component list', async () => {
+        const marker = '__CURSOR__';
+        const source = `import {
+    First,
+    Second
+} ${marker}
+bounded context Alpha
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multiline-import-from-completion.tni'), source.replace(marker, '')
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const offset = source.indexOf(marker);
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.map(item => item.label)).toContain('from');
+    });
+
     test('does not offer unrelated header continuations inside a method body', async () => {
         const source = `bounded context Alpha
 in bounded context Alpha {

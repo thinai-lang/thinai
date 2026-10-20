@@ -12,6 +12,7 @@ import {
     isProjector,
     isQueryService,
     isSubdomain,
+    isImport,
     isTransition,
     isValueObject,
     isModule
@@ -72,7 +73,8 @@ export class ThinaiKeywordContinuations {
             .map(([pattern, keywords]) => ({ match: pattern.exec(prefix), keywords }))
             .find(candidate => candidate.match !== null);
         if (!match?.match) {
-            return [];
+            const importFrom = this.getImportFromCompletion(document, position);
+            return importFrom ? [importFrom] : [];
         }
         if ((match.keywords[0] === 'from' || match.keywords[0] === 'to') &&
             this.isTransitionContinuationContext(document, offset) &&
@@ -95,6 +97,44 @@ export class ThinaiKeywordContinuations {
                 start,
                 `${needsLeadingSpace ? ' ' : ''}${keyword}`
             ));
+    }
+
+    private getImportFromCompletion(document: LangiumDocument, position: Position): CompletionItem | undefined {
+        const root = document.parseResult.value;
+        if (!root) {
+            return undefined;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const importDeclaration = AstUtils.streamAst(root)
+            .filter(isImport)
+            .find(node => {
+                const cstNode = node.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
+            });
+        const importStart = importDeclaration?.$cstNode?.offset ?? text.lastIndexOf('import', offset);
+        if (importStart < 0) {
+            return undefined;
+        }
+        const source = text.slice(importStart, offset);
+        const match = /^\s*import\s+\{[\s\S]*\}\s*([\p{L}_]*)$/u.exec(source);
+        if (!match) {
+            return undefined;
+        }
+        const typedPrefix = match[1] ?? '';
+        if (typedPrefix.length >= 'from'.length || !'from'.startsWith(typedPrefix.toLowerCase())) {
+            return undefined;
+        }
+        const prefixStart = offset - typedPrefix.length;
+        const needsLeadingSpace = prefixStart > 0 && !/\s/u.test(text[prefixStart - 1]!);
+        return this.callbacks.createKeywordCompletionItem(
+            document,
+            position,
+            'from',
+            'Keyword continuation',
+            prefixStart,
+            `${needsLeadingSpace ? ' ' : ''}from`
+        );
     }
 
     getPartialSameLineCompletions(document: LangiumDocument, position: Position): CompletionItem[] {

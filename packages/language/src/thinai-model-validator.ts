@@ -6,6 +6,7 @@ import {
     UriUtils
 } from 'langium';
 import {
+    isContextMap,
     isCustomerSupplierRelationship,
     isModel,
     isPartnershipRelationship,
@@ -75,7 +76,16 @@ export class ThinaiModelValidator {
 
     checkImport(importDeclaration: Import, accept: ValidationAcceptor): void {
         const path = importDeclaration.path;
-        if (typeof path !== 'string' || path.length === 0) {
+        if (typeof path !== 'string') {
+            return;
+        }
+        if (path.length === 0) {
+            if (isSyntacticallyComplete(importDeclaration)) {
+                accept('error', 'An import path must not be empty.', {
+                    node: importDeclaration,
+                    property: 'path'
+                });
+            }
             return;
         }
         if (!path.startsWith('./') && !path.startsWith('../')) {
@@ -123,7 +133,7 @@ export class ThinaiModelValidator {
             });
         }
 
-        if (this.reachesImportCycle(uri, new Set([document.uri.toString()]))) {
+        if (this.reachesImportCycle(uri, new Set([document.uri.toString()]), new Set(), document.uri.toString())) {
             accept('error', 'Import cycle detected.', {
                 node: importDeclaration,
                 property: 'path'
@@ -313,13 +323,19 @@ export class ThinaiModelValidator {
     }
 
     private checkImportedContextMapConsistency(model: Model, accept: ValidationAcceptor): void {
+        const localMaps = new Set(model.declarations.filter(isContextMap));
+        const contextMaps = [
+            ...localMaps,
+            ...this.referencePolicy.getImportedContextMaps(model)
+        ];
         const relationshipsByPair = new Map<string, Array<{
             map: ContextMap;
+            relationship: ContextRelationship;
             pair: ContextRelationshipPairSemantics;
         }>>();
         const reported = new Set<ContextRelationship>();
 
-        for (const contextMap of this.referencePolicy.getImportedContextMaps(model)) {
+        for (const contextMap of contextMaps) {
             for (const relationship of contextMap.relationships) {
                 if (!isSyntacticallyComplete(relationship)) {
                     continue;
@@ -331,18 +347,57 @@ export class ThinaiModelValidator {
                             continue;
                         }
                         if (!reported.has(relationship)) {
-                            accept('error', `Imported context maps '${previous.map.name}' and '${contextMap.name}' define conflicting relationships between ${pair.name}.`, {
-                                node: relationship,
-                                property: 'relationships'
-                            });
+                            const bothImported = !localMaps.has(previous.map) && !localMaps.has(contextMap);
+                            const message = bothImported
+                                ? `Imported context maps '${previous.map.name}' and '${contextMap.name}' define conflicting relationships between ${pair.name}.`
+                                : `Context maps '${previous.map.name}' and '${contextMap.name}' define conflicting relationships between ${pair.name}.`;
+                            const target = this.getContextMapConflictTarget(
+                                model,
+                                localMaps,
+                                previous,
+                                contextMap,
+                                relationship
+                            );
+                            accept('error', message, target);
                             reported.add(relationship);
                         }
                         break;
                     }
-                    relationshipsByPair.set(pair.key, [...existing, { map: contextMap, pair }]);
+                    relationshipsByPair.set(pair.key, [...existing, {
+                        map: contextMap,
+                        relationship,
+                        pair
+                    }]);
                 }
             }
         }
+    }
+
+    private getContextMapConflictTarget(
+        model: Model,
+        localMaps: Set<ContextMap>,
+        previous: { map: ContextMap; relationship: ContextRelationship },
+        contextMap: ContextMap,
+        relationship: ContextRelationship
+    ): { node: AstNode; property?: string } {
+        if (localMaps.has(contextMap)) {
+            return { node: relationship, property: 'relationships' };
+        }
+        if (localMaps.has(previous.map)) {
+            return { node: previous.relationship, property: 'relationships' };
+        }
+        const document = AstUtils.getDocument(model);
+        const importDeclaration = model.imports.find(candidate => {
+            const uri = resolveImportUri(document, candidate);
+            if (!uri || !UriUtils.equals(uri, AstUtils.getDocument(contextMap).uri)) {
+                return false;
+            }
+            return candidate.components.length === 0 ||
+                candidate.components.some(component => component.component.ref === contextMap);
+        });
+        return importDeclaration
+            ? { node: importDeclaration, property: 'path' }
+            : { node: model };
     }
 
     private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {
@@ -360,11 +415,17 @@ export class ThinaiModelValidator {
     private reachesImportCycle(
         uri: URI,
         activePath: Set<string>,
-        completed: Set<string> = new Set()
+        completed: Set<string>,
+        startingDocument: string
     ): boolean {
         const key = uri.toString();
-        if (activePath.has(key)) {
+        if (key === startingDocument && activePath.size > 0) {
             return true;
+        }
+        if (activePath.has(key)) {
+            // A cycle that does not return to the document whose import is
+            // being checked is not an error for that document.
+            return false;
         }
         if (completed.has(key)) {
             return false;
@@ -379,7 +440,7 @@ export class ThinaiModelValidator {
         activePath.add(key);
         for (const importDeclaration of model.imports) {
             const importedUri = resolveImportUri(document, importDeclaration);
-            if (importedUri && this.reachesImportCycle(importedUri, activePath, completed)) {
+            if (importedUri && this.reachesImportCycle(importedUri, activePath, completed, startingDocument)) {
                 return true;
             }
         }

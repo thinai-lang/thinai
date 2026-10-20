@@ -87,7 +87,17 @@ export function getExportedName(node: NamedNode): string {
 }
 
 export function getOwningModule(node: AstNode): Module | undefined {
-    return AstUtils.getContainerOfType(node, isModule);
+    // A module itself belongs to its containing module, not to itself. This matters
+    // for nested module exposure: `module Outer { exposes Inner }` must compare
+    // Inner's owning module with Outer, not compare Inner with itself.
+    let current: AstNode | undefined = isModule(node) ? node.$container : node;
+    while (current) {
+        if (isModule(current)) {
+            return current;
+        }
+        current = current.$container;
+    }
+    return undefined;
 }
 
 export function isIdentifierValueObject(valueObject: ValueObject, visited = new Set<ValueObject>()): boolean {

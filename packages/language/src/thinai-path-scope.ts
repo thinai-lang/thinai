@@ -172,12 +172,12 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
             }
         }
-        return this.getPathSegmentCompletions(
+        return this.callbacks.filterCompletionCandidates(context, this.getPathSegmentCompletions(
             context,
             referenceType,
             references.slice(0, index).map(reference => reference.$refText),
             allowedTargets
-        );
+        )).toArray();
     }
 
     private getDeclaredReferenceType(context: ReferenceInfo): string | undefined {

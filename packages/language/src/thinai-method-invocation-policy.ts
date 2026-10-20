@@ -2,6 +2,7 @@ import type { AstNode } from 'langium';
 import type { Aggregate, ApplicationService, Method, Parameter, QueryService, SharedKernel } from './generated/ast.js';
 import { isApplicationService, isDomainService, isEntity, isFactory, isQueryService } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
+import { getOwningModule, isExposedByModule } from './thinai-scope-utils.js';
 
 export interface MethodInvocationValidationContext {
     isSyntacticallyComplete(node: AstNode): boolean;
@@ -27,7 +28,9 @@ export function getMethodInvocationViolations(
 ): string[] {
     const violations: string[] = [];
     const targetSharedKernel = context.getOwningSharedKernel(target);
+    const targetSharedKernelModule = getOwningModule(target);
     const allowedSharedKernelService = targetSharedKernel !== undefined && isDomainService(target.$container) &&
+        (targetSharedKernelModule === undefined || isExposedByModule(targetSharedKernelModule, target)) &&
         (applicationService !== undefined || isDomainService(method.$container)) &&
         context.hasVisibleSharedKernel(method, targetSharedKernel) &&
         context.hasSharedKernelRelationship(method, targetSharedKernel);

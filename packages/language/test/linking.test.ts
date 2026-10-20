@@ -66,6 +66,30 @@ describe('Linking tests', () => {
         ]))).toBe(true);
     });
 
+    test('does not report an import cycle on a document outside that cycle', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-importer.tni'),
+            'import "./cycle-b.tni"\nbounded context Importer'
+        );
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-b.tni'),
+            'import "./cycle-c.tni"\nbounded context CycleB'
+        );
+        const third = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-c.tni'),
+            'import "./cycle-b.tni"\nbounded context CycleC'
+        );
+        documents = [first, second, third];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const cycleMessages = (document: LangiumDocument) => (document.diagnostics ?? [])
+            .filter(diagnostic => String(diagnostic.message).includes('Import cycle detected.'))
+            .length;
+        expect(cycleMessages(first)).toBe(0);
+        expect(cycleMessages(second)).toBeGreaterThan(0);
+        expect(cycleMessages(third)).toBeGreaterThan(0);
+    });
+
     test('reports a duplicate write repository when the new declaration sorts first', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/z-context.tni'),
@@ -668,6 +692,57 @@ describe('Linking tests', () => {
             position: consumer.textDocument.positionAt(eventPrefixEnd)
         });
         expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
+    });
+
+    test('reports local and imported context-map conflicts on current-document ranges', async () => {
+        const local = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-conflict.tni'),
+            `bounded context Alpha
+bounded context Beta
+context map First {
+    customer Alpha -> supplier Beta
+}
+context map Second {
+    separateWays Alpha -x- Beta
+}
+`
+        );
+        documents = [local];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const localConflict = (local.diagnostics ?? []).find(diagnostic =>
+            String(diagnostic.message).includes("Context maps 'First' and 'Second' define conflicting relationships")
+        );
+        expect(localConflict).toBeDefined();
+        expect(local.textDocument.getText(localConflict!.range)).toContain('separateWays');
+
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-map-one.tni'),
+            'import "./import-range-contexts.tni"\ncontext map First { partner Alpha <-> partner Beta }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-map-two.tni'),
+            'import "./import-range-contexts.tni"\ncontext map Second { separateWays Alpha -x- Beta }'
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-contexts.tni'),
+            'bounded context Alpha\nbounded context Beta\n'
+        );
+        const consumerText = `import "./import-range-contexts.tni"
+import { First } from "./import-range-map-one.tni"
+import { Second } from "./import-range-map-two.tni"
+`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-consumer.tni'), consumerText
+        );
+        documents = [firstMap, secondMap, contexts, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const importedConflict = (consumer.diagnostics ?? []).find(diagnostic =>
+            String(diagnostic.message).includes("Imported context maps 'First' and 'Second'")
+        );
+        expect(importedConflict).toBeDefined();
+        const conflictText = consumer.textDocument.getText(importedConflict!.range);
+        expect(conflictText).toContain('./');
+        expect(conflictText).not.toContain('separateWays');
     });
 
     test('treats different integration patterns across imported maps as a conflict', async () => {

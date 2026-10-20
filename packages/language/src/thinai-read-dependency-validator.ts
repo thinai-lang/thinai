@@ -161,8 +161,19 @@ export class ThinaiReadDependencyValidator {
                 property: 'projects'
             });
         }
+        const seenProjects = new Set<AstNode>();
         for (const project of method.projects) {
-            if (project.target?.ref && getOwningContextName(project.target.ref) !== getOwningContextName(projector)) {
+            const target = project.target?.ref;
+            if (target) {
+                if (seenProjects.has(target)) {
+                    accept('error', `Read model '${target.name}' is referenced more than once in projects.`, {
+                        node: project,
+                        property: 'target'
+                    });
+                }
+                seenProjects.add(target);
+            }
+            if (target && getOwningContextName(target) !== getOwningContextName(projector)) {
                 accept('error', 'A projector and its read models must belong to the same bounded context.', {
                     node: project,
                     property: 'target'

@@ -46,6 +46,8 @@ import {
     isCustomerSupplierRelationship,
     isSeparateWaysRelationship,
     isSharedKernelRelationship,
+    isContextMap,
+    isSharedKernel,
     isMethod,
     isEnumType,
     isTransitionChange,
@@ -69,6 +71,7 @@ import { isJourneyCommand } from './thinai-operation-utils.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiPathScope } from './thinai-path-scope.js';
 import {
+    getExportedName,
     getOwningAggregate,
     getOwningContextName,
     getOwningModule,
@@ -82,7 +85,11 @@ import {
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { ThinaiExternalScope } from './thinai-external-scope.js';
-import { isAllowedJourneySpecificationTarget, isJourneySpecificationText } from './thinai-journey-utils.js';
+import { getJourneySpecificationKind } from './thinai-journey-utils.js';
+import {
+    getJourneyStepCommand,
+    getPriorJourneySteps
+} from './thinai-journey-timeline.js';
 
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
@@ -168,7 +175,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             referenceType,
             this.externalScope.getDocumentSymbols(context, document, referenceType)
         ), result);
-        const moduleSymbols = context.property === 'dependencies'
+        const dependencyReference = isModuleReference(context.container) &&
+            context.container.$containerProperty === 'dependencies';
+        const moduleSymbols = dependencyReference
             ? []
             : this.externalScope.getModuleSymbols(context, referenceType);
         return this.createScope(
@@ -415,19 +424,23 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
 
-        if (isMethod(operation)) {
-            const resultType = operation.returnType?.ref;
-            if (resultType || operation.returnPrimitive || operation.returnCollection) {
-                this.addSpecificationSymbol(pending, operation, 'result', referenceType);
-            }
-            if (resultType && (isDataObject(resultType) || isReadModel(resultType) || isValueObject(resultType))) {
-                this.addShapeFields(pending, resultType, 'result', referenceType, new Set());
-            }
-            if (operation.returnCollection) {
-                this.addCollectionShapeFields(pending, operation.returnCollection, 'result', referenceType, new Set());
-            }
+        if (isMethod(operation) && !journeyStep) {
+            this.addOperationResultSymbols(pending, operation, 'result', referenceType);
         }
         if (journeyStep) {
+            // A journey is a timeline. Current inputs are available, but the
+            // current command's result only becomes visible to later steps.
+            const priorSteps = getPriorJourneySteps(journeyStep);
+            const seenPriorCommands = new Set<Method>();
+            for (const prior of priorSteps.reverse()) {
+                const command = getJourneyStepCommand(prior);
+                if (!command || seenPriorCommands.has(command)) {
+                    continue;
+                }
+                seenPriorCommands.add(command);
+                this.addJourneyCommandContractSymbols(pending, command, referenceType);
+            }
+
             const resultPrefixes = new Set<string>();
             for (const description of this.getUnsegmentedScope(context, 'Method').getAllElements()) {
                 const queryMethod = description.node;
@@ -453,6 +466,44 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
         }
         return pending;
+    }
+
+    private addOperationResultSymbols(
+        descriptions: AstNodeDescription[],
+        operation: Method,
+        prefix: string,
+        referenceType: string
+    ): void {
+        const resultType = operation.returnType?.ref;
+        if (resultType || operation.returnPrimitive || operation.returnCollection) {
+            this.addSpecificationSymbol(descriptions, operation, prefix, referenceType);
+        }
+        if (resultType && (isDataObject(resultType) || isReadModel(resultType) || isValueObject(resultType))) {
+            this.addShapeFields(descriptions, resultType, prefix, referenceType, new Set());
+        }
+        if (operation.returnCollection) {
+            this.addCollectionShapeFields(descriptions, operation.returnCollection, prefix, referenceType, new Set());
+        }
+    }
+
+    private addJourneyCommandContractSymbols(
+        descriptions: AstNodeDescription[],
+        command: Method,
+        referenceType: string
+    ): void {
+        const prefix = getExportedName(command as AstNode & { name: string }) || command.name;
+        for (const parameter of command.parameters) {
+            const parameterPrefix = `${prefix}.${parameter.name}`;
+            this.addSpecificationSymbol(descriptions, parameter, parameterPrefix, referenceType);
+            const parameterType = parameter.type?.ref;
+            if (parameterType && (isDataObject(parameterType) || isReadModel(parameterType) || isValueObject(parameterType))) {
+                this.addShapeFields(descriptions, parameterType, parameterPrefix, referenceType, new Set());
+            }
+            if (parameter.collection) {
+                this.addCollectionShapeFields(descriptions, parameter.collection, parameterPrefix, referenceType, new Set());
+            }
+        }
+        this.addOperationResultSymbols(descriptions, command, `${prefix}.result`, referenceType);
     }
 
     getInvocationCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
@@ -551,8 +602,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isJourneyStep(context.container)) {
-            const targetModule = getOwningModule(target);
-            return !targetModule || isExposedByModule(targetModule, target);
+            // Journeys are model-level timelines, not modules. Their command
+            // targets are constrained by command kind and import scope, not by
+            // module exposure.
+            return true;
         }
 
         const exposure = context.container.$type === 'Exposure'
@@ -843,15 +896,29 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return false;
     }
 
+    /**
+     * Structural containers are legitimate intermediate segments of a qualified
+     * specification path. Whether the final target is visible is checked on the
+     * terminal segment by validation.
+     */
+    private isSpecificationPathContainer(target: AstNode): boolean {
+        return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target);
+    }
+
     private isSupportedSpecificationCandidate(context: ReferenceInfo, target: AstNode): boolean {
+        if (this.isSpecificationPathContainer(target)) {
+            return true;
+        }
         if (isField(target) && !(
             isEntity(target.$container) || isValueObject(target.$container) || isDomainEvent(target.$container) ||
             isIntegrationEvent(target.$container) || isReadModel(target.$container) || isDataObject(target.$container)
         )) {
             return false;
         }
-        if (isJourneySpecificationText(context.container)) {
-            return isAllowedJourneySpecificationTarget(target);
+        const journeyStep = AstUtils.getContainerOfType(context.container, isJourneyStep);
+        if (journeyStep) {
+            const kind = getJourneySpecificationKind(context.container) ?? 'when';
+            return this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind);
         }
 
         const sourceContext = getOwningContextName(context.container);
@@ -861,8 +928,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         if (isInSharedKernel(target)) {
             const sharedKernel = getOwningSharedKernel(target);
-            return sharedKernel !== undefined &&
-                this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel);
+            if (sharedKernel === undefined ||
+                !this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel)) {
+                return false;
+            }
+            const targetModule = getOwningModule(target);
+            return targetModule === undefined || isExposedByModule(targetModule, target);
         }
 
         if (isField(target)) {

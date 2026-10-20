@@ -449,6 +449,22 @@ bounded context Ordering`);
         expect(parts[0].target).toBeUndefined();
     });
 
+    test('rejects variable-style labels on journey steps', async () => {
+        const document = await parse(`bounded context Alpha
+in bounded context Alpha {
+    application service App {
+        method run()
+    }
+}
+actor Customer
+journey Run {
+    by Customer {
+        invoke Alpha.App.run as step
+    }
+}`);
+        expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
+    });
+
     test('rejects dollar-prefixed reference syntax', async () => {
         const document = await parse('bounded context Sample in bounded context Sample { aggregate Order { invariant $"Old ${Order.method}" } }');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);

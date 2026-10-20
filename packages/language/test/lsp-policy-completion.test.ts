@@ -919,7 +919,7 @@ describe('LSP policy completion', () => {
         expect(labels).not.toContain('findOrder');
     });
 
-    test('journey references require exposed module commands', async () => {
+    test('journey references do not require module exposure for commands', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             module Internal {
                 application service PrivateCommands {
@@ -948,14 +948,14 @@ describe('LSP policy completion', () => {
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'A journey may reference a module declaration only when its module exposes it.'
-        ))).toBe(true);
+        ))).toBe(false);
 
         const privateOffset = text.indexOf('Ordering.Internal.PrivateCommands.ru') + 'Ordering.Internal.PrivateCommands.ru'.length;
         const privateCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
             textDocument: { uri: document.uri.toString() },
             position: document.textDocument.positionAt(privateOffset)
         });
-        expect(privateCompletion?.items.map(item => item.label)).not.toContain('run');
+        expect(privateCompletion?.items.map(item => item.label)).toContain('run');
 
         const publicOffset = text.indexOf('Ordering.Public.PublicCommands.pla') + 'Ordering.Public.PublicCommands.pla'.length;
         const publicCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
@@ -963,6 +963,33 @@ describe('LSP policy completion', () => {
             position: document.textDocument.positionAt(publicOffset)
         });
         expect(publicCompletion?.items.map(item => item.label)).toContain('placeOrder');
+    });
+
+    test('does not suggest private module invocation segments', async () => {
+        const text = `bounded context Ordering
+in bounded context Ordering {
+    module Private {
+        domain service Hidden {
+            method secret()
+        }
+    }
+    application service Caller {
+        method run() {
+            invokes Private.Hidden.
+        }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/private-invocation-completion.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const offset = text.indexOf('invokes Private.Hidden.') + 'invokes Private.Hidden.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.map(item => item.label)).not.toContain('secret');
     });
 
     test('offers an import code action for an unresolved indexed declaration', async () => {

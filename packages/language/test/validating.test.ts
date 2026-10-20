@@ -49,6 +49,13 @@ context map Fulfillment {
         }
     });
 
+    test('rejects a complete empty import path', async () => {
+        const document = await parse(`import ""\nbounded context Alpha\n`);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'An import path must not be empty.'
+        )).toBe(true);
+    });
+
     test('does not throw while import paths or import clauses are incomplete', async () => {
         for (const [index, source] of ['import ', 'import { Foo } from '].entries()) {
             const document = await parse(source);
@@ -2148,6 +2155,48 @@ in bounded context Ordering {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes('Map type requires both a key and a value type'))).toBe(true);
     });
 
+    test('rejects duplicate dependency, exposure, projection, and realization entries', async () => {
+        const modules = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                module Dependency {
+                    value object External { raw: string }
+                }
+                module Main depends on Dependency, Dependency {
+                    exposes Value, Value
+                    value object Value { raw: string }
+                }
+            }
+        `);
+        const moduleMessages = semanticDiagnostics(modules).map(diagnostic => diagnostic.message);
+        expect(moduleMessages).toContain("Module dependency 'Dependency' is listed more than once.");
+        expect(moduleMessages).toContain("Declaration 'Value' is exposed more than once.");
+
+        const projections = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                read model Summary { state: string }
+                event Changed
+                projector Projection {
+                    method onChange(source: Changed) {
+                        projects Summary, Summary
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(projections).map(diagnostic => diagnostic.message)).toContain(
+            "Read model 'Summary' is referenced more than once in projects."
+        );
+
+        const realizations = await parse(`
+            subdomain Shared kind core
+            bounded context Alpha realizes Shared, Shared
+        `);
+        expect(semanticDiagnostics(realizations).map(diagnostic => diagnostic.message)).toContain(
+            "Subdomain 'Shared' is realized more than once."
+        );
+    });
+
     test('requires context-level references to module declarations to use exposed members', async () => {
         const document = await parse(`
             bounded context Example in bounded context Example {
@@ -2367,6 +2416,112 @@ in bounded context Ordering {
         expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
+    test('allows a module to expose direct nested modules but not itself', async () => {
+        const valid = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                module Outer {
+                    exposes Inner
+                    module Inner {
+                        value object Value { raw: string }
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(valid).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+
+        const invalid = await parse(`
+            bounded context Beta
+            in bounded context Beta {
+                module M {
+                    exposes M
+                }
+            }
+        `);
+        expect(semanticDiagnostics(invalid).some(diagnostic =>
+            diagnostic.message === 'A module may expose only declarations that it owns.'
+        )).toBe(true);
+    });
+
+    test('requires shared-kernel modules to expose specification and invocation targets', async () => {
+        const document = await parse(`
+            shared kernel Common {
+                module Private {
+                    value object Code { raw: string }
+                    domain service PricingPolicy {
+                        method normalize(amount: number) returns number
+                    }
+                }
+            }
+            bounded context Ordering
+            bounded context Shipping
+            context map SharedTypes {
+                sharedKernel Common { participants: [Ordering, Shipping] }
+            }
+            in bounded context Ordering {
+                application service App {
+                    method run() {
+                        behavior "Use [[Common.Private.Code]]."
+                        invokes Common.Private.PricingPolicy.normalize
+                    }
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Using a module declaration from a shared kernel requires the module to expose that declaration.');
+        expect(messages).toContain('A method may invoke across bounded-context boundaries only through an authorized shared-kernel domain service.');
+    });
+
+    test('warns when a journey invokes the same command more than once', async () => {
+        const document = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                application service App {
+                    method run()
+                }
+            }
+            actor Customer
+            journey Run {
+                by Customer {
+                    invoke Alpha.App.run
+                    invoke Alpha.App.run
+                }
+            }
+        `);
+        const warnings = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning)
+            .map(diagnostic => diagnostic.message);
+        expect(warnings).toContain("Command 'run' is invoked more than once in this journey; references resolve to the nearest prior invocation.");
+    });
+
+    test('warns when an exposed command publishes private contract types', async () => {
+        const document = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                module Api {
+                    exposes run
+                    application service Commands {
+                        method run(id: OrderId)
+                    }
+                }
+            }
+        `);
+        const warnings = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning)
+            .map(diagnostic => diagnostic.message);
+        expect(warnings.some(message => String(message).includes("Exposed command 'run' publishes private contract type"))).toBe(true);
+    });
+
     test('requires shared-kernel modules to expose declarations used by other contexts', async () => {
         const document = await parse(`
             shared kernel Common {
@@ -2464,8 +2619,156 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).filter(diagnostic =>
-            diagnostic.message === 'Journey specifications may reference visible read/query values, public contracts, and user-facing operations, but not private domain internals.'
+            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.'
         )).toHaveLength(2);
+    });
+
+    test('allows journey contract closure across command timeline steps', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    enum OrderStatus {
+                        Draft,
+                        Placed
+                    }
+                }
+                data object PlaceOrderInput {
+                    orderId: OrderId
+                }
+                data object PlaceOrderResult {
+                    orderId: OrderId
+                    status: OrderStatus
+                }
+                data object PayResult {
+                    paid: boolean
+                }
+                application service OrderApplication {
+                    method placeOrder(input: PlaceOrderInput) returns PlaceOrderResult
+                    method pay(orderId: OrderId) returns PayResult
+                }
+            }
+            actor Customer
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderApplication.placeOrder
+                        with "Current input [[Ordering.PlaceOrderInput.orderId]] and [[Ordering.Order.OrderId.raw]]"
+                    invoke Ordering.OrderApplication.pay
+                        with "Previous result [[Ordering.OrderApplication.placeOrder.result.orderId]]"
+                        when "Previous input [[Ordering.OrderApplication.placeOrder.input.orderId]] and previous status [[Ordering.OrderApplication.placeOrder.result.status]] and [[Ordering.Order.OrderStatus.Placed]]"
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+    });
+
+    test('allows module-nested command contract types in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                module Api {
+                    data object RunInput {
+                        orderId: OrderId
+                    }
+                    data object RunResult {
+                        accepted: boolean
+                    }
+                    application service App {
+                        method run(input: RunInput) returns RunResult
+                    }
+                }
+            }
+            actor Customer
+            journey Run {
+                by Customer {
+                    invoke Ordering.Api.App.run
+                        with "Input [[Ordering.Api.RunInput.orderId]] and identity [[Ordering.Order.OrderId.raw]]"
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+    });
+
+    test('rejects future command contract references in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object FirstResult {
+                    first: string
+                }
+                data object SecondResult {
+                    second: string
+                }
+                data object SecondInput {
+                    input: string
+                }
+                application service App {
+                    method first() returns FirstResult
+                    method second(input: SecondInput) returns SecondResult
+                }
+            }
+            actor Customer
+            journey Ordered {
+                by Customer {
+                    invoke Ordering.App.first
+                        when "A future result [[Ordering.SecondResult.second]] and future input [[Ordering.SecondInput.input]]"
+                    invoke Ordering.App.second
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.'
+        )).toBe(true);
+    });
+
+    test('rejects current and unrelated aggregate contract references in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        secret: string
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                data object PlaceOrderResult {
+                    status: string
+                }
+                application service OrderApplication {
+                    method placeOrder() returns PlaceOrderResult
+                }
+            }
+            actor Customer
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderApplication.placeOrder
+                        when "The current result [[Ordering.PlaceOrderResult.status]] and private aggregate state [[Ordering.Order.Order.secret]]"
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.');
     });
 
     test('rejects private services and modules in cross-context specification text', async () => {

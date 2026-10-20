@@ -83,12 +83,14 @@ import {
     moduleDependsTransitivelyOn
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
-import { isAllowedJourneySpecificationTarget, isJourneySpecificationText } from './thinai-journey-utils.js';
+import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 import {
     canDeclareProjects,
     canDeclareTransition,
-    getEventEmissionMode
+    getEventEmissionMode,
+    isJourneyCommand
 } from './thinai-operation-utils.js';
+import { getCommandContractTypes } from './thinai-journey-timeline.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiModelValidator } from './thinai-model-validator.js';
@@ -157,6 +159,20 @@ export class ThinaiValidator {
 
     checkBoundedContext(context: BoundedContext, accept: ValidationAcceptor): void {
         this.modelValidator.checkBoundedContext(context, accept);
+        const seen = new Set<AstNode>();
+        for (const reference of context.subdomains) {
+            const target = reference.target.ref;
+            if (!target) {
+                continue;
+            }
+            if (seen.has(target)) {
+                accept('error', `Subdomain '${target.name}' is realized more than once.`, {
+                    node: reference,
+                    property: 'target'
+                });
+            }
+            seen.add(target);
+        }
     }
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {
@@ -612,6 +628,9 @@ export class ThinaiValidator {
             getOwningAggregate,
             isAggregateRootMethod: (target, aggregate) => this.isAggregateRootMethod(target, aggregate)
         });
+        if (applicationService && eventParameters.length === 0) {
+            this.checkExposedCommandContract(method, accept);
+        }
         if (queryService) {
             this.readDependencyValidator.checkQueryServiceMethod(method, queryService, accept);
         }
@@ -678,6 +697,43 @@ export class ThinaiValidator {
                 }
             }
         }
+    }
+
+    private checkExposedCommandContract(method: Method, accept: ValidationAcceptor): void {
+        const module = getOwningModule(method);
+        if (!module || !isExposedByModule(module, method)) {
+            return;
+        }
+        const contracts = getCommandContractTypes(method);
+        const contractTypes = new Set<AstNode>();
+        for (const node of [...contracts.inputs, ...contracts.outputs]) {
+            if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
+                contractTypes.add(node);
+                continue;
+            }
+            if (isField(node)) {
+                const owner = node.$container;
+                if (isValueObject(owner) || isDataObject(owner) || isEnumType(owner)) {
+                    contractTypes.add(owner);
+                }
+            }
+        }
+        const privateTypes = [...contractTypes].filter(type => {
+            if (getOwningAggregate(type) !== undefined) {
+                return true;
+            }
+            const typeModule = getOwningModule(type);
+            return typeModule !== undefined && !isExposedByModule(typeModule, type);
+        });
+        const names = [...new Set(privateTypes.map(type => (type as AstNode & { name: string }).name))];
+        if (names.length === 0) {
+            return;
+        }
+        accept('warning', `Exposed command '${method.name}' publishes private contract type${names.length === 1 ? '' : 's'}: ${names.join(', ')}. Use public or shared contract types if this is not intended.`, {
+            node: method,
+            property: 'name',
+            code: 'exposed-command-private-contract'
+        });
     }
 
     checkApplicationService(service: ApplicationService, accept: ValidationAcceptor): void {
@@ -769,6 +825,7 @@ export class ThinaiValidator {
             });
         }
         const seenActors = new Set<Actor>();
+        const seenCommands = new Set<Method>();
         for (const actorBlock of journey.actors) {
             const actor = actorBlock.actor?.ref;
             if (actor) {
@@ -787,6 +844,18 @@ export class ThinaiValidator {
                 });
             }
             for (const step of actorBlock.steps) {
+                const target = step.targets.at(-1)?.ref;
+                if (isMethod(target) && isJourneyCommand(target)) {
+                    if (seenCommands.has(target)) {
+                        accept('warning', `Command '${target.name}' is invoked more than once in this journey; references resolve to the nearest prior invocation.`, {
+                            node: step,
+                            property: 'targets',
+                            code: 'duplicate-journey-command'
+                        });
+                    } else {
+                        seenCommands.add(target);
+                    }
+                }
                 if (isSyntacticallyComplete(step)) {
                     this.checkJourneyStep(step, accept);
                 }
@@ -952,7 +1021,18 @@ export class ThinaiValidator {
 
     checkModule(module: Module, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(module, accept);
+        const seenDependencies = new Set<AstNode>();
         for (const dependency of module.dependencies) {
+            const target = dependency.target.ref;
+            if (target) {
+                if (seenDependencies.has(target)) {
+                    accept('error', `Module dependency '${target.name}' is listed more than once.`, {
+                        node: dependency,
+                        property: 'target'
+                    });
+                }
+                seenDependencies.add(target);
+            }
             if (dependency.target.ref === module) {
                 accept('error', 'A module cannot depend on itself.', {
                     node: module,
@@ -974,9 +1054,20 @@ export class ThinaiValidator {
                 break;
             }
         }
+        const seenExposures = new Set<AstNode>();
         for (const exposure of module.exposures) {
             for (const declaration of exposure.declarations) {
-                if (declaration.target.ref && getOwningModule(declaration.target.ref) !== module) {
+                const target = declaration.target.ref;
+                if (target) {
+                    if (seenExposures.has(target)) {
+                        accept('error', `Declaration '${target.name}' is exposed more than once.`, {
+                            node: declaration,
+                            property: 'target'
+                        });
+                    }
+                    seenExposures.add(target);
+                }
+                if (target && getOwningModule(target) !== module) {
                     accept('error', 'A module may expose only declarations that it owns.', {
                         node: exposure,
                         property: 'declarations'
@@ -1009,13 +1100,17 @@ export class ThinaiValidator {
                 return;
             }
             const isTerminalSpecificationSegment = isSpecificationTextPart(referenceInfo.container) && (
-                referenceInfo.property === 'target' ||
-                referenceInfo.property === 'targets' &&
-                    referenceInfo.index === referenceInfo.container.targets.length - 1
+                referenceInfo.property === 'target'
+                    ? referenceInfo.container.targets.length === 0
+                    : referenceInfo.property === 'targets' &&
+                        referenceInfo.index === referenceInfo.container.targets.length - 1
             );
-            if (isSpecificationTextPart(referenceInfo.container) && isJourneySpecificationText(referenceInfo.container)) {
-                if (isTerminalSpecificationSegment && !isAllowedJourneySpecificationTarget(target)) {
-                    accept('error', 'Journey specifications may reference visible read/query values, public contracts, and user-facing operations, but not private domain internals.', {
+            const journeyStep = AstUtils.getContainerOfType(referenceInfo.container, isJourneyStep);
+            if (isSpecificationTextPart(referenceInfo.container) && journeyStep) {
+                const kind = getJourneySpecificationKind(referenceInfo.container) ?? 'when';
+                if (isTerminalSpecificationSegment &&
+                    !this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind)) {
+                    accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.', {
                         node: referenceInfo.container as AstNode,
                         property: referenceInfo.property
                     });
@@ -1036,14 +1131,14 @@ export class ThinaiValidator {
                     });
                     return;
                 }
-            }
-            if (isJourneyStep(referenceInfo.container) && targetModule && !isModule(target) &&
-                !isExposedByModule(targetModule, target)) {
-                accept('error', 'A journey may reference a module declaration only when its module exposes it.', {
-                    node: referenceInfo.container,
-                    property: 'targets'
-                });
-                return;
+                if (sharedKernel && sourceSharedKernel !== sharedKernel && targetModule &&
+                    !isExposedByModule(targetModule, target)) {
+                    accept('error', 'Using a module declaration from a shared kernel requires the module to expose that declaration.', {
+                        node: referenceInfo.container as AstNode,
+                        property: referenceInfo.property
+                    });
+                    return;
+                }
             }
             if (isField(target) && crossesContext && !isInSharedKernel(target)) {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;

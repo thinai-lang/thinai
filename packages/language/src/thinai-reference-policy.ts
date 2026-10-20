@@ -7,15 +7,34 @@ import {
     UriUtils
 } from 'langium';
 import {
+    isAggregate,
+    isApplicationService,
+    isBoundedContext,
     isContextMap,
     isDataObject,
+    isDomainEvent,
+    isDomainService,
+    isEntity,
+    isEnumType,
+    isEnumValue,
+    isFactory,
+    isField,
+    isIntegrationEvent,
+    isMethod,
     isModel,
+    isModule,
+    isProjector,
+    isQueryRepository,
     isQueryService,
+    isReadModel,
+    isRepository,
+    isSharedKernel,
     isSharedKernelRelationship,
     isValueObject,
     type ContextMap,
     type ContextRelationship,
     type IntegrationEvent,
+    type JourneyStep,
     type Method,
     type Model,
     type QueryService,
@@ -24,7 +43,15 @@ import {
 } from './generated/ast.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics } from './thinai-context-map-utils.js';
-import { getOwningContextName, getOwningModule, isExposedByModule, resolveImportUri } from './thinai-scope-utils.js';
+import {
+    getJourneyContractTargetSteps,
+    isJourneyContractTargetVisible,
+    getJourneyStepCommand,
+    getJourneyStepIndex,
+    getJourneyStepsFor,
+    type JourneySpecificationKind
+} from './thinai-journey-timeline.js';
+import { getOwningAggregate, getOwningContextName, getOwningModule, isExposedByModule, resolveImportUri } from './thinai-scope-utils.js';
 import { getTypeReferences } from './thinai-type-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
@@ -34,6 +61,70 @@ export class ThinaiReferencePolicy {
     isIntegrationEventExposed(event: IntegrationEvent): boolean {
         const module = getOwningModule(event);
         return module === undefined || isExposedByModule(module, event);
+    }
+
+    /**
+     * Journey visibility is intentionally not module visibility. A journey is a
+     * model-level command timeline, not another module or bounded context.
+     * Command contract types are visible even when they live in nested modules;
+     * unrelated aggregate internals and private DomainEvents remain hidden.
+     */
+    isJourneyVisibleTarget(
+        referenceStep: JourneyStep,
+        target: AstNode,
+        kind: JourneySpecificationKind
+    ): boolean {
+        if (isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target)) {
+            return true;
+        }
+        if (isApplicationService(target) || isQueryService(target) || isQueryRepository(target)) {
+            return true;
+        }
+        if (isMethod(target)) {
+            if (!isApplicationService(target.$container) && !isQueryService(target.$container)) {
+                return false;
+            }
+            const commandSteps = getJourneyStepsFor(referenceStep)
+                .filter(step => getJourneyStepCommand(step) === target);
+            if (commandSteps.length === 0) {
+                return true;
+            }
+            const referenceIndex = getJourneyStepIndex(referenceStep);
+            return commandSteps.some(step => getJourneyStepIndex(step) <= referenceIndex);
+        }
+
+        const contractSteps = getJourneyContractTargetSteps(referenceStep, target);
+        if (contractSteps.length > 0) {
+            return isJourneyContractTargetVisible(referenceStep, target, kind);
+        }
+
+        if (isField(target)) {
+            const owner = target.$container;
+            if (isEntity(owner) || isDomainEvent(owner)) {
+                return false;
+            }
+            if (isIntegrationEvent(owner)) {
+                return this.isIntegrationEventExposed(owner);
+            }
+            if (isValueObject(owner) || isDataObject(owner) || isReadModel(owner)) {
+                return getOwningAggregate(owner) === undefined;
+            }
+            return false;
+        }
+        if (isEnumValue(target)) {
+            return getOwningAggregate(target.$container) === undefined;
+        }
+        if (isValueObject(target) || isDataObject(target) || isReadModel(target) || isEnumType(target)) {
+            return getOwningAggregate(target) === undefined;
+        }
+        if (isIntegrationEvent(target)) {
+            return this.isIntegrationEventExposed(target);
+        }
+        if (isDomainEvent(target) || isEntity(target) || isAggregate(target) || isRepository(target) ||
+            isDomainService(target) || isProjector(target) || isFactory(target)) {
+            return false;
+        }
+        return false;
     }
 
     isQueryServiceExposed(service: QueryService): boolean {
