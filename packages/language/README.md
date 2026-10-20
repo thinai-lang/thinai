@@ -37,6 +37,11 @@ in bounded context Ordering {
       raw: string
     }
 
+    value object OrderLine {
+      sku: string
+      quantity: number
+    }
+
     enum OrderStatus {
       Draft,
       Placed
@@ -96,9 +101,9 @@ journey PlaceOrder {
 
 An entity method may transition its own enum state; the aggregate root
 coordinates child-entity changes and protects invariants. Only aggregate-root
-behavior emits domain events. Aggregate behavior is declared on the root entity;
-domain services, repositories, and factories are bounded-context or module peers
-of aggregates. Application services orchestrate use cases and may coordinate
+behavior emits domain events. Aggregate-root behavior is declared on the root
+entity; domain services, repositories, and factories are bounded-context or
+module peers of aggregates. Application services orchestrate use cases and may coordinate
 multiple aggregates; methods with an event-typed parameter are event-triggered.
 Bounded-context-scoped query services model read-only operations. Application
 service methods may link to aggregate-root or factory methods with `invokes`.
@@ -130,9 +135,9 @@ query services read query repositories; projectors use events and write their
 declared `projects` targets. CQRS projectors do not read query repositories.
 Aggregate-repository and external query-API reads are explicit projector
 exceptions, since current-state lookups can make replay results differ. Domain
-services may read domain repositories when a business rule requires it; external
-query dependencies should be behind a domain-facing port/anti-corruption layer.
-An external query API must be published and authorized by a context map.
+services may read domain repositories when a business rule requires it. An
+external query API must be published and authorized by a context map; prefer a
+domain-facing port or anti-corruption layer when domain behavior needs one.
 Method-level `behavior` describes how returned data is used—there are no result
 aliases or per-read behavior clauses. A read model remains a query-result shape,
 not necessarily a materialized projection or separate database.
@@ -194,7 +199,9 @@ import { Ordering as Orders, Shipping } from "./contexts.tni"
 
 Shared value objects belong in an explicit `shared kernel`. Context maps record
 which bounded contexts share that kernel. Modules are optional internal
-organization within a bounded context or shared kernel.
+organization within a bounded context or shared kernel. `exposes` names
+declarations such as value objects, enums, events, services, modules, and
+methods; fields and enum values inherit visibility from their declaration.
 
 ## Behavior and Journeys
 
@@ -225,7 +232,11 @@ scope, then reference it in a `by Actor { ... }` block. A journey does not
 represent background event handoffs, a synchronous remote call, or a shared
 transaction; event-triggered reactions remain in their contexts. Steps may
 include optional descriptive `with "..."` input text and `when "..."` guard
-text with linked references; commands enforce their own invariants.
+text with linked references; commands enforce their own invariants. Journey
+prose is explicitly cross-context: it may link read models, query results,
+data objects, value objects, enums, integration events, and user-facing
+operations from imported contexts, while private aggregate and DomainEvent
+internals remain off-limits.
 
 Thinai supports modules, aggregates, root and child entities, identifiers and
 mirrored value objects, data objects, read models, projectors, query services and repositories,

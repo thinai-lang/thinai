@@ -3480,5 +3480,259 @@ bounded context Billing realizes Payments`;
         }
     });
 
+    test('does not log errors while completing an import alias', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-completion-target.tni'), 'bounded context Target'
+        );
+        const source = 'import { Target as  } from "./alias-completion-target.tni"';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-completion-source.tni'), source
+        );
+        documents.push(target, document);
+        await services.shared.workspace.DocumentBuilder.build([target, document], { validation: false });
 
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(source.indexOf('as ') + 'as '.length)
+            });
+            expect(completion?.items).toEqual([]);
+            expect(errorSpy).not.toHaveBeenCalled();
+        } finally {
+            errorSpy.mockRestore();
+        }
+    });
+
+    test('does not leak sibling or guard keywords after a trailing comma', async () => {
+        const source = `bounded context C
+in bounded context C {
+  aggregate A {
+    root entity E {
+      method m() {
+        emits E1,
+      }
+      identifier id: Id
+    }
+    value object Id { raw: string }
+    event E1
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/trailing-comma-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('emits E1,') + 'emits E1,'.length)
+        });
+        expect(completion?.items.filter(item => item.kind === CompletionItemKind.Keyword)).toEqual([]);
+    });
+
+    test('completes partner integration patterns and reads-from guards', async () => {
+        const partnerSource = `bounded context Alpha
+in bounded context Alpha { aggregate X { root entity X { identifier id: XId } value object XId { raw: string } } }
+bounded context Beta
+context map M {
+  partner Alpha {  } <-> partner Beta
+}`;
+        const partner = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/partner-integration-patterns.tni'), partnerSource
+        );
+        documents.push(partner);
+        await services.shared.workspace.DocumentBuilder.build([partner], { validation: false });
+        const partnerCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(partner, {
+            textDocument: { uri: partner.uri.toString() },
+            position: partner.textDocument.positionAt(partnerSource.indexOf('partner Alpha { ') + 'partner Alpha { '.length)
+        });
+        expect(partnerCompletion?.items.map(item => item.label)).toContain('integrationPatterns');
+
+        const readsSource = `bounded context C
+in bounded context C {
+  repository R { manages A.E }
+  aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+  application service S {
+    method m() {
+      reads from R
+    }
+  }
+}`;
+        const reads = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-from-when.tni'), readsSource
+        );
+        documents.push(reads);
+        await services.shared.workspace.DocumentBuilder.build([reads], { validation: false });
+        const readsCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(reads, {
+            textDocument: { uri: reads.uri.toString() },
+            position: reads.textDocument.positionAt(readsSource.indexOf('reads from R') + 'reads from R'.length)
+        });
+        expect(readsCompletion?.items.map(item => item.label)).toContain('when');
+    });
+
+    test('does not offer sibling statements while a named type is incomplete', async () => {
+        const source = `bounded context C
+in bounded context C {
+  aggregate A {
+    root entity E {
+      method run() returns Ord
+      identifier id: Id
+    }
+    value object Id { raw: string }
+    value object OrderId { raw: string }
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/incomplete-named-type.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('returns Ord') + 'returns Ord'.length)
+        });
+        const keywordLabels = completion?.items
+            .filter(item => item.kind === CompletionItemKind.Keyword)
+            .map(item => item.label);
+        expect(keywordLabels).not.toContain('method');
+        expect(keywordLabels).not.toContain('constructor');
+    });
+
+    test('offers initial once for the field being edited', async () => {
+        const source = `bounded context C
+in bounded context C {
+  aggregate A {
+    root entity E {
+      method m()
+      identifier id: Id
+      other: Status
+      status: Status ini
+    }
+    value object Id { raw: string }
+    enum Status { Open, Closed }
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/initial-completion-once.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const initialCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('status: Status ini') + 'status: Status ini'.length)
+        });
+        expect(initialCompletion?.items.filter(item => item.label === 'initial')).toHaveLength(1);
+    });
+
+    test('completes a transition after a field name containing "transition"', async () => {
+        const source = `bounded context C
+in bounded context C {
+  aggregate A {
+    root entity E {
+      method m() {
+        transition a from Open to Closed, stateTransition f
+      }
+      identifier id: Id
+      a: Status
+      stateTransition: Status
+    }
+    value object Id { raw: string }
+    enum Status { Open, Closed }
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/transition-name-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const transitionCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('stateTransition f') + 'stateTransition f'.length)
+        });
+        expect(transitionCompletion?.items.map(item => item.label)).toContain('from');
+    });
+
+    test('keeps completion inside a shared-kernel module at end of input', async () => {
+        const source = 'shared kernel K {\n  module M {\n    ';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-kernel-eof-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('value object');
+        expect(labels).toContain('domain service');
+        expect(labels).not.toContain('bounded context');
+    });
+
+    test('does not complete private aggregate internals in journey prose', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+  aggregate Order {
+    root entity Order {
+      method place()
+      identifier id: OrderId
+      secret: string
+    }
+    value object OrderId { raw: string }
+  }
+  application service Commands { method run() }
+}
+actor Customer
+journey PlaceOrder {
+  by Customer {
+    invoke Ordering.Commands.run
+      when "Private [[Ordering.Order.Order.se"
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-private-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const marker = '[[Ordering.Order.Order.se';
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf(marker) + marker.length)
+        });
+        expect(completion?.items.map(item => item.label)).not.toContain('secret');
+    });
+
+    test('does not offer unrelated header continuations inside a method body', async () => {
+        const source = `bounded context Alpha
+in bounded context Alpha {
+  aggregate A {
+    root entity E {
+      method m() {
+        r
+      }
+      identifier id: Id
+    }
+    value object Id { raw: string }
+  }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unrelated-header-continuation.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('        r') + '        r'.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).not.toContain('realizes');
+        expect(labels).toContain('reads from');
+    });
 });

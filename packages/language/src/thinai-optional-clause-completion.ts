@@ -8,6 +8,7 @@ import {
     isJourneyStep,
     isMethod,
     isMethodInvocation,
+    isReadDependency,
     isTransition
 } from './generated/ast.js';
 import { canDeclareTransition, getEventEmissionMode, isJourneyCommand } from './thinai-operation-utils.js';
@@ -63,12 +64,18 @@ export class ThinaiOptionalClauseCompletion {
                         ? emissionMode === 'domain' ? isDomainEvent(target) : isIntegrationEvent(target)
                         : hasCompletedReference(event.target);
                 });
-                if (hasAllowedEvents && !node.guard && !whenAlreadyTyped) {
+                if (hasAllowedEvents && !node.guard && !whenAlreadyTyped && !nodeSource.trimEnd().endsWith(',')) {
                     keywords = ['when'];
                 }
             } else if (isMethodInvocation(node)) {
                 const target = node.targets.at(-1)?.ref;
                 if (isMethod(target) && scopeProvider.canInvokeMethod(node, target) && !node.guard && !whenAlreadyTyped) {
+                    keywords = ['when'];
+                }
+            } else if (isReadDependency(node)) {
+                if (!node.guard && !whenAlreadyTyped && !nodeSource.trimEnd().endsWith(',') &&
+                    node.sources.length > 0 &&
+                    node.sources.every(source => hasCompletedReference(source.target))) {
                     keywords = ['when'];
                 }
             }

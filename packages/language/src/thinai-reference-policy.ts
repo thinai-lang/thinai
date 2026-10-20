@@ -98,12 +98,16 @@ export class ThinaiReferencePolicy {
         const consumer = getOwningContextName(source);
         const provider = getOwningContextName(target);
         const document = AstUtils.getDocument(source);
+        const targetDocument = AstUtils.getDocument(target);
         const model = document.parseResult.value;
+        const sameDocument = UriUtils.equals(document.uri, targetDocument.uri);
         if (!consumer || !provider || !isModel(model) ||
-            !this.importsDocument(model, document, AstUtils.getDocument(target).uri)) {
+            (!sameDocument && !this.importsDocument(model, document, targetDocument.uri))) {
             return false;
         }
-        const contextMaps = this.getImportedContextMaps(model);
+        // Local context maps authorize relationships declared in the same
+        // document. Imported maps remain required for external declarations.
+        const contextMaps = sameDocument ? this.getVisibleContextMaps(model) : this.getImportedContextMaps(model);
         if (!this.haveCompatibleRelationshipDefinitions(contextMaps, consumer, provider, purpose)) {
             return false;
         }

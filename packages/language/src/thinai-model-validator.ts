@@ -47,12 +47,13 @@ export class ThinaiModelValidator {
     }
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {
-        if (!part.context.ref) {
+        const targetContext = part.context?.ref;
+        if (!targetContext) {
             return;
         }
 
         const currentDocument = AstUtils.getDocument(part);
-        const targetDocument = AstUtils.getDocument(part.context.ref);
+        const targetDocument = AstUtils.getDocument(targetContext);
         if (UriUtils.equals(currentDocument.uri, targetDocument.uri)) {
             return;
         }
@@ -297,7 +298,7 @@ export class ThinaiModelValidator {
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(sharedKernel, accept);
         const disallowed = new Set([
-            'Aggregate', 'ApplicationService', 'DomainEvent',
+            'Aggregate', 'ApplicationService', 'DomainEvent', 'Entity',
             'DataObject', 'Factory', 'Journey', 'Actor', 'IntegrationEvent', 'Projector', 'QueryRepository', 'QueryService', 'ReadModel', 'Repository', 'Subdomain'
         ]);
         for (const node of AstUtils.streamAst(sharedKernel)) {

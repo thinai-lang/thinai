@@ -651,4 +651,78 @@ bounded context Second`;
 
         expect(edits).toEqual([]);
     });
+
+    test('formats projector-only projects clauses as valid multiline blocks', async () => {
+        const source = `bounded context C
+in bounded context C {
+    read model S { status: string }
+    event E
+    projector P {
+        method pr(source: E) { projects S }
+    }
+}`;
+        const formatted = await formatSource('/workspace/format-projector-projects.tni', source);
+
+        expect(formatted).toContain('method pr(source: E) {\n      projects S\n    }');
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/format-projector-projects-valid.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        await services.shared.workspace.DocumentBuilder.build([formattedDocument], { validation: true });
+        expect((formattedDocument.diagnostics ?? []).filter(diagnostic =>
+            diagnostic.code === 'line-break-required-after-open-brace'
+        )).toEqual([]);
+    });
+
+    test('indents multiline specifications after reads-from guards', async () => {
+        const source = `bounded context C
+in bounded context C {
+    repository R { manages A.E }
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+    }
+    application service S {
+        method run() {
+            reads from R
+                when "
+Text
+"
+        }
+    }
+}`;
+        const formatted = await formatSource('/workspace/format-reads-spec.tni', source);
+
+        expect(formatted).toContain('        when "\n          Text\n        "');
+    });
+
+    test('normalizes query-repository lists, entity spacing, and top-level imports', async () => {
+        const source = `import "a.tni" import "b.tni"
+bounded context C in bounded context C { aggregate A { entity     X { identifier    id:   Id } value object Id { raw: string } } aggregate B { root entity Y { identifier id: YId } value object YId { raw: string } } read model S { status: string } query repository Q { serves S reads from A,B } }`;
+        const formatted = await formatSource('/workspace/format-comma-spacing.tni', source);
+
+        expect(formatted).toContain('import "a.tni"\nimport "b.tni"');
+        expect(formatted).toContain('entity X {');
+        expect(formatted).toContain('identifier id: Id');
+        expect(formatted).toContain('reads from A, B');
+    });
+
+    async function formatSource(uri: string, source: string): Promise<string> {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(URI.file(uri), source);
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        return edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) -
+                document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+    }
 });

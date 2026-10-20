@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI } from 'langium';
+import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI, UriUtils } from 'langium';
 import { expandToString as s } from 'langium/generate';
 import { clearDocuments } from 'langium/test';
 import type { Diagnostic } from 'vscode-languageserver-types';
@@ -97,9 +97,9 @@ describe('Linking tests', () => {
         documents.push(addedRepository);
         await services.shared.workspace.DocumentBuilder.build([addedRepository], { validation: true });
 
-        expect(semanticDiagnostics(addedRepository).some(diagnostic => String(diagnostic.message).includes(
-            'An aggregate may have only one write repository'
-        ))).toBe(true);
+        expect(semanticDiagnostics(addedRepository).some(diagnostic =>
+            diagnostic.code === 'duplicate-write-repository'
+        )).toBe(true);
     });
 
     test('links descriptive guards on method invocations', async () => {
@@ -1688,6 +1688,59 @@ describe('Linking tests', () => {
             String(diagnostic.message).includes("Could not resolve reference") &&
             String(diagnostic.message).includes("missingMethod"))
         ).toBe(true);
+    });
+
+    test('keeps valid qualified reference prefixes resolved when a later segment is missing', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/qualified-prefix.tni'),
+            `bounded context Shop
+             in bounded context Shop {
+                 aggregate Order {
+                     root entity Order { identifier id: OrderId }
+                     value object OrderId { raw: string }
+                     value object UsesId { id: Order.Nope }
+                 }
+             }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const messages = (document.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages.some(message => message.includes("named 'Nope'"))).toBe(true);
+        expect(messages.some(message => message.includes("named 'Order'"))).toBe(false);
+    });
+
+    test('indexes context contributions under a local canonical name instead of an aliased import', async () => {
+        const other = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-other.tni'), 'bounded context Other'
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-ordering.tni'),
+            `import { Other as Ordering } from "./alias-other.tni"
+             bounded context Ordering
+             in bounded context Ordering {
+                 aggregate Model {
+                     root entity Model { identifier id: ModelId }
+                     value object ModelId { raw: string }
+                 }
+             }`
+        );
+        documents = [other, ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const aggregateNames = services.shared.workspace.IndexManager.allElements('Aggregate')
+            .filter(description => UriUtils.equals(description.documentUri, ordering.uri))
+            .map(description => description.name)
+            .toArray();
+        const valueObjectNames = services.shared.workspace.IndexManager.allElements('ValueObject')
+            .filter(description => UriUtils.equals(description.documentUri, ordering.uri))
+            .map(description => description.name)
+            .toArray();
+        expect(aggregateNames).toContain('Ordering.Model');
+        expect(valueObjectNames).toContain('Ordering.Model.ModelId');
+        expect(valueObjectNames).not.toContain('Other.Model.ModelId');
     });
 });
 

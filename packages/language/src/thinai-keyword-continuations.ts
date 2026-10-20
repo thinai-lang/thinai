@@ -65,7 +65,7 @@ export class ThinaiKeywordContinuations {
             [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*([\p{L}_]*)$/iu, ['participants']],
             [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
             [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner']],
-            [/\b(?:customer|supplier)\s+[_a-zA-Z][\w.]*\s*\{\s*([\p{L}_]*)$/iu, ['integrationPatterns']]
+            [/\b(?:customer|supplier|partner)\s+[_a-zA-Z][\w.]*\s*\{\s*([\p{L}_]*)$/iu, ['integrationPatterns']]
         ];
 
         const match = this.getTransitionRequiredKeywordMatch(prefix) ?? continuations
@@ -108,6 +108,19 @@ export class ThinaiKeywordContinuations {
         for (const node of AstUtils.streamAst(root)) {
             const cstNode = node.$cstNode;
             if (!cstNode || cstNode.offset > offset) {
+                continue;
+            }
+            const cursorInsideNode = cstNode.offset <= offset && offset <= cstNode.end;
+            const nodeTouchesCursorLine = cstNode.range.start.line === position.line ||
+                cstNode.range.end.line === position.line;
+            // A header may intentionally continue on the next line (for example
+            // `module Api` followed by `depends ...`). Other earlier nodes must
+            // not contribute keywords while editing an unrelated statement.
+            const headerGap = text.slice(cstNode.end, offset);
+            const continuesNodeHeader = cstNode.end <= offset &&
+                (headerGap.match(/\r\n|\r|\n/gu)?.length ?? 0) <= 1 &&
+                /^[\s\p{L}_]*$/u.test(headerGap);
+            if (!cursorInsideNode && !nodeTouchesCursorLine && !continuesNodeHeader) {
                 continue;
             }
             const source = text.slice(cstNode.offset, offset);
@@ -178,11 +191,11 @@ export class ThinaiKeywordContinuations {
     }
 
     private getTransitionRequiredKeywordMatch(prefix: string): { match: RegExpExecArray; keywords: string[] } | undefined {
-        const transitionStart = prefix.toLowerCase().lastIndexOf('transition');
-        if (transitionStart < 0) {
+        const transitionMatch = [...prefix.matchAll(/\btransition\b/giu)].at(-1);
+        if (!transitionMatch || transitionMatch.index === undefined) {
             return undefined;
         }
-        const transitionSource = prefix.slice(transitionStart + 'transition'.length);
+        const transitionSource = prefix.slice(transitionMatch.index + transitionMatch[0].length);
         const currentChange = transitionSource.slice(transitionSource.lastIndexOf(',') + 1).trimStart();
         const toMatch = /^[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu.exec(currentChange);
         if (toMatch) {

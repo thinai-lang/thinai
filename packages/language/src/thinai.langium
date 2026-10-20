@@ -101,6 +101,12 @@ Module:
 Exposure:
     'exposes' declarations+=NamedDeclarationReference (',' declarations+=NamedDeclarationReference)* ;
 
+// Modules expose declarations; fields, parameters, and enum values inherit
+// visibility from their containing declaration.
+type ExposableDeclaration = Aggregate | ApplicationService | DomainEvent | DomainService | Entity |
+    DataObject | EnumType | Factory | IntegrationEvent | Method | Module | Projector | QueryRepository |
+    QueryService | ReadModel | Repository | ValueObject;
+
 ModuleMember:
     ApplicationService
     | QueryService
@@ -245,7 +251,7 @@ ModuleReference:
     (path+=[NamedDeclaration:ID] '.')* target=[Module:ID];
 
 NamedDeclarationReference:
-    (path+=[NamedDeclaration:ID] '.')* target=[NamedDeclaration:ID];
+    (path+=[ExposableDeclaration:ID] '.')* target=[ExposableDeclaration:ID];
 
 EventReference:
     (path+=[NamedDeclaration:ID] '.')* target=[EventDeclaration:ID];

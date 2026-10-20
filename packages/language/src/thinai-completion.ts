@@ -4,6 +4,7 @@ import {
     type LangiumDocument,
     type ReferenceInfo,
     AstUtils,
+    CstUtils,
     GrammarUtils,
     stream
 } from 'langium';
@@ -31,8 +32,7 @@ import {
     isParameter,
     isProjector,
     isReadSourceReference,
-    isSpecificationTextPart,
-    isTransition
+    isSpecificationTextPart
 } from './generated/ast.js';
 import { isInSharedKernel } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
@@ -204,6 +204,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ...this.getExposureDeclarationCompletions(document, params.position, defaultCompletion),
             ...(hasBoundedContextCandidates ? [] : this.contextMapCompletion.getRightContextCompletions(document, params.position))
         ];
+        const constrainedLabels = new Set(constrainedValueCompletions.map(item => item.label));
         const inProgressKeywordCompletions = [
             ...this.keywordContinuations.getInProgressCompletions(document, params.position),
             ...this.keywordContinuations.getPartialSameLineCompletions(document, params.position),
@@ -213,7 +214,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 sourceStructure
             ),
             ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
-        ];
+        ].filter(item => typeof item.label !== 'string' || !constrainedLabels.has(item.label));
         const blockKeywords = this.blockCompletion.getEnclosingBlockKeywordCompletions(document, params.position);
         const modelGapKeywords = this.blockCompletion.getModelGapKeywordCompletions(
             document,
@@ -249,6 +250,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             : completionWithKeywords;
         const completionItems = (completionWithKeywords?.items ?? [])
             .filter(item => !relationshipContinuationLabels.has(item.label))
+            .filter(item => item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string' ||
+                !constrainedLabels.has(item.label))
             .map(item => emptyBlockReplacements.get(item.label) ?? item);
         const sameLineKeywordContinuations = [
             ...inProgressKeywordCompletions.map(item => item.label),
@@ -551,7 +554,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .filter(isInSharedKernel)
             .filter(candidate => {
                 const cstNode = candidate.$cstNode;
-                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+                if (!cstNode || cstNode.offset > offset) {
+                    return false;
+                }
+                const closingBrace = [...CstUtils.flattenCst(cstNode)].reverse()
+                    .find(leaf => leaf.text === '}');
+                return offset < cstNode.end || closingBrace === undefined || closingBrace.offset >= offset;
             })
             .toArray()
             .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))[0];
@@ -654,7 +662,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const lineStart = getLineStartOffset(document, offset);
         const linePrefix = text.slice(lineStart, offset);
         if (this.hasUnterminatedStringLiteral(linePrefix) || this.hasIncompleteStatementSuffix(linePrefix) ||
-            this.isAfterTransitionChangeComma(model, text, offset)) {
+            this.isAfterTrailingComma(model, text, offset)) {
             return null;
         }
         let best: AstNode | undefined;
@@ -692,13 +700,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return hasIncompleteStatement ? null : best;
     }
 
-    private isAfterTransitionChangeComma(model: AstNode, text: string, offset: number): boolean {
-        return AstUtils.streamAst(model).filter(isTransition).some(transition => {
-            const cstNode = transition.$cstNode;
-            if (!cstNode || cstNode.offset > offset) {
+    private isAfterTrailingComma(model: AstNode, text: string, offset: number): boolean {
+        return AstUtils.streamAst(model).some(node => {
+            const cstNode = node.$cstNode;
+            if (!cstNode || cstNode.end > offset || !isLineSeparatedSibling(node)) {
                 return false;
             }
-            const source = text.slice(cstNode.offset, offset);
+            const trailing = text.slice(cstNode.end, offset);
+            if (/[\r\n]/u.test(trailing)) {
+                return false;
+            }
+            const source = text.slice(cstNode.offset, cstNode.end);
             return source.trimEnd().endsWith(',') && !this.hasUnterminatedStringLiteral(source);
         });
     }
@@ -882,7 +894,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
                 document.textDocument.offsetAt(position)
             );
-            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[snbdti][\w]*)?$/iu.test(source);
+            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[_a-zA-Z][\w.]*)?$/u.test(source);
         }
 
         if (node.returnCollection) {
@@ -895,7 +907,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
             document.textDocument.offsetAt(position)
         );
-        return /\)\s+returns\s*(?:[snbdti][\w]*)?$/iu.test(source);
+        return /\)\s+returns\s*(?:[_a-zA-Z][\w.]*)?$/u.test(source);
     }
 
     private isIncompleteCollectionType(collection: CollectionType): boolean {
@@ -914,15 +926,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     }
 
     private hasCompletedTypeReference(reference: { $refText: string; ref?: unknown } | undefined): boolean {
-        if (!reference?.$refText) {
-            return false;
-        }
-        if (reference.ref !== undefined) {
-            return true;
-        }
-        return !['string', 'number', 'boolean', 'date', 'time', 'instant'].some(primitive =>
-            primitive.startsWith(reference.$refText.toLowerCase())
-        );
+        return reference?.ref !== undefined;
     }
 
     private getPartialInitialKeywordCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
@@ -939,7 +943,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 continue;
             }
             const source = text.slice(node.$cstNode.offset, offset);
-            if (/\binitial\b/i.test(source)) {
+            const gapAfterField = text.slice(node.$cstNode.end, offset);
+            if (/\binitial\b/i.test(source) ||
+                /[\r\n]/u.test(gapAfterField) && !/^[\s\p{L}_]*$/u.test(gapAfterField)) {
                 continue;
             }
             const match = /:\s*[_a-zA-Z][\w.]*(?:\.[_a-zA-Z][\w_]*)?\s+([\p{L}_]*)$/u.exec(source);

@@ -1,6 +1,6 @@
 import type { AstNode } from 'langium';
 import type { Aggregate, ApplicationService, Method, Parameter, QueryService, SharedKernel } from './generated/ast.js';
-import { isApplicationService, isDomainService, isEntity, isFactory } from './generated/ast.js';
+import { isApplicationService, isDomainService, isEntity, isFactory, isQueryService } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
 
 export interface MethodInvocationValidationContext {
@@ -68,6 +68,12 @@ export function getMethodInvocationViolations(
         (reachable.some(candidate => isApplicationService(candidate.$container)) ||
             (!targetIsAggregateRoot && reachable.some(candidate => context.getOwningAggregate(candidate) !== undefined)))) {
         violations.push('Application services must invoke aggregate-root behavior directly, not through another method call chain.');
+    }
+    if (isFactory(target.$container) && !applicationService && !isDomainService(method.$container)) {
+        violations.push('Only an application service may invoke a factory method.');
+    }
+    if (isQueryService(target.$container) && !queryService) {
+        violations.push('Only a query service may invoke a query-service method.');
     }
     const targetFactory = isFactory(target.$container) ? target.$container : undefined;
     const factoryReturnType = target.returnType?.ref;

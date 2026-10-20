@@ -15,6 +15,7 @@ const commaSeparatedTypes = new Set([
     'Exposure',
     'Method',
     'Constructor',
+    'QueryRepository',
     'ReadDependency',
     'Transition',
     'EventEmission',
@@ -32,9 +33,9 @@ const keywordPairs = [
 ];
 
 const keywordValueSeparators = [
-    'aggregate', 'actor', 'by', 'depends', 'emits', 'enum', 'event', 'exposes', 'factory', 'from',
-    'in', 'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
-    'kernel', 'map', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
+    'aggregate', 'actor', 'by', 'depends', 'emits', 'entity', 'enum', 'event', 'exposes', 'factory', 'from',
+    'identifier', 'in', 'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
+    'kernel', 'map', 'mirrors', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
     'reads', 'repository', 'service',
     'returns', 'root', 'separateWays', 'serves', 'subdomain', 'supplier', 'customer', 'partner',
     'sharedKernel', 'to', 'transition', 'when', 'with'
@@ -134,7 +135,8 @@ export class ThinaiFormatter extends AbstractFormatter {
                 return common.slice(0, length);
             }, nonEmptyIndentations[0] ?? '');
             const continuationDepth = getBlockNestingDepth(node) + (
-                ['JourneyStep', 'Transition', 'EventEmission', 'MethodInvocation'].includes(node.$container?.$type ?? '') ? 1 : 0
+                ['JourneyStep', 'Transition', 'EventEmission', 'MethodInvocation', 'ReadDependency']
+                    .includes(node.$container?.$type ?? '') ? 1 : 0
             );
             const statementIndent = indentUnit.repeat(continuationDepth);
             const bodyIndent = `${statementIndent}${indentUnit}`;
@@ -197,7 +199,9 @@ export class ThinaiFormatter extends AbstractFormatter {
         }
 
         const lineCount = this.fitIntoOptions(lines, range.end.line - range.start.line, options);
-        const tabSize = context.options.tabSize;
+        const tabSize = Number.isFinite(context.options.tabSize) && context.options.tabSize > 0
+            ? Math.floor(context.options.tabSize)
+            : 2;
         const column = alignment.indentation * tabSize + alignment.prefixLength;
         const indentation = context.options.insertSpaces
             ? ' '.repeat(column)
@@ -340,7 +344,10 @@ export class ThinaiFormatter extends AbstractFormatter {
             const comments = interior.nodes.filter(cstNode => isLeafCstNode(cstNode) &&
                 (cstNode.tokenType.name === 'SL_COMMENT' || cstNode.tokenType.name === 'ML_COMMENT')
             );
-            if (children.length > 0 || comments.length > 0 || node.$type === 'Repository' || node.$type === 'QueryRepository' ||
+            const hasProjectTargets = node.$type === 'Method' &&
+                ((node as AstNode & { projects?: unknown[] }).projects?.length ?? 0) > 0;
+            if (children.length > 0 || comments.length > 0 || hasProjectTargets ||
+                node.$type === 'Repository' || node.$type === 'QueryRepository' ||
                 node.$type === 'SharedKernelRelationship' || node.$type === 'ContextMapEndpoint') {
                 formatter.nodes(...children).prepend(Formatting.indent());
                 formatter.cst(comments).prepend(Formatting.indent());
@@ -399,13 +406,20 @@ export class ThinaiFormatter extends AbstractFormatter {
 
         if (node.$type === 'Model' && !this.isFormattingRange) {
             const model = node as AstNode & { imports?: AstNode[]; declarations?: AstNode[] };
-            const declarations = model.declarations ?? [];
-            const firstToSeparate = model.imports?.length ? 0 : 1;
-            for (let index = firstToSeparate; index < declarations.length; index++) {
-                const previous = index > 0
-                    ? declarations[index - 1]
-                    : model.imports?.at(-1);
-                this.prependSiblingSpacing(formatter, previous, declarations[index]!, Formatting.newLines(2));
+            const topLevel = [...(model.imports ?? []), ...(model.declarations ?? [])]
+                .filter((candidate): candidate is AstNode => candidate.$cstNode !== undefined)
+                .sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
+            for (let index = 1; index < topLevel.length; index++) {
+                const previous = topLevel[index - 1]!;
+                const current = topLevel[index]!;
+                this.prependSiblingSpacing(
+                    formatter,
+                    previous,
+                    current,
+                    previous.$type === 'Import' && current.$type === 'Import'
+                        ? Formatting.newLine()
+                        : Formatting.newLines(2)
+                );
             }
         }
     }

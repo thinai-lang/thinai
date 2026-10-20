@@ -51,6 +51,9 @@ export class ThinaiBlockCompletion {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
+        if (scanThinaiSource(text.slice(0, offset)).openBraces > 0) {
+            return [];
+        }
         const lineStart = getLineStartOffset(document, offset);
         const rawPrefix = text.slice(lineStart, offset);
         const typedPrefix = rawPrefix.trimStart();
@@ -108,7 +111,17 @@ export class ThinaiBlockCompletion {
             .filter(candidate => this.keywordContinuations.getSiblingKeywordLabels(candidate).length > 0)
             .filter(candidate => {
                 const cstNode = candidate.$cstNode;
-                return cstNode !== undefined && cstNode.offset <= offset && offset < cstNode.end;
+                if (!cstNode || cstNode.offset > offset) {
+                    return false;
+                }
+                const leaves = CstUtils.flattenCst(cstNode).toArray();
+                const openingBrace = leaves.find(leaf => leaf.text === '{');
+                const closingBrace = [...leaves].reverse().find(leaf => leaf.text === '}');
+                const unclosedAtCursor = closingBrace === undefined || closingBrace.offset >= offset;
+                const cursorOnLineAfterOpeningBrace = openingBrace !== undefined &&
+                    text.lastIndexOf('\n', offset - 1) > openingBrace.offset;
+                return offset < cstNode.end ||
+                    unclosedAtCursor && cursorOnLineAfterOpeningBrace;
             })
             .toArray()
             .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))
@@ -450,7 +463,7 @@ export class ThinaiBlockCompletion {
 
     private matchesKeywordPrefix(labels: readonly string[], prefix: string): boolean {
         const normalizedPrefix = prefix.toLowerCase().replace(/\s+/g, ' ');
-        return labels.some(label => normalizedPrefix.length <= label.length &&
+        return labels.some(label => normalizedPrefix.length < label.length &&
             label.toLowerCase().startsWith(normalizedPrefix));
     }
 

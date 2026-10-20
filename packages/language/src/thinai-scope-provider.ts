@@ -82,6 +82,7 @@ import {
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { ThinaiExternalScope } from './thinai-external-scope.js';
+import { isAllowedJourneySpecificationTarget, isJourneySpecificationText } from './thinai-journey-utils.js';
 
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
@@ -127,7 +128,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 return this.getTransitionStateScope(context.container);
             }
         }
-        const referenceType = this.reflection.getReferenceType(context);
+        const declaredReferenceType = this.reflection
+            .getTypeMetaData(context.container.$type)
+            .properties[context.property]?.referenceType;
+        if (!declaredReferenceType) {
+            return this.createScope([]);
+        }
+        const referenceType = declaredReferenceType;
         const pathScope = this.pathScope.getPathScope(context, referenceType);
         if (pathScope) {
             return pathScope;
@@ -136,9 +143,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.createScope(this.getImportableComponents(context.container, referenceType));
         }
         if (context.property === 'alias' && isImportComponent(context.container)) {
-            const target = context.container.component.ref;
-            return this.createScope(target
-                ? [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))]
+            const target = context.container.component?.ref;
+            const alias = context.reference.$refText;
+            return this.createScope(target && alias
+                ? [this.descriptions.createDescription(target, alias, AstUtils.getDocument(target))]
                 : []);
         }
         return this.getUnsegmentedScope(context, referenceType);
@@ -193,7 +201,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             property: 'declarations',
             reference: { $refText: '' } as unknown as ReferenceInfo['reference']
         } as ReferenceInfo;
-        const candidates = this.getUnsegmentedScope(context, 'NamedDeclaration').getAllElements();
+        const candidates = this.getUnsegmentedScope(context, 'ExposableDeclaration').getAllElements();
         return this.filterCompletionCandidates(context, candidates).toArray();
     }
 
@@ -644,8 +652,18 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         if (isInSharedKernel(target)) {
             const sharedKernel = getOwningSharedKernel(target);
-            return sharedKernel !== undefined &&
-                this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel);
+            const sourceSharedKernel = getOwningSharedKernel(context.container);
+            if (sourceSharedKernel !== sharedKernel) {
+                if (sharedKernel === undefined ||
+                    !this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel)) {
+                    return false;
+                }
+                const targetModule = getOwningModule(target);
+                if (targetModule && !isExposedByModule(targetModule, target)) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         if (isIntegrationEvent(target) && isParameter(context.container)) {
@@ -748,6 +766,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (isReadModel(target)) {
                 return false;
             }
+            if (isEntity(target)) {
+                const sourceAggregate = getOwningAggregate(parameter);
+                const targetAggregate = getOwningAggregate(target);
+                if (sourceAggregate !== undefined && sourceAggregate !== targetAggregate) {
+                    return false;
+                }
+            }
             if (isConstructor(parent)) {
                 if (isDomainEvent(target) || isIntegrationEvent(target) || isDataObject(target)) {
                     return false;
@@ -781,6 +806,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     target.root && getOwningContextName(target) === getOwningContextName(method);
             }
             if (isEntity(target) && (isDomainService(owner) || isApplicationService(owner) || isQueryService(owner))) {
+                return false;
+            }
+            const sourceAggregate = getOwningAggregate(method);
+            if (isEntity(target) && sourceAggregate !== undefined &&
+                sourceAggregate !== getOwningAggregate(target)) {
                 return false;
             }
             if (isReadModel(target) && !isQueryService(owner)) {
@@ -820,11 +850,19 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         )) {
             return false;
         }
+        if (isJourneySpecificationText(context.container)) {
+            return isAllowedJourneySpecificationTarget(target);
+        }
 
         const sourceContext = getOwningContextName(context.container);
         const targetContext = getOwningContextName(target);
-        if (!sourceContext || !targetContext || sourceContext === targetContext || isInSharedKernel(target)) {
+        if (!sourceContext || !targetContext || sourceContext === targetContext) {
             return true;
+        }
+        if (isInSharedKernel(target)) {
+            const sharedKernel = getOwningSharedKernel(target);
+            return sharedKernel !== undefined &&
+                this.referencePolicy.hasSharedKernelRelationship(context.container, sharedKernel);
         }
 
         if (isField(target)) {

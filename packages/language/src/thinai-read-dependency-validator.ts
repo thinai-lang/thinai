@@ -89,11 +89,19 @@ export class ThinaiReadDependencyValidator {
             return;
         }
 
+        const seenSources = new Set<AstNode>();
         for (const source of read.sources) {
             const target = source.target.ref;
             if (!target) {
                 continue;
             }
+            if (seenSources.has(target)) {
+                accept('error', `Read source '${source.target.$refText}' is listed more than once.`, {
+                    node: source,
+                    property: 'target'
+                });
+            }
+            seenSources.add(target);
             if (isRepository(target) || isQueryRepository(target)) {
                 if (getOwningContextName(read) !== getOwningContextName(target)) {
                     accept('error', 'A reads from repository dependency must belong to the same bounded context.', {

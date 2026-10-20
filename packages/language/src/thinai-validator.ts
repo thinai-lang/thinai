@@ -4,7 +4,6 @@ import {
     AstUtils,
     type ValidationAcceptor,
     type ValidationChecks,
-    UriUtils,
     isReference
 } from 'langium';
 import type {
@@ -52,6 +51,7 @@ import {
     isDomainService,
     isEntity,
     isEnumValue,
+    isFactory,
     isField,
     isIntegrationEvent,
     isEnumType,
@@ -83,6 +83,7 @@ import {
     moduleDependsTransitivelyOn
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
+import { isAllowedJourneySpecificationTarget, isJourneySpecificationText } from './thinai-journey-utils.js';
 import {
     canDeclareProjects,
     canDeclareTransition,
@@ -559,6 +560,13 @@ export class ThinaiValidator {
                     property: 'parameters'
                 });
             }
+            const optionalEventParameter = eventParameters.find(parameter => parameter.optional);
+            if (optionalEventParameter) {
+                accept('error', 'An event-triggered parameter cannot be optional.', {
+                    node: optionalEventParameter,
+                    property: 'optional'
+                });
+            }
             if (eventParameters.length !== 1 || method.parameters.length !== 1) {
                 accept('error', 'An event-triggered method must have exactly one event-typed parameter.', {
                     node: method,
@@ -634,11 +642,19 @@ export class ThinaiValidator {
             if (!isSyntacticallyComplete(emission)) {
                 continue;
             }
+            const emittedEvents = new Set<AstNode>();
             for (const emitted of emission.events) {
                 const emittedEvent = emitted?.target?.ref;
                 if (!emittedEvent) {
                     continue;
                 }
+                if (emittedEvents.has(emittedEvent)) {
+                    accept('error', `Event '${emittedEvent.name}' is emitted more than once in the same clause.`, {
+                        node: emitted,
+                        property: 'target'
+                    });
+                }
+                emittedEvents.add(emittedEvent);
                 if (isCrossContextOwned(method, emittedEvent)) {
                     accept('error', 'A method may emit only events owned by its bounded context.', {
                         node: emitted,
@@ -752,7 +768,18 @@ export class ThinaiValidator {
                 property: 'actors'
             });
         }
+        const seenActors = new Set<Actor>();
         for (const actorBlock of journey.actors) {
+            const actor = actorBlock.actor?.ref;
+            if (actor) {
+                if (seenActors.has(actor)) {
+                    accept('error', `Journey actor '${actor.name}' has more than one block in this journey.`, {
+                        node: actorBlock,
+                        property: 'actor'
+                    });
+                }
+                seenActors.add(actor);
+            }
             if (actorBlock.steps.length === 0 && isSyntacticallyComplete(actorBlock)) {
                 accept('error', 'An actor block in a journey must contain at least one command step.', {
                     node: actorBlock,
@@ -884,11 +911,15 @@ export class ThinaiValidator {
                 continue;
             }
             const targetAggregate = getOwningAggregate(target);
+            const constructorRootParameter = isParameter(node) && node.$container.$type === 'Constructor' && target.root;
+            const factoryRootReturn = isMethod(node) && isFactory(node.$container) &&
+                property === 'returnType' && target.root;
+            const crossesAggregate = sourceAggregate !== undefined && sourceAggregate !== targetAggregate;
             if (applicationServiceSignature ||
-                (!target.root && sourceAggregate !== targetAggregate)) {
+                crossesAggregate && !constructorRootParameter && !factoryRootReturn) {
                 accept('error', applicationServiceSignature
                     ? 'Application-service signatures must use identifiers or data values, not entity instances.'
-                    : 'A child entity cannot cross its aggregate boundary; pass its identifier instead.', {
+                    : 'Reference another aggregate by its identifier, not by passing its entity instance.', {
                     node,
                     property
                 });
@@ -977,9 +1008,35 @@ export class ThinaiValidator {
                 });
                 return;
             }
+            const isTerminalSpecificationSegment = isSpecificationTextPart(referenceInfo.container) && (
+                referenceInfo.property === 'target' ||
+                referenceInfo.property === 'targets' &&
+                    referenceInfo.index === referenceInfo.container.targets.length - 1
+            );
+            if (isSpecificationTextPart(referenceInfo.container) && isJourneySpecificationText(referenceInfo.container)) {
+                if (isTerminalSpecificationSegment && !isAllowedJourneySpecificationTarget(target)) {
+                    accept('error', 'Journey specifications may reference visible read/query values, public contracts, and user-facing operations, but not private domain internals.', {
+                        node: referenceInfo.container as AstNode,
+                        property: referenceInfo.property
+                    });
+                }
+                return;
+            }
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
             const crossesContext = isCrossContextOwned(referenceInfo.container, target);
+            if (isSpecificationTextPart(referenceInfo.container) && crossesContext && isInSharedKernel(target)) {
+                const sharedKernel = getOwningSharedKernel(target);
+                const sourceSharedKernel = getOwningSharedKernel(referenceInfo.container);
+                if (sharedKernel && sourceSharedKernel !== sharedKernel &&
+                    !this.referencePolicy.hasSharedKernelRelationship(referenceInfo.container, sharedKernel)) {
+                    accept('error', 'Using a shared-kernel declaration in specification text requires an imported context map that declares a shared-kernel relationship for this context.', {
+                        node: referenceInfo.container as AstNode,
+                        property: referenceInfo.property
+                    });
+                    return;
+                }
+            }
             if (isJourneyStep(referenceInfo.container) && targetModule && !isModule(target) &&
                 !isExposedByModule(targetModule, target)) {
                 accept('error', 'A journey may reference a module declaration only when its module exposes it.', {
@@ -1007,9 +1064,10 @@ export class ThinaiValidator {
             const publishedQueryRead = isReadSourceReference(referenceInfo.container) && isMethod(target) &&
                 isQueryService(target.$container) && this.referencePolicy.isQueryServiceExposed(target.$container) &&
                 this.referencePolicy.hasAuthorizedQueryRelationship(referenceInfo.container, target);
-            if (target.$type === 'Method' && crossesContext && !isInSharedKernel(target) && !publishedQueryRead) {
+            if (isSpecificationTextPart(referenceInfo.container) && target.$type === 'Method' &&
+                crossesContext && !isInSharedKernel(target) && !publishedQueryRead) {
                 accept('error', 'Specification text cannot reference a private method from another bounded context.', {
-                    node: referenceInfo.container,
+                    node: referenceInfo.container as AstNode,
                     property: referenceInfo.property
                 });
                 return;
@@ -1017,7 +1075,11 @@ export class ThinaiValidator {
             const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
             if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
                 (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
-                    isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target)) &&
+                    isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target) ||
+                    isTerminalSpecificationSegment && (
+                        isApplicationService(target) || isDomainService(target) || isQueryService(target) ||
+                        isProjector(target) || isFactory(target) || isModule(target)
+                    )) &&
                 !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,
@@ -1054,7 +1116,7 @@ export class ThinaiValidator {
             if (!sourceModule || !targetModule || sourceModule === targetModule || isModule(target)) {
                 return;
             }
-            if (getOwningContextName(sourceModule) !== getOwningContextName(targetModule) || isInSharedKernel(target)) {
+            if (getOwningContextName(sourceModule) !== getOwningContextName(targetModule)) {
                 return;
             }
             const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
@@ -1093,9 +1155,11 @@ export class ThinaiValidator {
                     .filter(candidate => candidate.root.ref && getOwningAggregate(candidate.root.ref) === aggregate).toArray()
                 : []);
         if (writeRepositories.length > 1) {
-            accept('error', 'An aggregate may have only one write repository; use query repositories for read models.', {
+            const otherRepository = writeRepositories.find(candidate => candidate !== repository);
+            accept('error', `Aggregate '${aggregate.name}' already has write repository '${otherRepository?.name ?? 'another repository'}'; '${repository.name}' is a second write repository.`, {
                 node: repository,
-                property: 'root'
+                property: 'name',
+                code: 'duplicate-write-repository'
             });
         }
     }
@@ -1185,15 +1249,6 @@ export class ThinaiValidator {
             return;
         }
 
-        const document = AstUtils.getDocument(node);
-        const path = this.services.workspace.AstNodeLocator.getAstNodePath(node);
-        const currentIndex = descriptions.findIndex(description =>
-            UriUtils.equals(description.documentUri, document.uri) && description.path === path
-        );
-        if (currentIndex > 0) {
-            return;
-        }
-
         accept('error', `Duplicate declaration '${name}'.`, {
             node,
             property: 'name'
@@ -1218,6 +1273,14 @@ export class ThinaiValidator {
                 if (sourceContext && sourceSharedKernel !== sharedKernel &&
                     (!sharedKernel || !this.referencePolicy.hasSharedKernelRelationship(node, sharedKernel))) {
                     accept('error', 'Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.', {
+                        node,
+                        property
+                    });
+                    return;
+                }
+                const targetModule = getOwningModule(target);
+                if (sourceSharedKernel !== sharedKernel && targetModule && !isExposedByModule(targetModule, target)) {
+                    accept('error', 'Using a module declaration from a shared kernel requires the module to expose that declaration.', {
                         node,
                         property
                     });

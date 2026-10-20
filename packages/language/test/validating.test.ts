@@ -1582,9 +1582,13 @@ in bounded context Ordering {
             }
         `);
 
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'An aggregate may have only one write repository'
-        ))).toBe(true);
+        const duplicate = document.diagnostics?.find(diagnostic =>
+            diagnostic.code === 'duplicate-write-repository'
+        );
+        expect(duplicate).toBeDefined();
+        expect(String(duplicate?.message)).toContain("Aggregate 'Order'");
+        expect(String(duplicate?.message)).toContain('write repository');
+        expect(String(duplicate?.message)).toContain('second write repository');
     });
 
     test('requires a write repository to manage an aggregate-root entity', async () => {
@@ -1863,6 +1867,26 @@ in bounded context Ordering {
         expect(first.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Ordering'.")).toBe(true);
     });
 
+    test('reports a duplicate declaration added after an initial build', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/incremental-duplicate-z.tni'),
+            'bounded context IncrementalDuplicate'
+        );
+        documents = [first];
+        await services.shared.workspace.DocumentBuilder.build([first], { validation: true });
+
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/incremental-duplicate-a.tni'),
+            'bounded context IncrementalDuplicate'
+        );
+        documents.push(second);
+        await services.shared.workspace.DocumentBuilder.build([second], { validation: true });
+
+        expect(second.diagnostics?.some(diagnostic =>
+            diagnostic.message === "Duplicate declaration 'IncrementalDuplicate'."
+        )).toBe(true);
+    });
+
     test('requires a shared-kernel relationship to name at least two contexts', async () => {
         const document = await parse(`
             bounded context Ordering
@@ -1971,7 +1995,7 @@ in bounded context Ordering {
 
     test('allows shared-kernel domain services but rejects data objects in shared-kernel modules', async () => {
         const valid = await parse(`
-            shared kernel Common {
+            shared kernel SharedValid {
                 value object Money { amount: number }
                 domain service PricingPolicy {
                     method normalize(money: Money) returns number
@@ -1984,7 +2008,7 @@ in bounded context Ordering {
         expect(semanticDiagnostics(valid).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
 
         const invalid = await parse(`
-            shared kernel Common {
+            shared kernel SharedInvalid {
                 module Payloads {
                     data object Address { street: string }
                 }
@@ -2160,6 +2184,21 @@ in bounded context Ordering {
         expect(visibilityErrors).toHaveLength(1);
     });
 
+    test('exposes declarations only, not their fields or enum values', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Contracts {
+                    exposes OrderId.raw
+                    value object OrderId { raw: string }
+                }
+            }
+        `);
+
+        const messages = (document.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages.some(message => message.includes("ExposableDeclaration named 'raw'"))).toBe(true);
+    });
+
     test('rejects circular module dependencies', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
@@ -2186,6 +2225,270 @@ in bounded context Ordering {
 
         expect(canonical.parseResult.parserErrors).toHaveLength(0);
         expect(semanticDiagnostics(directImport).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('does not crash while a bounded-context contribution has no context name', async () => {
+        const document = await parse(`
+            in bounded context {
+                aggregate Sample {
+                    root entity Sample { identifier id: SampleId }
+                    value object SampleId { raw: string }
+                }
+            }
+        `);
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).startsWith('An error occurred during validation')
+        )).toBe(false);
+        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Expecting token of type 'ID'"))).toBe(true);
+    });
+
+    test('rejects another aggregate root in an entity method signature', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        method inspect(other: Customer) returns Customer
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+                aggregate Customer {
+                    root entity Customer { identifier id: CustomerId }
+                    value object CustomerId { raw: string }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.message === 'Reference another aggregate by its identifier, not by passing its entity instance.'
+        )).toHaveLength(2);
+    });
+
+    test('restricts factory and query-service invocation targets', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            invokes OrderFactory.createOrder
+                            invokes Reports.lookup
+                        }
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+                aggregate Customer {
+                    root entity Customer { identifier id: CustomerId }
+                    value object CustomerId { raw: string }
+                }
+                factory OrderFactory { method createOrder() returns Order.Order }
+                query service Reports { method lookup() returns string }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Only an application service may invoke a factory method.');
+        expect(messages).toContain('Only a query service may invoke a query-service method.');
+    });
+
+    test('rejects optional event-handler parameters', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                event OrderPlaced
+                module Contracts {
+                    exposes OrderPlacedV1
+                    integration event OrderPlacedV1 { orderId: string }
+                }
+                application service App {
+                    method publish(source?: OrderPlaced) { emits Contracts.OrderPlacedV1 }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'An event-triggered parameter cannot be optional.'
+        )).toBe(true);
+    });
+
+    test('rejects duplicate entries in effect and journey lists', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        method place() { emits OrderPlaced, OrderPlaced }
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+                event OrderPlaced
+                repository OrderRepository { manages Order.Order }
+                application service App {
+                    method run() { reads from OrderRepository, OrderRepository }
+                }
+            }
+            actor Customer
+            journey PlaceOrder {
+                by Customer { invoke Shop.App.run }
+                by Customer { invoke Shop.App.run }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain("Event 'OrderPlaced' is emitted more than once in the same clause.");
+        expect(messages).toContain("Read source 'OrderRepository' is listed more than once.");
+        expect(messages).toContain("Journey actor 'Customer' has more than one block in this journey.");
+    });
+
+    test('authorizes same-document integration-event consumption through a local context map', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            in bounded context Ordering {
+                module Contracts {
+                    exposes OrderPlacedV1
+                    integration event OrderPlacedV1 { orderId: string }
+                }
+            }
+            in bounded context Shipping {
+                application service Handler {
+                    method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1)
+                }
+            }
+            context map Fulfillment {
+                customer Shipping -> supplier Ordering
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('requires shared-kernel modules to expose declarations used by other contexts', async () => {
+        const document = await parse(`
+            shared kernel Common {
+                module Private {
+                    value object Code { raw: string }
+                }
+            }
+            bounded context Ordering
+            bounded context Shipping
+            context map SharedTypes {
+                sharedKernel Common { participants: [Ordering, Shipping] }
+            }
+            in bounded context Ordering {
+                value object UsesCode { code: Common.Private.Code }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Using a module declaration from a shared kernel requires the module to expose that declaration.'
+        )).toBe(true);
+    });
+
+    test('requires a shared-kernel relationship for shared declarations in specification text', async () => {
+        const document = await parse(`
+            shared kernel Common {
+                value object Currency { code: string }
+            }
+            bounded context Ordering
+            in bounded context Ordering {
+                application service App {
+                    method run() {
+                        behavior "Use [[Common.Currency]]."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Using a shared-kernel declaration in specification text requires an imported context map that declares a shared-kernel relationship for this context.'
+        )).toBe(true);
+    });
+
+    test('allows journey prose to link cross-context read and query values', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                read model OrderSummary { orderId: string }
+                data object Eligibility { eligible: boolean }
+                query service OrderQueries {
+                    method canPlaceOrder() returns Eligibility
+                }
+                application service OrderCommands {
+                    method placeOrder() {
+                        behavior "Place the order."
+                    }
+                }
+            }
+            actor Customer
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderCommands.placeOrder
+                        with "orderId from [[Ordering.OrderSummary.orderId]]"
+                        when "The result [[Ordering.OrderQueries.canPlaceOrder.result.eligible]] allows it."
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('rejects private aggregate and domain-event internals in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place()
+                        identifier id: OrderId
+                        secret: string
+                    }
+                    value object OrderId { raw: string }
+                }
+                event OrderPlaced { note: string }
+                application service OrderCommands {
+                    method placeOrder()
+                }
+            }
+            actor Customer
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderCommands.placeOrder
+                        when "Private [[Ordering.Order.Order.secret]] and [[Ordering.OrderPlaced.note]]."
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.message === 'Journey specifications may reference visible read/query values, public contracts, and user-facing operations, but not private domain internals.'
+        )).toHaveLength(2);
+    });
+
+    test('rejects private services and modules in cross-context specification text', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            in bounded context Ordering {
+                domain service PrivatePricing { method calculate() returns number }
+                application service PrivateCommands { method run() }
+                module PrivateModule { value object Code { raw: string } }
+            }
+            in bounded context Shipping {
+                application service Shipment {
+                    method ship() {
+                        behavior "Use [[Ordering.PrivatePricing]], [[Ordering.PrivateCommands]], and [[Ordering.PrivateModule]]."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.message === 'Specification text cannot reference private operation, data, or query types from another bounded context.'
+        ).length).toBeGreaterThanOrEqual(3);
     });
 
 });

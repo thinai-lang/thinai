@@ -85,7 +85,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             reference: terminalReference as ReferenceInfo['reference'],
             index: undefined
         };
-        const finalType = this.reflection.getReferenceType(finalContext);
+        const finalType = this.getDeclaredReferenceType(finalContext);
+        if (!finalType) {
+            return [];
+        }
         const finalScope = this.callbacks.getUnsegmentedScope(this.getPathScopeContext(finalContext), finalType);
         const allowedTargets = new Set(
             this.callbacks.filterCompletionCandidates(finalContext, finalScope.getAllElements())
@@ -95,9 +98,13 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         );
         const index = context.property === 'target' ? values.length : context.index ?? 0;
         const prefix = (values as ReferenceInfo['reference'][]).slice(0, index).map(reference => reference.$refText);
+        const referenceType = this.getDeclaredReferenceType(context);
+        if (!referenceType) {
+            return [];
+        }
         return this.getPathSegmentCompletions(
             context,
-            this.reflection.getReferenceType(context),
+            referenceType,
             prefix,
             allowedTargets,
             context.property === 'path' && !isReadSourceReference(container)
@@ -108,7 +115,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (!isSpecificationTextPart(context.container)) {
             return [];
         }
-        const referenceType = this.reflection.getReferenceType(context);
+        const referenceType = this.getDeclaredReferenceType(context);
+        if (!referenceType) {
+            return [];
+        }
         const scope = this.callbacks.getUnsegmentedScope(context, referenceType);
         const candidates = new Map<string, AstNodeDescription>();
         for (const description of scope.getAllElements()) {
@@ -135,7 +145,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
     }
 
     getInvocationCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
-        const referenceType = this.reflection.getReferenceType(context);
+        const referenceType = this.getDeclaredReferenceType(context);
+        if (!referenceType) {
+            return [];
+        }
         const references = isJourneyStep(context.container) || isMethodInvocation(context.container)
             ? context.container.targets
             : [];
@@ -165,6 +178,12 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             references.slice(0, index).map(reference => reference.$refText),
             allowedTargets
         );
+    }
+
+    private getDeclaredReferenceType(context: ReferenceInfo): string | undefined {
+        return this.reflection
+            .getTypeMetaData(context.container.$type)
+            .properties[context.property]?.referenceType;
     }
 
     private getPathScopeContext(context: ReferenceInfo): ReferenceInfo {
@@ -205,11 +224,36 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         const scopeContext = wrapperPath ? this.getPathScopeContext(finalContext) : finalContext;
         const segmentIndex = context.property === prefixProperty ? context.index ?? 0 : path.length - 1;
         const completePath = path.join('.');
+        const finalType = this.getDeclaredReferenceType(finalContext);
+        if (!finalType) {
+            return this.callbacks.createScope([]);
+        }
         const finalDescription = this.callbacks.getUnsegmentedScope(
             scopeContext,
-            this.reflection.getReferenceType(finalContext)
+            finalType
         ).getElement(completePath);
         if (!finalDescription?.node) {
+            // The qualified path is not fully valid yet. Resolve the current
+            // segment against its valid prefix so fixing a later segment does
+            // not also invalidate an earlier one.
+            if (context.property === prefixProperty) {
+                const prefixType = this.getDeclaredReferenceType(context);
+                const prefixPath = path.slice(0, segmentIndex + 1).join('.');
+                const prefixDescription = prefixType
+                    ? this.callbacks.getUnsegmentedScope(this.getPathScopeContext(context), prefixType)
+                        .getElement(prefixPath)
+                    : undefined;
+                if (prefixDescription?.node) {
+                    const name = context.reference.$refText || prefixDescription.name;
+                    return this.callbacks.createScope([
+                        this.descriptions.createDescription(
+                            prefixDescription.node,
+                            name,
+                            AstUtils.getDocument(prefixDescription.node)
+                        )
+                    ]);
+                }
+            }
             return this.callbacks.createScope([]);
         }
         const targetDescription = segmentIndex === path.length - 1
@@ -359,8 +403,9 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         const ancestors: AstNode[] = [];
         let current: AstNode | undefined = target;
         while (current) {
-            if (isBoundedContextPart(current) && current.context.ref) {
-                ancestors.push(current.context.ref);
+            const contextReference = isBoundedContextPart(current) ? current.context?.ref : undefined;
+            if (contextReference) {
+                ancestors.push(contextReference);
             } else if (this.nameProvider.getName(current)) {
                 ancestors.push(current);
             }

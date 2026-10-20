@@ -1,0 +1,88 @@
+version: 0.5.1
+languages:
+  - name: thinai
+    description: "A domain-specific language for modeling domain-driven design (DDD)."
+    caseInsensitive: false
+    grammar: packages/language/src/thinai.langium
+langiumConfig: packages/language/langium-config.json
+serviceDetails:
+  createServicesFunc: createThinaiServices
+  createServicesAttributes:
+    - Thinai
+services:
+  module: packages/language/src/thinai-module.ts
+  valueConverter: packages/language/src/thinai-value-converter.ts
+  tokenBuilder: packages/language/src/thinai-token-builder.ts
+  semanticTokenProvider: packages/language/src/thinai-semantic-token-provider.ts
+  scopeProvider: packages/language/src/thinai-scope-provider.ts
+  scopeComputation: packages/language/src/thinai-scope-computation.ts
+  parserErrorMessageProvider: packages/language/src/thinai-parser.ts
+  formatter: packages/language/src/thinai-formatter.ts
+  definitionProvider: packages/language/src/thinai-definition-provider.ts
+  completionProvider: packages/language/src/thinai-completion.ts
+  codeActionProvider: packages/language/src/thinai-code-actions.ts
+validators:
+  - path: packages/language/src/thinai-validator.ts
+tests:
+  - packages/language/test
+  - packages/cli/test
+examples:
+  - name: Subdomains
+    description: Core, supporting, generic, and unclassified subdomains.
+    file: examples/order-fulfillment/strategic.tni
+    tags:
+      - strategic
+      - subdomains
+  - name: Shared kernel and types
+    description: Reusable value objects, enums, domain services, and module exposures.
+    file: examples/order-fulfillment/common-types.tni
+    tags:
+      - shared-kernel
+      - modules
+  - name: Strategic context catalog
+    description: Subdomains and bounded-context declarations with realization links.
+    file: examples/order-fulfillment/context-catalog.tni
+    tags:
+      - strategic
+      - bounded-contexts
+  - name: Context map
+    description: Customer-supplier, partnership, separate-ways, and shared-kernel relationships.
+    file: examples/order-fulfillment/context-map.tni
+    tags:
+      - context-map
+      - integration
+  - name: Tactical ordering model
+    description: Aggregates, entities, value objects, events, repositories, factories, and services.
+    file: examples/order-fulfillment/ordering.tni
+    tags:
+      - tactical
+      - aggregates
+  - name: Ordering events and CQRS
+    description: Application services, read models, projectors, query services, and journeys.
+    file: examples/order-fulfillment/ordering-events.tni
+    tags:
+      - behavior
+      - cqrs
+      - journeys
+  - name: Shipping model
+    description: Cross-context value-object mirrors, modules, and integration-event handling.
+    file: examples/order-fulfillment/shipping.tni
+    tags:
+      - cross-context
+      - integration-events
+  - name: Cross-context journey
+    description: A journey invoking commands from multiple bounded contexts.
+    file: examples/order-fulfillment/cross-context-journey.tni
+    tags:
+      - journeys
+      - cross-context
+documentation:
+  - src: README.md
+    description: Project overview and development commands
+    priority: high
+  - src: packages/language/README.md
+    description: Thinai language guide
+    priority: high
+  - src: examples/order-fulfillment/README.md
+    description: Complete Order Fulfillment example
+    priority: medium

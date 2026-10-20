@@ -27,9 +27,15 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
         return owner.name;
     }
     if (isBoundedContextPart(owner)) {
-        const referenceText = owner.context.$refText;
+        const referenceText = owner.context?.$refText ?? '';
         const root = AstUtils.getDocument(owner).parseResult.value;
         if (isModel(root)) {
+            // Local canonical declarations shadow aliased imports. References
+            // are not linked while the index is built, so match by name here.
+            if (root.declarations.some(declaration =>
+                isBoundedContext(declaration) && declaration.name === referenceText)) {
+                return referenceText;
+            }
             const selectedComponent = root.imports
                 .flatMap(importDeclaration => importDeclaration.components)
                 .find(component => component.alias?.$refText === referenceText);
@@ -37,7 +43,7 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
                 return selectedComponent.component.$refText;
             }
         }
-        return referenceText;
+        return referenceText || undefined;
     }
     return undefined;
 }

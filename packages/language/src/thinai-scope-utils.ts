@@ -67,7 +67,9 @@ export function getOwningContextName(node: AstNode): string | undefined {
     if (isBoundedContext(owner) || isSharedKernel(owner)) {
         return owner.name;
     }
-    return isBoundedContextPart(owner) ? owner.context.ref?.name ?? owner.context.$refText : undefined;
+    return isBoundedContextPart(owner)
+        ? owner.context?.ref?.name ?? ((owner.context?.$refText || undefined))
+        : undefined;
 }
 
 export function getOwningAggregate(node: AstNode): Aggregate | undefined {
