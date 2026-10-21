@@ -361,46 +361,121 @@ in bounded context O {
         expect(item?.textEdit?.newText ?? item?.insertText).toBe(quotedValue);
     });
 
-    test('filters entity types for factories and value objects but not domain services', async () => {
+    test('filters entity and DataObject types for restricted signatures', async () => {
         const factory = await build(`bounded context O
 in bounded context O {
     aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    data object Input { raw: string }
     factory F { method create(arg: ${marker}) returns A.E }
 }`);
         const factoryLabels = factory.completion?.items.map(item => item.label) ?? [];
         expect(factoryLabels).not.toContain('E');
         expect(factoryLabels).not.toContain('A.E');
+        expect(factoryLabels).not.toContain('Input');
 
         const valueObjectMethod = await build(`bounded context O
 in bounded context O {
     aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    data object Input { raw: string }
     value object V {
         raw: string
         method use(arg: ${marker})
     }
 }`);
-        expect(valueObjectMethod.completion?.items.map(item => item.label)).not.toContain('E');
+        const valueObjectMethodLabels = valueObjectMethod.completion?.items.map(item => item.label) ?? [];
+        expect(valueObjectMethodLabels).not.toContain('E');
+        expect(valueObjectMethodLabels).not.toContain('Input');
 
         const valueObjectReturn = await build(`bounded context O
 in bounded context O {
     aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    data object Input { raw: string }
     value object V {
         raw: string
         method create() returns ${marker}
     }
 }`);
-        expect(valueObjectReturn.completion?.items.map(item => item.label)).not.toContain('E');
+        const valueObjectReturnLabels = valueObjectReturn.completion?.items.map(item => item.label) ?? [];
+        expect(valueObjectReturnLabels).not.toContain('E');
+        expect(valueObjectReturnLabels).not.toContain('Input');
 
-        const domainService = await build(`bounded context O
+        const entityMethod = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            method use(arg: ${marker})
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+    data object Input { raw: string }
+}`);
+        expect(entityMethod.completion?.items.map(item => item.label)).not.toContain('Input');
+
+        const entityReturn = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            method create() returns ${marker}
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+    data object Input { raw: string }
+}`);
+        expect(entityReturn.completion?.items.map(item => item.label)).not.toContain('Input');
+
+        const aggregateValueObjectMethod = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+        value object V {
+            raw: string
+            method use(arg: ${marker})
+        }
+    }
+    data object Input { raw: string }
+}`);
+        expect(aggregateValueObjectMethod.completion?.items.map(item => item.label)).not.toContain('Input');
+
+        const aggregateValueObjectReturn = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+        value object V {
+            raw: string
+            method create() returns ${marker}
+        }
+    }
+    data object Input { raw: string }
+}`);
+        expect(aggregateValueObjectReturn.completion?.items.map(item => item.label)).not.toContain('Input');
+
+        const domainServiceParameter = await build(`bounded context O
 in bounded context O {
     aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    data object Input { raw: string }
     domain service D {
         method use(arg: ${marker}) returns string
     }
 }`);
-        expect(domainService.completion?.items.map(item => item.label)).toEqual(
+        const domainServiceParameterLabels = domainServiceParameter.completion?.items.map(item => item.label) ?? [];
+        expect(domainServiceParameterLabels).not.toContain('Input');
+        expect(domainServiceParameterLabels).toEqual(
             expect.arrayContaining(['E', 'A.E'])
         );
+
+        const domainServiceReturn = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    data object Input { raw: string }
+    domain service D {
+        method use(arg: string) returns ${marker}
+    }
+}`);
+        expect(domainServiceReturn.completion?.items.map(item => item.label)).not.toContain('Input');
     });
 
     test('does not offer initial or identifier keywords outside their documented positions', async () => {

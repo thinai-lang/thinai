@@ -942,6 +942,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     return false;
                 }
             }
+            if (isDataObject(target) && (
+                isFactory(methodOwner) ||
+                isDomainService(methodOwner) ||
+                methodOwner && (isEntity(methodOwner) || isValueObject(methodOwner))
+            )) {
+                return false;
+            }
             if (isConstructor(parent)) {
                 if (isDomainEvent(target) || isIntegrationEvent(target) || isDataObject(target)) {
                     return false;
@@ -982,6 +989,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (!sourceAggregate || sourceAggregate !== getOwningAggregate(target)) {
                     return false;
                 }
+            }
+            if (isDataObject(target) && (
+                isDomainService(owner) ||
+                isEntity(owner) ||
+                isValueObject(owner)
+            )) {
+                return false;
             }
             if (isReadModel(target) && !isQueryService(owner)) {
                 return false;

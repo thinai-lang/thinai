@@ -109,9 +109,32 @@ Bounded-context-scoped query services model read-only operations. Application
 service methods may link to aggregate-root or factory methods with `invokes`.
 Repository loading/saving and transaction mechanics are implementation details.
 Factories and context-level value objects use identifiers and domain values
-rather than entity instances. Domain services may accept aggregate or entity
-parameters because they model domain operations, but their results are domain
-values. Integration-event declarations define public schemas;
+rather than entity instances. A factory that needs another aggregate uses its
+identifier or a value-object snapshot; if its input comes from a DataObject, an
+application service maps that DataObject into domain values first. Domain
+services may accept aggregate or entity parameters because they model domain
+operations, but their signatures use domain values rather than DataObjects.
+Method and constructor signatures follow this table:
+
+| Method / constructor | Inputs | Outputs |
+|---|---|---|
+| Entity constructor | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | No return |
+| Context-level value-object constructor | Domain values; no entities, DataObjects, events, or read models | No return |
+| Aggregate-owned value-object constructor | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | No return |
+| Entity method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
+| Aggregate-owned value-object method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
+| Context-level value-object method | Domain values; no entities, DataObjects, events, or read models | Domain values |
+| Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | Its own aggregate root only |
+| Domain-service method | Entity/aggregate parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
+| Application-service method | Domain values and DataObjects; no entities or read models; event handlers have exactly one event parameter and no other parameters | Domain values and DataObjects; no entities or read models |
+| Query-service method | Domain values and DataObjects; no entities, read models, or events | Domain values, DataObjects, and read models; no entities |
+| Projector method | Exactly one domain or integration event | No return; only `projects` targets |
+
+“Domain values” means primitives, enums, value objects, identifiers, and
+collections of those values. DataObjects remain application-service and
+query-service boundary shapes. Aggregate-owned value objects retain the
+existing allowance for same-aggregate entity references.
+Integration-event declarations define public schemas;
 the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
 
@@ -153,6 +176,9 @@ values such as value objects and enums, or collections of those results.
 Published cross-context query APIs expose primitives or explicitly exposed
 data-object contracts. Data objects are identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.
+Use value objects or identifiers inside entity, value-object, factory, and
+domain-service methods and constructors; DataObjects belong at application and
+query boundaries.
 Multiple application services may invoke the same aggregate. A top-level
 `journey` sequences user-invoked application-service commands across bounded
 contexts. Its order is descriptive; background event handoffs stay with the

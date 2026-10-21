@@ -636,11 +636,30 @@ export class ThinaiValidator {
                     getOwningAggregate(method) ? 'aggregate' : 'value-object');
             }
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
-            if (isDomainService(method.$container) && returnTypes.some(reference => isEntity(reference.ref))) {
-                accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
-                    node: method,
-                    property: 'returnType'
-                });
+            if (isDomainService(method.$container)) {
+                this.checkDataObjectBoundaryUse(
+                    method,
+                    returnTypes,
+                    accept,
+                    'returnType',
+                    'Domain-service methods must return domain values, not DataObjects.'
+                );
+                if (returnTypes.some(reference => isEntity(reference.ref))) {
+                    accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
+                        node: method,
+                        property: 'returnType'
+                    });
+                }
+            } else if (isEntity(method.$container) || isValueObject(method.$container)) {
+                this.checkDataObjectBoundaryUse(
+                    method,
+                    returnTypes,
+                    accept,
+                    'returnType',
+                    isEntity(method.$container)
+                        ? 'Entity method signatures must use domain values, not DataObjects.'
+                        : 'Value-object signatures must use domain values, not DataObjects.'
+                );
             }
         }
         validateMethodInvocations(method, applicationService, queryService, eventParameters, accept, {
@@ -997,9 +1016,33 @@ export class ThinaiValidator {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'application');
             } else if (isFactory(owner)) {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'factory');
+                this.checkDataObjectBoundaryUse(
+                    parameter,
+                    typeReferences,
+                    accept,
+                    'type',
+                    'Factory method signatures must use identifiers or domain values, not DataObjects.'
+                );
+            } else if (isDomainService(owner)) {
+                this.checkDataObjectBoundaryUse(
+                    parameter,
+                    typeReferences,
+                    accept,
+                    'type',
+                    'Domain-service methods must accept domain values or entity/aggregate parameters, not DataObjects.'
+                );
             } else if (isEntity(owner) || isValueObject(owner)) {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
                     getOwningAggregate(owner) ? 'aggregate' : 'value-object');
+                this.checkDataObjectBoundaryUse(
+                    parameter,
+                    typeReferences,
+                    accept,
+                    'type',
+                    isEntity(owner)
+                        ? 'Entity method signatures must use domain values, not DataObjects.'
+                        : 'Value-object signatures must use domain values, not DataObjects.'
+                );
             }
             // Domain services deliberately allow entity/aggregate parameters (DDD domain services).
             // Projector parameters are constrained to a single event by checkMethod.
@@ -1065,6 +1108,21 @@ export class ThinaiValidator {
                 });
                 return;
             }
+        }
+    }
+
+    private checkDataObjectBoundaryUse(
+        node: AstNode,
+        references: Reference<TypeDeclaration>[],
+        accept: ValidationAcceptor,
+        property: string,
+        message: string
+    ): void {
+        if (references.some(reference => isDataObject(reference.ref))) {
+            accept('error', message, {
+                node,
+                property
+            });
         }
     }
 

@@ -1105,8 +1105,8 @@ in bounded context Ordering {
     test('allows application services to invoke a pure domain service and aggregate root directly', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
-                data object PriceRequest { subtotal: number }
-                data object PriceQuote { total: number }
+                value object PriceRequest { subtotal: number }
+                value object PriceQuote { total: number }
                 aggregate Order {
                     root entity Order {
                         method place(quote: PriceQuote) returns PriceQuote
@@ -3171,6 +3171,97 @@ in bounded context Ordering {
         expect(messages).toContain('Factory method signatures must use identifiers or domain values, not entity instances.');
         expect(messages).toContain('Value-object signatures must use identifiers or domain values, not entity instances.');
         expect(messages).toContain('A constructor must reference another aggregate through its identifier, not its entity.');
+    });
+
+    test('rejects DataObjects in factory, context value-object, and domain-service signatures', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                data object Payload { raw: string }
+                factory OrderFactory {
+                    method create(input: Payload) returns Order.Order
+                }
+                value object Snapshot {
+                    raw: string
+                    method inspect(input: Payload) returns Payload
+                }
+                domain service Pricing {
+                    method quote(input: Payload) returns Payload
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Factory method signatures must use identifiers or domain values, not DataObjects.');
+        expect(messages.filter(message =>
+            message === 'Value-object signatures must use domain values, not DataObjects.'
+        )).toHaveLength(2);
+        expect(messages).toContain('Domain-service methods must accept domain values or entity/aggregate parameters, not DataObjects.');
+        expect(messages).toContain('Domain-service methods must return domain values, not DataObjects.');
+    });
+
+    test('rejects DataObjects in entity and aggregate-owned value-object methods', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method useEntity(input: Payload) returns Payload
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                    value object Inline {
+                        raw: string
+                        method useValue(input: Payload) returns Payload
+                    }
+                }
+                data object Payload { raw: string }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages.filter(message =>
+            message === 'Entity method signatures must use domain values, not DataObjects.'
+        )).toHaveLength(2);
+        expect(messages.filter(message =>
+            message === 'Value-object signatures must use domain values, not DataObjects.'
+        )).toHaveLength(2);
+    });
+
+    test('allows DataObjects at application boundaries and domain values in factory and domain-service signatures', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                data object PlaceOrderInput { orderId: OrderId }
+                value object OrderDraft { orderId: OrderId }
+                factory OrderFactory {
+                    method create(draft: OrderDraft) returns Order.Order
+                }
+                application service App {
+                    method place(input: PlaceOrderInput) {
+                        invokes OrderFactory.create
+                    }
+                }
+                value object Snapshot {
+                    raw: string
+                    constructor(id: OrderId)
+                    method inspect(id: OrderId) returns string
+                }
+                domain service Pricing {
+                    method inspect(order: Order.Order) returns OrderDraft
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
     test('allows projector behavior to reference its aggregate-repository read source', async () => {

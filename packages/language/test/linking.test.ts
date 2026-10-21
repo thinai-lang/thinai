@@ -1279,8 +1279,8 @@ import { Second } from "./import-range-map-two.tni"
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/nested-specification-path.tni'),
             `bounded context Ordering in bounded context Ordering {
-                data object AddressInput { street: string }
-                data object OrderInput { address: AddressInput }
+                value object AddressInput { street: string }
+                value object OrderInput { address: AddressInput }
                 aggregate Order {
                     root entity Order {
                         method place(input: OrderInput) {
@@ -1312,8 +1312,8 @@ import { Second } from "./import-range-map-two.tni"
         const order = aggregate?.members.find(isEntity);
         const method = order?.methods[0];
         const parameter = method?.parameters[0];
-        const dataObjects = context.members.filter(isDataObject);
-        const input = dataObjects.find(dataObject => dataObject.name === 'OrderInput');
+        const valueObjects = context.members.filter(isValueObject);
+        const input = valueObjects.find(valueObject => valueObject.name === 'OrderInput');
         const address = input?.fields.find(field => field.name === 'address')?.type?.ref;
         const street = isValueObject(address) || isDataObject(address)
             ? address.fields.find(field => field.name === 'street')
