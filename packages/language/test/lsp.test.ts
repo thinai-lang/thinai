@@ -3874,4 +3874,153 @@ in bounded context Alpha {
         expect(labels).not.toContain('realizes');
         expect(labels).toContain('reads from');
     });
+
+    test('offers aggregate path containers in journey contract completion', async () => {
+        const marker = '__CURSOR__';
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order { identifier id: OrderId }
+        value object OrderId { raw: string }
+    }
+    data object Input { orderId: OrderId }
+    application service App { method place(input: Input) }
+}
+actor Customer
+journey PlaceOrder {
+    by Customer {
+        invoke Ordering.App.place
+            with "Use [[Ordering.${marker}]]"
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-aggregate-path-completion.tni'), source.replace(marker, '')
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf(marker))
+        });
+        expect(completion?.items.map(item => item.label)).toContain('Order');
+    });
+
+    test('describes real parameter names in completion details', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    application service App {
+        method use(input: string) {
+            behavior "Use [[inp]]."
+        }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/real-parameter-detail.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('[[inp') + '[[inp'.length)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'input');
+        expect(item?.detail).toBe('Parameter input: string');
+    });
+
+    test('offers map key and value shape fields in specification completion', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    value object Key { keyField: string }
+    value object Value { valueField: string }
+    application service App {
+        method use(input: Map<Key, Value>) {
+            behavior "Use [[input.]]."
+        }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/map-key-shape-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf('[[input.]]') + '[[input.'.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('keyField');
+        expect(labels).toContain('valueField');
+    });
+
+    test('completes aliased prior command results in journeys', async () => {
+        const app = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-prior-command-app.tni'),
+            `bounded context Ordering
+in bounded context Ordering {
+    data object Result {
+        status: string
+    }
+    application service App {
+        method first() returns Result
+        method second()
+    }
+}`
+        );
+        const source = `import { Ordering as Orders } from "./aliased-prior-command-app.tni"
+actor Customer
+journey J {
+    by Customer {
+        invoke Orders.App.first
+        invoke Orders.App.second
+            when "Previous [[Orders.App.first.result.status]]"
+    }
+}`;
+        const journey = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/aliased-prior-command-journey.tni'), source
+        );
+        documents.push(app, journey);
+        await services.shared.workspace.DocumentBuilder.build([app, journey], { validation: true });
+        expect(journey.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(journey, {
+            textDocument: { uri: journey.uri.toString() },
+            position: journey.textDocument.positionAt(
+                source.indexOf('[[Orders.App.first.result.status]]') + '[[Orders.App.first.result.'.length
+            )
+        });
+        expect(completion?.items.map(item => item.label)).toContain('status');
+    });
+
+    test('completes nested event payload fields from an event parameter', async () => {
+        const marker = '__CURSOR__';
+        const source = `bounded context Api
+bounded context Consumer
+in bounded context Api {
+    module Contracts {
+        exposes E, Address
+        value object Address { city: string }
+        integration event E { address: Address }
+    }
+}
+in bounded context Consumer {
+    application service App {
+        method handle(source: Api.Contracts.E) {
+            behavior "Use [[source.address.${marker}]]."
+        }
+    }
+}
+context map M {
+    customer Consumer -> supplier Api
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/nested-event-payload-completion.tni'), source.replace(marker, '')
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(source.indexOf(marker))
+        });
+        expect(completion?.items.map(item => item.label)).toContain('city');
+    });
 });

@@ -153,9 +153,8 @@ export class ThinaiReadDependencyValidator {
 
     checkProjectorMethod(method: Method, projector: Projector, accept: ValidationAcceptor): void {
         const cstNode = method.$cstNode;
-        const hasClosedBody = cstNode !== undefined && findCstTokenOffset(cstNode, '{') !== undefined &&
-            cstNode.text.trimEnd().endsWith('}') && isSyntacticallyComplete(method);
-        if (method.projects.length === 0 && hasClosedBody) {
+        const isComplete = isSyntacticallyComplete(method);
+        if (method.projects.length === 0 && isComplete) {
             accept('error', 'A projector method must declare at least one read model with projects.', {
                 node: method,
                 property: 'projects'
@@ -181,7 +180,7 @@ export class ThinaiReadDependencyValidator {
             }
         }
         const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
-        if ((eventParameters.length !== 1 || method.parameters.length !== 1) && hasClosedBody) {
+        if ((eventParameters.length !== 1 || method.parameters.length !== 1) && isComplete) {
             accept('error', 'A projector method must handle exactly one domain or integration event.', {
                 node: method,
                 property: 'parameters'

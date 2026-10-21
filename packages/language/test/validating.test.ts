@@ -2817,6 +2817,199 @@ in bounded context Ordering {
         )).toEqual([]);
     });
 
+    test('validates named types inside nested collection levels', async () => {
+        const document = await parse(`
+            bounded context A
+            in bounded context A {
+                aggregate Outer {
+                    root entity Root {
+                        identifier id: Id
+                    }
+                    value object Id {
+                        raw: string
+                    }
+                    value object Secret {
+                        text: string
+                    }
+                }
+            }
+            bounded context B
+            in bounded context B {
+                data object UsesSecrets {
+                    direct: A.Outer.Secret
+                    nestedList: List<List<A.Outer.Secret>>
+                    nestedMap: Map<string, List<A.Outer.Secret>>
+                }
+                data object UsesEntities {
+                    direct: A.Outer.Root
+                    nested: List<Map<string, A.Outer.Root>>
+                }
+                application service App {
+                    method use(items: List<Map<string, A.Outer.Root>>)
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages.filter(message =>
+            message === 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.'
+        )).toHaveLength(3);
+        expect(messages.filter(message =>
+            message === 'Data objects may contain value data, but not entities or read models.'
+        )).toHaveLength(2);
+        expect(messages.filter(message =>
+            message === 'Application-service signatures must use identifiers or data values, not entity instances.'
+        )).toHaveLength(1);
+    });
+
+    test('allows a published query result from an exposed sibling module', async () => {
+        const document = await parse(`
+            bounded context Api
+            bounded context Consumer
+            in bounded context Api {
+                module Contracts {
+                    exposes Result
+                    data object Result {
+                        text: string
+                    }
+                }
+                module Services depends on Contracts {
+                    exposes Queries
+                    query service Queries {
+                        method find() returns Result
+                    }
+                }
+            }
+            in bounded context Consumer {
+                application service App {
+                    method use() {
+                        reads from Api.Services.Queries.find
+                        behavior "Use [[Api.Contracts.Result.text]]."
+                    }
+                }
+            }
+            context map M {
+                customer Consumer -> supplier Api
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows event handlers to link nested integration-event payload fields', async () => {
+        const document = await parse(`
+            bounded context Api
+            bounded context Consumer
+            in bounded context Api {
+                module Contracts {
+                    exposes E, Address
+                    value object Address {
+                        city: string
+                    }
+                    integration event E {
+                        address: Address
+                    }
+                }
+            }
+            in bounded context Consumer {
+                application service App {
+                    method handle(source: Api.Contracts.E) {
+                        behavior "Use [[source.address.city]]."
+                    }
+                }
+            }
+            context map M {
+                customer Consumer -> supplier Api
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('requires bodyless projector methods to declare a target and event', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                projector Projection {
+                    method project()
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('A projector method must declare at least one read model with projects.');
+        expect(messages).toContain('A projector method must handle exactly one domain or integration event.');
+    });
+
+    test('prevents value-object behavior from invoking aggregate-root behavior', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place()
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        method normalize() {
+                            invokes Order.Order.place
+                        }
+                        raw: string
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => diagnostic.message)).toContain(
+            'Only entity behavior or an application service may invoke aggregate-root behavior.'
+        );
+    });
+
+    test('reports one owner-level diagnostic for invalid event and object fields', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                data object Payload {
+                    item: Ordering.Order.Order
+                }
+                read model Summary {
+                    item: Ordering.Order.Order
+                }
+                integration event Contract {
+                    item: Ordering.Order.Order
+                }
+                integration event AggregateValue {
+                    id: OrderId
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages.filter(message =>
+            message === 'Data objects may contain value data, but not entities or read models.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'Read models must project data rather than reference entity instances.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'Event payloads must not expose entity instances; use stable value data instead.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'An integration-event payload must not expose types owned by an aggregate.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'An aggregate must reference another aggregate through its identifier, not its entity.'
+        )).toHaveLength(0);
+    });
+
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

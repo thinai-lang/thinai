@@ -33,6 +33,7 @@ import {
     isValueObject,
     type ContextMap,
     type ContextRelationship,
+    type DomainEvent,
     type IntegrationEvent,
     type JourneyStep,
     type Method,
@@ -61,6 +62,78 @@ export class ThinaiReferencePolicy {
     isIntegrationEventExposed(event: IntegrationEvent): boolean {
         const module = getOwningModule(event);
         return module === undefined || isExposedByModule(module, event);
+    }
+
+    /**
+     * A specification inside an event handler may navigate the event payload
+     * contract, including nested value objects, data objects, and enum values.
+     * Cross-context access still requires an exposed event and an authorized
+     * context-map relationship.
+     */
+    isEventContractTargetVisible(source: AstNode, target: AstNode): boolean {
+        const method = AstUtils.getContainerOfType(source, isMethod);
+        if (!method) {
+            return false;
+        }
+        for (const parameter of method.parameters) {
+            const event = parameter.type?.ref;
+            if (!isDomainEvent(event) && !isIntegrationEvent(event)) {
+                continue;
+            }
+            if (!this.getEventContractTargets(event).has(target)) {
+                continue;
+            }
+            if (getOwningContextName(source) === getOwningContextName(event)) {
+                return true;
+            }
+            if (isIntegrationEvent(event) &&
+                this.isIntegrationEventExposed(event) &&
+                this.hasAuthorizedEventRelationship(source, event)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private getEventContractTargets(event: DomainEvent | IntegrationEvent): Set<AstNode> {
+        const targets = new Set<AstNode>();
+        const visited = new Set<AstNode>();
+        targets.add(event);
+        for (const field of event.fields) {
+            targets.add(field);
+            for (const reference of getTypeReferences(field.type, field.collection)) {
+                this.collectEventContractType(reference.ref, targets, visited);
+            }
+        }
+        return targets;
+    }
+
+    private collectEventContractType(
+        type: AstNode | undefined,
+        targets: Set<AstNode>,
+        visited: Set<AstNode>
+    ): void {
+        if (!type || visited.has(type) || isEntity(type) || isDomainEvent(type) ||
+            isIntegrationEvent(type) || isReadModel(type)) {
+            return;
+        }
+        if (!isDataObject(type) && !isValueObject(type) && !isEnumType(type)) {
+            return;
+        }
+        visited.add(type);
+        targets.add(type);
+        if (isEnumType(type)) {
+            for (const value of type.values) {
+                targets.add(value);
+            }
+            return;
+        }
+        for (const field of type.fields) {
+            targets.add(field);
+            for (const reference of getTypeReferences(field.type, field.collection)) {
+                this.collectEventContractType(reference.ref, targets, visited);
+            }
+        }
     }
 
     /**
@@ -141,7 +214,7 @@ export class ThinaiReferencePolicy {
                 return false;
             }
             const module = getOwningModule(type);
-            return module !== undefined && module === getOwningModule(method) && isExposedByModule(module, type);
+            return module !== undefined && isExposedByModule(module, type);
         });
     }
 

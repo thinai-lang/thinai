@@ -6,19 +6,32 @@ export function getTypeReferences(
     type?: Reference<TypeDeclaration>,
     collection?: CollectionType
 ): Reference<TypeDeclaration>[] {
-    return [
-        ...(type ? [type] : []),
-        ...(collection
-            ? AstUtils.streamReferences(collection)
-                .filter(referenceInfo => !referenceInfo.property?.endsWith('Path'))
-                .map(referenceInfo => isReference(referenceInfo.reference)
-                    ? referenceInfo.reference as Reference<TypeDeclaration>
-                    : undefined
-                )
-                .filter((reference): reference is Reference<TypeDeclaration> => reference !== undefined)
-                .toArray()
-            : [])
-    ];
+    const references: Reference<TypeDeclaration>[] = [];
+    if (type) {
+        references.push(type);
+    }
+    if (collection) {
+        collectCollectionReferences(collection, references);
+    }
+    return references;
+}
+
+function collectCollectionReferences(
+    collection: CollectionType,
+    references: Reference<TypeDeclaration>[]
+): void {
+    for (const referenceInfo of AstUtils.streamReferences(collection)) {
+        if (referenceInfo.property?.endsWith('Path') || !isReference(referenceInfo.reference)) {
+            continue;
+        }
+        references.push(referenceInfo.reference as Reference<TypeDeclaration>);
+    }
+    if (collection.elementCollection) {
+        collectCollectionReferences(collection.elementCollection, references);
+    }
+    if (collection.valueCollection) {
+        collectCollectionReferences(collection.valueCollection, references);
+    }
 }
 
 export interface CollectionTypeFormatOptions {

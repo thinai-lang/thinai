@@ -10,6 +10,7 @@ import {
     isDataObject,
     isDomainEvent,
     isEntity,
+    isEnumType,
     isIntegrationEvent,
     isModel,
     isReadModel,
@@ -74,6 +75,14 @@ export class ThinaiExternalScope {
                             const fieldName = getExportedName(field);
                             for (const name of this.getUnaliasedNames(fieldName)) {
                                 this.addScopeCandidate(candidates, this.descriptions.createDescription(field, name), name);
+                            }
+                        }
+                    }
+                    if (isEnumType(target) && this.reflection.isSubtype('EnumValue', referenceType)) {
+                        for (const value of target.values) {
+                            const valueName = getExportedName(value);
+                            for (const name of this.getUnaliasedNames(valueName)) {
+                                this.addScopeCandidate(candidates, this.descriptions.createDescription(value, name), name);
                             }
                         }
                     }

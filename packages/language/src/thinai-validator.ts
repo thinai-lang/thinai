@@ -65,7 +65,6 @@ import {
     isRepository,
     isQueryService,
     isReadModel,
-    isReadSourceReference,
     isSpecificationTextPart,
     isJourneyStep,
     isValueObject
@@ -262,14 +261,20 @@ export class ThinaiValidator {
     }
 
     checkField(field: Field, accept: ValidationAcceptor): void {
+        const owner = field.$container;
         const typeReferences = getTypeReferences(field.type, field.collection);
+        const isDataObjectField = isDataObject(owner);
+        const isReadModelField = isReadModel(owner);
         this.checkCrossContextTypeUse(field, typeReferences, accept);
-        this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModel(field.$container));
-        const isDataObjectField = isDataObject(field.$container);
-        if (field.identifier && !isEntity(field.$container)) {
+        // Data-object fields have their own entity/read-model diagnostic below;
+        // avoid reporting the same shape violation twice.
+        if (!isDataObjectField) {
+            this.checkReadModelTypeUse(field, typeReferences, accept, 'type', isReadModelField);
+        }
+        if (field.identifier && !isEntity(owner)) {
             const message = isDataObjectField
                 ? 'Data objects have no entity identity.'
-                : isReadModel(field.$container)
+                : isReadModelField
                     ? 'Read-model fields are projection data, not DDD entity identifiers.'
                     : 'Only entity fields may be marked as identifiers.';
             accept('error', message, { node: field, property: 'identifier' });
@@ -288,7 +293,7 @@ export class ThinaiValidator {
                 property: 'type'
             });
         }
-        if (isReadModel(field.$container) && typeReferences.some(reference =>
+        if (isReadModelField && typeReferences.some(reference =>
             isEntity(reference.ref)
         )) {
             accept('error', 'Read models must project data rather than reference entity instances.', {
@@ -299,7 +304,7 @@ export class ThinaiValidator {
         if (field.initialState !== undefined) {
             const stateType = field.type?.ref;
             const initialState = field.initialState.ref;
-            if (!isEntity(field.$container) || !stateType || !isEnumType(stateType) || field.optional) {
+            if (!isEntity(owner) || !stateType || !isEnumType(stateType) || field.optional) {
                 accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
                     node: field,
                     keyword: 'initial'
@@ -311,26 +316,28 @@ export class ThinaiValidator {
                 });
             }
         }
-        if (isDomainEvent(field.$container) || isIntegrationEvent(field.$container)) {
+        if (isDomainEvent(owner) || isIntegrationEvent(owner)) {
             if (typeReferences.some(reference => isEntity(reference.ref))) {
                 accept('error', 'Event payloads must not expose entity instances; use stable value data instead.', {
                     node: field,
                     property: 'type'
                 });
             }
-            if (isIntegrationEvent(field.$container) && typeReferences.some(reference =>
-                reference.ref !== undefined && getOwningAggregate(reference.ref) !== undefined
+            if (isIntegrationEvent(owner) && typeReferences.some(reference =>
+                reference.ref !== undefined && !isEntity(reference.ref) &&
+                getOwningAggregate(reference.ref) !== undefined
             )) {
                 accept('error', 'An integration-event payload must not expose types owned by an aggregate.', {
                     node: field,
                     property: 'type'
                 });
             }
-            if (isIntegrationEvent(field.$container)) {
-                const contractModule = getOwningModule(field.$container);
+            if (isIntegrationEvent(owner)) {
+                const contractModule = getOwningModule(owner);
                 const privateContractType = typeReferences.find(reference => {
                     const target = reference.ref;
-                    if (!target || isInSharedKernel(target) || (target.$type !== 'ValueObject' && target.$type !== 'EnumType')) {
+                    if (!target || isInSharedKernel(target) || getOwningAggregate(target) !== undefined ||
+                        (target.$type !== 'ValueObject' && target.$type !== 'EnumType')) {
                         return false;
                     }
                     return !contractModule || getOwningModule(target) !== contractModule ||
@@ -344,19 +351,21 @@ export class ThinaiValidator {
                 }
             }
         }
-        const sourceAggregate = getOwningAggregate(field);
-        for (const reference of typeReferences) {
-            const target = reference.ref;
-            const targetAggregate = target && isEntity(target) ? getOwningAggregate(target) : undefined;
-            if (targetAggregate && targetAggregate !== sourceAggregate) {
-                accept('error', 'An aggregate must reference another aggregate through its identifier, not its entity.', {
-                    node: field,
-                    property: 'type'
-                });
-                break;
+        if (isEntity(owner) || isValueObject(owner)) {
+            const sourceAggregate = getOwningAggregate(field);
+            for (const reference of typeReferences) {
+                const target = reference.ref;
+                const targetAggregate = target && isEntity(target) ? getOwningAggregate(target) : undefined;
+                if (targetAggregate && targetAggregate !== sourceAggregate) {
+                    accept('error', 'An aggregate must reference another aggregate through its identifier, not its entity.', {
+                        node: field,
+                        property: 'type'
+                    });
+                    break;
+                }
             }
         }
-        if (!field.identifier) {
+        if (!field.identifier || !isEntity(owner)) {
             return;
         }
         const identifierType = field.type?.ref;
@@ -1128,7 +1137,10 @@ export class ThinaiValidator {
             const sourceModule = getOwningModule(referenceInfo.container);
             const targetModule = getOwningModule(target);
             const crossesContext = isCrossContextOwned(referenceInfo.container, target);
-            if (isSpecificationTextPart(referenceInfo.container) && crossesContext && isInSharedKernel(target)) {
+            const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
+            const isEventContractTarget = isSpecificationReference &&
+                this.referencePolicy.isEventContractTargetVisible(referenceInfo.container, target);
+            if (isSpecificationReference && crossesContext && isInSharedKernel(target)) {
                 const sharedKernel = getOwningSharedKernel(target);
                 const sourceSharedKernel = getOwningSharedKernel(referenceInfo.container);
                 if (sharedKernel && sourceSharedKernel !== sharedKernel &&
@@ -1148,7 +1160,7 @@ export class ThinaiValidator {
                     return;
                 }
             }
-            if (isField(target) && crossesContext && !isInSharedKernel(target)) {
+            if (isField(target) && crossesContext && !isInSharedKernel(target) && !isEventContractTarget) {
                 const event = isIntegrationEvent(target.$container) ? target.$container : undefined;
                 const authorizedPublicField = event !== undefined && this.referencePolicy.isIntegrationEventExposed(event) &&
                     this.referencePolicy.hasAuthorizedEventRelationship(referenceInfo.container, event);
@@ -1164,18 +1176,14 @@ export class ThinaiValidator {
                     return;
                 }
             }
-            const publishedQueryRead = isReadSourceReference(referenceInfo.container) && isMethod(target) &&
-                isQueryService(target.$container) && this.referencePolicy.isQueryServiceExposed(target.$container) &&
-                this.referencePolicy.hasAuthorizedQueryRelationship(referenceInfo.container, target);
             if (isSpecificationTextPart(referenceInfo.container) && target.$type === 'Method' &&
-                crossesContext && !isInSharedKernel(target) && !publishedQueryRead) {
+                crossesContext && !isInSharedKernel(target)) {
                 accept('error', 'Specification text cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container as AstNode,
                     property: referenceInfo.property
                 });
                 return;
             }
-            const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
             if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
                 (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
                     isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target) ||
@@ -1183,6 +1191,7 @@ export class ThinaiValidator {
                         isApplicationService(target) || isDomainService(target) || isQueryService(target) ||
                         isProjector(target) || isFactory(target) || isModule(target)
                     )) &&
+                !isEventContractTarget &&
                 !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,

@@ -20,7 +20,9 @@ export class ThinaiCompletionDetails {
         if (!node) {
             return `${description.type} ${description.name}`;
         }
-        const name = this.getCanonicalName(node, description.name);
+        const name = isParameter(node)
+            ? description.name
+            : this.getCanonicalName(node, description.name);
         if (isMethod(node)) {
             const parameters = node.parameters.map(parameter => this.getParameterDetail(parameter)).join(', ');
             const result = node.returnPrimitive ??

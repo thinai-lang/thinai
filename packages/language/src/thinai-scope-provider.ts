@@ -15,6 +15,8 @@ import {
     type ContextMap,
     type Constructor,
     type DataObject,
+    type DomainEvent,
+    type IntegrationEvent,
     type Exposure,
     type Field,
     type ImportComponent,
@@ -437,7 +439,16 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     continue;
                 }
                 seenPriorCommands.add(command);
-                this.addJourneyCommandContractSymbols(pending, command, referenceType);
+                const commandPath = prior.targets
+                    .map(reference => reference.$refText)
+                    .filter(text => text.length > 0)
+                    .join('.');
+                this.addJourneyCommandContractSymbols(
+                    pending,
+                    command,
+                    commandPath || getExportedName(command as AstNode & { name: string }) || command.name,
+                    referenceType
+                );
             }
 
             const resultPrefixes = new Set<string>();
@@ -483,9 +494,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     private addJourneyCommandContractSymbols(
         descriptions: AstNodeDescription[],
         command: Method,
+        prefix: string,
         referenceType: string
     ): void {
-        const prefix = getExportedName(command as AstNode & { name: string }) || command.name;
         for (const parameter of command.parameters) {
             const parameterPrefix = `${prefix}.${parameter.name}`;
             this.addSpecificationSymbol(descriptions, parameter, parameterPrefix, referenceType);
@@ -548,14 +559,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
             return;
         }
-        if (isDataObject(type) || isReadModel(type) || isValueObject(type)) {
+        if (isDataObject(type) || isReadModel(type) || isValueObject(type) ||
+            isDomainEvent(type) || isIntegrationEvent(type)) {
             this.addShapeFields(descriptions, type, prefix, referenceType, visited);
         }
     }
 
     private addShapeFields(
         descriptions: AstNodeDescription[],
-        shape: DataObject | ReadModel | ValueObject,
+        shape: DataObject | ReadModel | ValueObject | DomainEvent | IntegrationEvent,
         prefix: string,
         referenceType: string,
         visited: Set<AstNode>
@@ -582,14 +594,39 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         referenceType: string,
         visited: Set<AstNode>
     ): void {
-        const nestedCollection = collection.kind === 'Map' ? collection.valueCollection : collection.elementCollection;
+        this.addCollectionMemberShape(
+            descriptions,
+            collection.elementCollection,
+            collection.elementType?.ref,
+            prefix,
+            referenceType,
+            visited
+        );
+        if (collection.kind === 'Map') {
+            this.addCollectionMemberShape(
+                descriptions,
+                collection.valueCollection,
+                collection.valueType?.ref,
+                prefix,
+                referenceType,
+                visited
+            );
+        }
+    }
+
+    private addCollectionMemberShape(
+        descriptions: AstNodeDescription[],
+        nestedCollection: CollectionType | undefined,
+        type: AstNode | undefined,
+        prefix: string,
+        referenceType: string,
+        visited: Set<AstNode>
+    ): void {
         if (nestedCollection) {
             this.addCollectionShapeFields(descriptions, nestedCollection, prefix, referenceType, visited);
             return;
         }
-
-        const shape = (collection.kind === 'Map' ? collection.valueType : collection.elementType)?.ref;
-        this.addTypeShapeSymbols(descriptions, shape, prefix, referenceType, visited);
+        this.addTypeShapeSymbols(descriptions, type, prefix, referenceType, visited);
     }
 
     private addSpecificationSymbol(
@@ -927,6 +964,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         const journeyStep = AstUtils.getContainerOfType(context.container, isJourneyStep);
         if (journeyStep) {
+            // Aggregates and entities are private as terminal targets, but they
+            // are necessary path containers when a command contract exposes a
+            // type declared inside an aggregate.
+            if ((isAggregate(target) || isEntity(target)) &&
+                !this.isTerminalSpecificationSegment(context)) {
+                return true;
+            }
             const kind = getJourneySpecificationKind(context.container) ?? 'when';
             return this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind);
         }
@@ -945,6 +989,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             const targetModule = getOwningModule(target);
             return targetModule === undefined || isExposedByModule(targetModule, target);
         }
+        if (this.referencePolicy.isEventContractTargetVisible(context.container, target)) {
+            return true;
+        }
 
         if (isField(target)) {
             return isIntegrationEvent(target.$container)
@@ -961,6 +1008,22 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.referencePolicy.isPublishedReadResponseType(context.container, target);
         }
         return false;
+    }
+
+    private isTerminalSpecificationSegment(context: ReferenceInfo): boolean {
+        const part = context.container;
+        if (!isSpecificationTextPart(part)) {
+            return false;
+        }
+        if (context.property === 'target') {
+            return part.targets.length === 0;
+        }
+        if (context.property !== 'targets') {
+            return false;
+        }
+        const referenceText = context.reference?.$refText ?? '';
+        const index = context.index ?? part.targets.length - 1;
+        return index === part.targets.length - 1 && referenceText.length > 0;
     }
 
     private isSupportedEventEmission(context: ReferenceInfo, target: AstNode): boolean {

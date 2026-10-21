@@ -1,6 +1,6 @@
 import type { AstNode } from 'langium';
 import type { Aggregate, ApplicationService, Method, Parameter, QueryService, SharedKernel } from './generated/ast.js';
-import { isApplicationService, isDomainService, isEntity, isFactory, isQueryService } from './generated/ast.js';
+import { isApplicationService, isDomainService, isEntity, isFactory, isProjector, isQueryService } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
 import { getOwningModule, isExposedByModule } from './thinai-scope-utils.js';
 
@@ -85,6 +85,14 @@ export function getMethodInvocationViolations(
     if (targetAggregate && !context.isAggregateRootMethod(target, targetAggregate) &&
         !isEntity(method.$container) && !isAssociatedFactoryMethod) {
         violations.push('Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.');
+    }
+    if (targetAggregate && targetIsAggregateRoot && !isEntity(method.$container) &&
+        !applicationService && !isDomainService(method.$container) && !queryService) {
+        violations.push('Only entity behavior or an application service may invoke aggregate-root behavior.');
+    }
+    if (isProjector(target.$container) && !target.parameters.some(context.isEventParameter) &&
+        !queryService && !isDomainService(method.$container)) {
+        violations.push('Projector methods cannot be invoked directly.');
     }
     if (sourceAggregate && targetAggregate && targetAggregate !== sourceAggregate) {
         violations.push('Domain behavior must not invoke another aggregate directly.');
