@@ -44,6 +44,8 @@ import {
     isJourneyStep,
     isIntegrationEvent,
     isEventReference,
+    isEventEmission,
+    isReadDependency,
     isPartnershipRelationship,
     isCustomerSupplierRelationship,
     isSeparateWaysRelationship,
@@ -53,6 +55,7 @@ import {
     isMethod,
     isEnumType,
     isTransitionChange,
+    isModel,
     isModule,
     isModuleReference,
     isImportComponent,
@@ -645,6 +648,29 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
 
+        if (isImportComponent(context.container) && context.property === 'component') {
+            const document = AstUtils.getDocument(context.container);
+            const root = document.parseResult.value;
+            if (isModel(root)) {
+                const currentComponent = context.container;
+                const targetUri = AstUtils.getDocument(target).uri.toString();
+                for (const importDeclaration of root.imports) {
+                    if (importDeclaration.components.length === 0) {
+                        const uri = resolveImportUri(document, importDeclaration);
+                        if (uri?.toString() === targetUri) {
+                            return false;
+                        }
+                    }
+                    for (const component of importDeclaration.components) {
+                        if (component !== currentComponent && component.component?.ref === target) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
         if (isJourneyStep(context.container)) {
             // Journeys are model-level timelines, not modules. Their command
             // targets are constrained by command kind and import scope, not by
@@ -662,7 +688,20 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             // completion supplies a synthetic reference whose Exposure node
             // has not been parsed yet.
             const owningModule = getOwningModule(exposure ?? declarationReference!);
-            return owningModule !== undefined && getOwningModule(target) === owningModule;
+            if (owningModule === undefined || getOwningModule(target) !== owningModule) {
+                return false;
+            }
+            if (context.property === 'target') {
+                const currentDeclaration = AstUtils.getContainerOfType(context.container, isNamedDeclarationReference);
+                if (currentDeclaration && owningModule.exposures.some(candidate =>
+                    candidate.declarations.some(declaration =>
+                        declaration !== currentDeclaration && declaration.target?.ref === target
+                    )
+                )) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         if (!this.isAvailableContextMapContext(context, target)) {
@@ -673,7 +712,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const targetModule = getOwningModule(target);
         if (isModuleReference(context.container) && context.property === 'target') {
             const dependencySource = context.container.$container;
-            return isModule(target) && target !== dependencySource &&
+            if (!isModule(dependencySource)) {
+                return false;
+            }
+            const alreadyDependsOn = dependencySource.dependencies.some(dependency =>
+                dependency !== context.container && dependency.target?.ref === target
+            );
+            return isModule(target) && target !== dependencySource && !alreadyDependsOn &&
                 getOwningContextName(dependencySource) === getOwningContextName(target) &&
                 !moduleDependsTransitivelyOn(target, dependencySource);
         }
@@ -696,10 +741,26 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isEventReference(context.container)) {
+            if (context.property === 'target') {
+                const emission = context.container.$container;
+                if (isEventEmission(emission) && emission.events.some(candidate =>
+                    candidate !== context.container && candidate.target?.ref === target
+                )) {
+                    return false;
+                }
+            }
             return this.isSupportedEventEmission(context, target);
         }
 
         if (isReadSourceReference(context.container)) {
+            if (context.property === 'target') {
+                const dependency = context.container.$container;
+                if (isReadDependency(dependency) && dependency.sources.some(candidate =>
+                    candidate !== context.container && candidate.target?.ref === target
+                )) {
+                    return false;
+                }
+            }
             return this.isSupportedReadSource(context.container, target);
         }
 
@@ -714,6 +775,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 current = current.$container;
             }
             if (!isMethod(current) || !isProjector(current.$container)) {
+                return false;
+            }
+            if (context.property === 'target' && current.projects.some(project =>
+                project !== context.container && project.target?.ref === target
+            )) {
                 return false;
             }
             return isReadModel(target)
@@ -838,12 +904,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     return false;
                 }
                 if (!isInSharedKernel(target)) {
-                    const contractModule = getOwningModule(owner);
-                    if (!contractModule || getOwningModule(target) !== contractModule ||
-                        (!isValueObject(target) && !isEnumType(target)) ||
-                        !contractModule.exposures.some(exposure =>
-                            exposure.declarations.some(declaration => declaration.target.ref === target)
-                        )) {
+                    const targetModule = getOwningModule(target);
+                    if (!targetModule || (!isValueObject(target) && !isEnumType(target)) ||
+                        !isExposedByModule(targetModule, target)) {
                         return false;
                     }
                 }
@@ -872,13 +935,19 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 if (sourceAggregate !== undefined && sourceAggregate !== targetAggregate) {
                     return false;
                 }
+                if (isFactory(methodOwner)) {
+                    return false;
+                }
+                if (methodOwner && (isEntity(methodOwner) || isValueObject(methodOwner)) && !sourceAggregate) {
+                    return false;
+                }
             }
             if (isConstructor(parent)) {
                 if (isDomainEvent(target) || isIntegrationEvent(target) || isDataObject(target)) {
                     return false;
                 }
                 const sourceAggregate = getOwningAggregate(parent);
-                if (isEntity(target) && target.root && getOwningAggregate(target) !== sourceAggregate) {
+                if (isEntity(target) && (!sourceAggregate || getOwningAggregate(target) !== sourceAggregate)) {
                     return false;
                 }
             }
@@ -908,10 +977,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (isEntity(target) && (isDomainService(owner) || isApplicationService(owner) || isQueryService(owner))) {
                 return false;
             }
-            const sourceAggregate = getOwningAggregate(method);
-            if (isEntity(target) && sourceAggregate !== undefined &&
-                sourceAggregate !== getOwningAggregate(target)) {
-                return false;
+            if (isEntity(target) && (isEntity(owner) || isValueObject(owner))) {
+                const sourceAggregate = getOwningAggregate(method);
+                if (!sourceAggregate || sourceAggregate !== getOwningAggregate(target)) {
+                    return false;
+                }
             }
             if (isReadModel(target) && !isQueryService(owner)) {
                 return false;
@@ -1004,7 +1074,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.referencePolicy.isIntegrationEventExposed(target) &&
                 this.referencePolicy.hasAuthorizedEventRelationship(context.container, target);
         }
-        if (isDataObject(target)) {
+        if (isDataObject(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target)) {
             return this.referencePolicy.isPublishedReadResponseType(context.container, target);
         }
         return false;

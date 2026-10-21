@@ -317,7 +317,7 @@ SubdomainKind returns string:
     'core' | 'supporting' | 'generic';
 
 hidden terminal WS: /\s+/;
-terminal ID: /[_a-zA-Z][\w_]*/;
+terminal ID: /[_a-zA-Z][\w_]*|`[a-zA-Z0-9_ -]+`/;
 terminal TRIPLE_DOUBLE_STRING_START: /"""/;
 terminal TRIPLE_DOUBLE_STRING_END: /\u0000"""/;
 terminal TRIPLE_DOUBLE_STRING_TEXT: /(\\.|"(?!"\")|[^"\\\[]|\[(?!\[))+/;

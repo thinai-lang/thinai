@@ -197,17 +197,33 @@ export class ThinaiReadDependencyValidator {
                 keyword: 'returns'
             });
         }
+        const readSources = new Set<AstNode>();
+        for (const read of method.reads) {
+            for (const source of read.sources) {
+                if (source.target?.ref) {
+                    readSources.add(source.target.ref);
+                }
+            }
+        }
         for (const repository of this.getReadRepositoryReferences(method)) {
             if (isRepository(repository)) {
+                if (readSources.has(repository)) {
+                    continue;
+                }
                 accept('error', 'A projector may describe query-repository output, not writes to an aggregate repository.', {
                     node: method,
                     property: 'behaviors'
                 });
-            } else if (!method.projects.some(project => project.target.ref === repository.readModel.ref)) {
-                accept('error', 'A projector method may reference only query repositories for its declared projection targets.', {
-                    node: method,
-                    property: 'behaviors'
-                });
+            } else {
+                const projectedReadModel = repository.readModel?.ref;
+                if (!projectedReadModel || !method.projects.some(project =>
+                    project.target?.ref === projectedReadModel
+                )) {
+                    accept('error', 'A projector method may reference only query repositories for its declared projection targets.', {
+                        node: method,
+                        property: 'behaviors'
+                    });
+                }
             }
         }
     }

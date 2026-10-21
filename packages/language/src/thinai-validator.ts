@@ -1,6 +1,7 @@
 import {
     type AstNode,
     type Reference,
+    type ReferenceInfo,
     AstUtils,
     DocumentState,
     type ValidationAcceptor,
@@ -48,6 +49,7 @@ import type {
 import {
     isAggregate,
     isApplicationService,
+    isConstructor,
     isDomainEvent,
     isDomainService,
     isEntity,
@@ -58,6 +60,7 @@ import {
     isEnumType,
     isModule,
     isMethod,
+    isMethodInvocation,
     isProjector,
     isDataObject,
     isQueryRepository,
@@ -333,15 +336,14 @@ export class ThinaiValidator {
                 });
             }
             if (isIntegrationEvent(owner)) {
-                const contractModule = getOwningModule(owner);
                 const privateContractType = typeReferences.find(reference => {
                     const target = reference.ref;
                     if (!target || isInSharedKernel(target) || getOwningAggregate(target) !== undefined ||
                         (target.$type !== 'ValueObject' && target.$type !== 'EnumType')) {
                         return false;
                     }
-                    return !contractModule || getOwningModule(target) !== contractModule ||
-                        !isExposedByModule(contractModule, target);
+                    const targetModule = getOwningModule(target);
+                    return targetModule === undefined || !isExposedByModule(targetModule, target);
                 });
                 if (privateContractType) {
                     accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
@@ -627,7 +629,12 @@ export class ThinaiValidator {
         if (method.returnType || method.returnCollection) {
             const returnTypes = getTypeReferences(method.returnType, method.returnCollection);
             this.checkCrossContextTypeUse(method, returnTypes, accept, 'returnType');
-            this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', applicationService !== undefined || queryService !== undefined);
+            if (applicationService || queryService) {
+                this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', 'application');
+            } else if (isEntity(method.$container) || isValueObject(method.$container)) {
+                this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType',
+                    getOwningAggregate(method) ? 'aggregate' : 'value-object');
+            }
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
             if (isDomainService(method.$container) && returnTypes.some(reference => isEntity(reference.ref))) {
                 accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
@@ -650,6 +657,7 @@ export class ThinaiValidator {
             this.checkExposedCommandContract(method, accept);
         }
         if (queryService) {
+            this.checkExposedQueryContract(method, queryService, accept);
             this.readDependencyValidator.checkQueryServiceMethod(method, queryService, accept);
         }
         if (applicationService) {
@@ -751,6 +759,38 @@ export class ThinaiValidator {
             node: method,
             property: 'name',
             code: 'exposed-command-private-contract'
+        });
+    }
+
+    private checkExposedQueryContract(method: Method, queryService: QueryService, accept: ValidationAcceptor): void {
+        if (!this.referencePolicy.isQueryServiceExposed(queryService) ||
+            !this.referencePolicy.isExposedQueryResult(method)) {
+            return;
+        }
+        const contracts = getCommandContractTypes(method);
+        const aggregateOwnedTypes = new Set<AstNode>();
+        for (const node of [...contracts.inputs, ...contracts.outputs]) {
+            if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
+                if (getOwningAggregate(node) !== undefined) {
+                    aggregateOwnedTypes.add(node);
+                }
+            } else if (isField(node)) {
+                const owner = node.$container;
+                if ((isValueObject(owner) || isDataObject(owner) || isEnumType(owner)) &&
+                    getOwningAggregate(owner) !== undefined) {
+                    aggregateOwnedTypes.add(owner);
+                }
+            }
+        }
+        const names = [...new Set([...aggregateOwnedTypes]
+            .map(type => (type as AstNode & { name: string }).name))];
+        if (names.length === 0) {
+            return;
+        }
+        accept('warning', `Published query '${method.name}' exposes aggregate-owned contract type${names.length === 1 ? '' : 's'}: ${names.join(', ')}. Use contract types that are not owned by an aggregate.`, {
+            node: method,
+            property: 'name',
+            code: 'exposed-query-aggregate-contract'
         });
     }
 
@@ -917,12 +957,14 @@ export class ThinaiValidator {
                     property: 'type'
                 });
             }
-            const foreignRoot = typeReferences.find(reference => {
-                const target = reference.ref;
-                return isEntity(target) && target.root && getOwningAggregate(target) !== sourceAggregate;
-            });
-            if (foreignRoot) {
-                accept('error', 'A constructor must reference another aggregate through its identifier, not its root entity.', {
+            const entityTarget = typeReferences
+                .map(reference => reference.ref)
+                .find(target => isEntity(target) &&
+                    (!sourceAggregate || getOwningAggregate(target) !== sourceAggregate));
+            if (isEntity(entityTarget)) {
+                accept('error', entityTarget.root
+                    ? 'A constructor must reference another aggregate through its identifier, not its root entity.'
+                    : 'A constructor must reference another aggregate through its identifier, not its entity.', {
                     node: parameter,
                     property: 'type'
                 });
@@ -949,8 +991,19 @@ export class ThinaiValidator {
         }
         const typeReferences = getTypeReferences(parameter.type as Reference<TypeDeclaration> | undefined, parameter.collection);
         this.checkCrossContextTypeUse(parameter, typeReferences, accept, 'type');
-        this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
-            isApplicationService(parameter.$container.$container) || isQueryService(parameter.$container.$container));
+        if (!isConstructor(parameter.$container)) {
+            const owner = parameter.$container.$container;
+            if (isApplicationService(owner) || isQueryService(owner)) {
+                this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'application');
+            } else if (isFactory(owner)) {
+                this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'factory');
+            } else if (isEntity(owner) || isValueObject(owner)) {
+                this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
+                    getOwningAggregate(owner) ? 'aggregate' : 'value-object');
+            }
+            // Domain services deliberately allow entity/aggregate parameters (DDD domain services).
+            // Projector parameters are constrained to a single event by checkMethod.
+        }
         this.checkReadModelTypeUse(parameter, typeReferences, accept, 'type', false);
     }
 
@@ -988,24 +1041,25 @@ export class ThinaiValidator {
         references: Reference<TypeDeclaration>[],
         accept: ValidationAcceptor,
         property: string,
-        applicationServiceSignature: boolean
+        boundary: 'aggregate' | 'application' | 'factory' | 'value-object'
     ): void {
-            const sourceAggregate = getOwningAggregate(node);
+        const sourceAggregate = getOwningAggregate(node);
         for (const reference of references) {
             const target = reference.ref;
             if (!target || !isEntity(target)) {
                 continue;
             }
             const targetAggregate = getOwningAggregate(target);
-            const constructorRootParameter = isParameter(node) && node.$container.$type === 'Constructor' && target.root;
-            const factoryRootReturn = isMethod(node) && isFactory(node.$container) &&
-                property === 'returnType' && target.root;
-            const crossesAggregate = sourceAggregate !== undefined && sourceAggregate !== targetAggregate;
-            if (applicationServiceSignature ||
-                crossesAggregate && !constructorRootParameter && !factoryRootReturn) {
-                accept('error', applicationServiceSignature
+            const crossesAggregate = !sourceAggregate || sourceAggregate !== targetAggregate;
+            if (boundary === 'application' || boundary === 'factory' || boundary === 'value-object' || crossesAggregate) {
+                const message = boundary === 'application'
                     ? 'Application-service signatures must use identifiers or data values, not entity instances.'
-                    : 'Reference another aggregate by its identifier, not by passing its entity instance.', {
+                    : boundary === 'factory'
+                        ? 'Factory method signatures must use identifiers or domain values, not entity instances.'
+                        : boundary === 'value-object'
+                            ? 'Value-object signatures must use identifiers or domain values, not entity instances.'
+                            : 'Reference another aggregate by its identifier, not by passing its entity instance.';
+                accept('error', message, {
                     node,
                     property
                 });
@@ -1096,6 +1150,27 @@ export class ThinaiValidator {
 
     checkSharedKernel(sharedKernel: SharedKernel, accept: ValidationAcceptor): void {
         this.modelValidator.checkSharedKernel(sharedKernel, accept);
+    }
+
+    private isNonTerminalPathReference(referenceInfo: ReferenceInfo): boolean {
+        const { container, property } = referenceInfo;
+        if (property.endsWith('Path') || property === 'path') {
+            return true;
+        }
+        if ((isJourneyStep(container) || isMethodInvocation(container)) && property === 'targets') {
+            const index = referenceInfo.index ?? container.targets.length - 1;
+            return index < container.targets.length - 1;
+        }
+        if (isSpecificationTextPart(container)) {
+            if (property === 'target') {
+                return container.targets.length > 0;
+            }
+            if (property === 'targets') {
+                const index = referenceInfo.index ?? container.targets.length - 1;
+                return index < container.targets.length - 1;
+            }
+        }
+        return false;
     }
 
     checkReferences(node: import('langium').AstNode, accept: ValidationAcceptor): void {
@@ -1213,6 +1288,12 @@ export class ThinaiValidator {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
+                return;
+            }
+            // Structural path segments are containers, not the declaration being
+            // referenced. Only the terminal declaration must be visible through
+            // a module boundary.
+            if (this.isNonTerminalPathReference(referenceInfo)) {
                 return;
             }
             if (!sourceModule && targetModule && !isModule(target) &&
@@ -1379,7 +1460,8 @@ export class ThinaiValidator {
                     continue;
                 }
                 for (const repository of AstUtils.streamAst(root).filter(isRepository)) {
-                    const aggregate = repository.root.ref ? getOwningAggregate(repository.root.ref) : undefined;
+                    const rootReference = repository.root?.ref;
+                    const aggregate = rootReference ? getOwningAggregate(rootReference) : undefined;
                     if (!aggregate) {
                         continue;
                     }

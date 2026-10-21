@@ -108,7 +108,10 @@ multiple aggregates; methods with an event-typed parameter are event-triggered.
 Bounded-context-scoped query services model read-only operations. Application
 service methods may link to aggregate-root or factory methods with `invokes`.
 Repository loading/saving and transaction mechanics are implementation details.
-Integration-event declarations define public schemas;
+Factories and context-level value objects use identifiers and domain values
+rather than entity instances. Domain services may accept aggregate or entity
+parameters because they model domain operations, but their results are domain
+values. Integration-event declarations define public schemas;
 the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
 
@@ -141,7 +144,9 @@ Application services, query services, projectors, and domain services may use
 such a published query API; prefer event data or a domain-facing port or
 anti-corruption layer when replay or domain isolation matters.
 Method-level `behavior` describes how returned data is used—there are no result
-aliases or per-read behavior clauses. A read model remains a query-result shape,
+aliases or per-read behavior clauses. A projector behavior may link the
+aggregate repository it declares in `reads from`; other repository references
+still describe query-repository output. A read model remains a query-result shape,
 not necessarily a materialized projection or separate database.
 Local query methods may return primitives, data objects, read models, domain
 values such as value objects and enums, or collections of those results.
@@ -194,6 +199,9 @@ For an IntegrationEvent nested in a module, expose the event, then import its
 owning bounded context and use the qualified module path. Modules organize one
 bounded context; their names are part of the public path for nested contracts.
 IntegrationEvent payloads cannot expose entities or types owned by aggregates.
+A payload value object or enum may come from an exposed sibling module when the
+event's module depends on that module; the normal dependency and exposure rules
+apply.
 
 When a file declares multiple components, select them explicitly:
 
@@ -206,10 +214,14 @@ which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
 declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
-Exposing a query service publishes its query API; direct module-to-module
-method references still require the method itself to be exposed. Journeys are
-model-level timelines and do not require either form of module exposure merely
-to invoke an application-service command.
+Only the terminal declaration in a qualified path must be exposed; structural
+containers such as an aggregate, entity, or service used as path segments do not
+need separate exposures. Exposing a query service publishes its query API;
+direct module-to-module method references still require the method itself to be
+exposed. Published query DataObjects expose their nested DataObject, value
+object, and enum shape, including enum values; aggregate-owned contract types
+produce a warning. Journeys are model-level timelines and do not require either
+form of module exposure merely to invoke an application-service command.
 
 ## Behavior and Journeys
 
@@ -286,6 +298,20 @@ such as a time-zone-aware appointment, with a value object.
 Use `initial State` only on a non-optional enum field of an entity; it marks the
 starting point of that entity's state graph, not a default for arbitrary data.
 Describe other creation-time defaults as constructor postconditions or behavior.
+
+When a domain term is also a Thinai keyword, quote the identifier with
+backticks in declarations and references:
+
+```thinai
+data object Request {
+  `value`: string
+}
+
+behavior "Use [[Request.`value`]]."
+```
+
+The same quoted form is available for field, parameter, method, type, and enum
+value names. Completion inserts the quoted form automatically for such names.
 
 The language server provides keyword and cross-reference completion,
 navigation, diagnostics, import-path completion, document formatting, and quick

@@ -21,10 +21,12 @@ import type { ThinaiServices } from './thinai-module.js';
 import {
     type CollectionType,
     type Exposure,
+    type Field,
     isEnumType,
     isEntity,
     isFactory,
     isField,
+    isImport,
     isJourneyStep,
     isMethod,
     isMethodInvocation,
@@ -34,7 +36,7 @@ import {
     isReadSourceReference,
     isSpecificationTextPart
 } from './generated/ast.js';
-import { isInSharedKernel } from './thinai-scope-utils.js';
+import { formatQualifiedName, isInSharedKernel } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiCompletionDetails } from './thinai-completion-details.js';
@@ -154,6 +156,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     ): CompletionValueItem {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
         item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
+        const insertText = formatQualifiedName(nodeDescription.name);
+        if (insertText !== nodeDescription.name) {
+            item.insertText = insertText;
+        }
         return item;
     }
 
@@ -349,13 +355,36 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const rootEntityAlreadyDeclared = entityDeclarationsAllowed && innermostBlock?.$type === 'Aggregate' &&
             'members' in innermostBlock && Array.isArray(innermostBlock.members) &&
             innermostBlock.members.some(member => isEntity(member) && member.root);
+        const insideImportComponents = this.isInsideImportComponentList(document, offset);
+        const entityIdentifierAlreadyDeclared = isEntity(identifierOwner) &&
+            identifierOwner.fields.some(field => field.identifier);
+        const linePrefix = text.slice(getLineStartOffset(document, offset), offset);
+        const identifierTypePosition = (
+            activeField !== undefined && activeField.identifier && isEntity(activeField.$container) &&
+            this.isTypeKeywordCompletionPosition(document, position)
+        ) || (
+            isEntity(innermostBlock) &&
+            /(?:^|\s)identifier\s+[^\s:]+\s*\??\s*:\s*[\w.]*$/u.test(linePrefix)
+        );
+        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
+        const validInitialCompletion = this.isValidInitialCompletion(offset, activeField, innermostBlock);
         return {
             ...completion,
             items: completion.items.filter(item => {
                 if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string') {
                     return true;
                 }
-                if (item.label === 'identifier' && !isEntity(identifierOwner)) {
+                if (insideImportComponents) {
+                    return false;
+                }
+                if (item.label === 'identifier' &&
+                    (!isEntity(identifierOwner) || entityIdentifierAlreadyDeclared)) {
+                    return false;
+                }
+                if (item.label === 'initial' && !validInitialCompletion) {
+                    return false;
+                }
+                if (identifierTypePosition && typeKeywords.has(item.label)) {
                     return false;
                 }
                 if (item.label === 'returns' && activeMethod && isProjector(activeMethod.$container)) {
@@ -500,7 +529,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             })
             .map(description => {
                 const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
-                const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
+                const insertText = `${needsLeadingSpace ? ' ' : ''}${formatQualifiedName(description.name)}`;
                 const item: CompletionValueItem = {
                     nodeDescription: description,
                     kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
@@ -703,6 +732,89 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         return hasIncompleteStatement ? null : best;
+    }
+
+    private isValidInitialCompletion(
+        offset: number,
+        activeField: Field | undefined,
+        innermostBlock: AstNode | undefined
+    ): boolean {
+        if (activeField) {
+            if (this.isEnumEntityFieldWithoutInitial(activeField)) {
+                return true;
+            }
+            // Parsing `status: Status ini` can recover as a separate typeless
+            // field named `ini`; treat a prefix of `initial` as the keyword
+            // continuation of the preceding enum field.
+            if (isEntity(activeField.$container) && !activeField.type && !activeField.primitive &&
+                !activeField.collection && !activeField.initialState &&
+                'initial'.startsWith(activeField.name)) {
+                const previousField = this.previousEntityField(activeField);
+                if (!previousField?.$cstNode || !activeField.$cstNode ||
+                    !this.isEnumEntityFieldWithoutInitial(previousField)) {
+                    return false;
+                }
+                const hasInterveningDeclaration = AstUtils.streamContents(activeField.$container).some(child =>
+                    child !== previousField && child !== activeField &&
+                    child.$container === activeField.$container && child.$cstNode !== undefined &&
+                    child.$cstNode.offset >= previousField.$cstNode!.end &&
+                    child.$cstNode.end <= activeField.$cstNode!.offset
+                );
+                return !hasInterveningDeclaration;
+            }
+            return false;
+        }
+        if (!isEntity(innermostBlock)) {
+            return false;
+        }
+        const fields = innermostBlock.fields
+            .filter(field => field.$cstNode !== undefined && field.$cstNode.end <= offset)
+            .sort((left, right) => left.$cstNode!.end - right.$cstNode!.end);
+        const previousField = fields.at(-1);
+        if (!previousField?.$cstNode || !this.isEnumEntityFieldWithoutInitial(previousField)) {
+            return false;
+        }
+        return !AstUtils.streamContents(innermostBlock).some(child =>
+            child !== previousField && child.$container === innermostBlock &&
+            child.$cstNode !== undefined &&
+            child.$cstNode.offset >= previousField.$cstNode!.end &&
+            child.$cstNode.end <= offset
+        );
+    }
+
+    private isEnumEntityFieldWithoutInitial(field: Field): boolean {
+        return isEntity(field.$container) && !field.optional &&
+            !hasReferenceText(field.initialState) && isEnumType(field.type?.ref);
+    }
+
+    private previousEntityField(field: Field): Field | undefined {
+        if (!isEntity(field.$container)) {
+            return undefined;
+        }
+        const fields = field.$container.fields
+            .filter(candidate => candidate.$cstNode !== undefined)
+            .sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);
+        const index = fields.indexOf(field);
+        return index > 0 ? fields[index - 1] : undefined;
+    }
+
+    private isInsideImportComponentList(document: LangiumDocument, offset: number): boolean {
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        const text = document.textDocument.getText();
+        const importNode = AstUtils.streamAst(root)
+            .filter(isImport)
+            .find(node => {
+                const cstNode = node.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
+            });
+        if (!importNode?.$cstNode) {
+            return false;
+        }
+        const source = text.slice(importNode.$cstNode.offset, offset);
+        return source.includes('{') && !source.includes('}');
     }
 
     private isAfterTrailingComma(model: AstNode, text: string, offset: number): boolean {

@@ -281,14 +281,15 @@ export class ThinaiReferencePolicy {
     }
 
     isPublishedReadResponseType(source: AstNode, type: AstNode): boolean {
-        if (!isDataObject(type) && !isValueObject(type)) {
+        if (!isDataObject(type) && !isValueObject(type) && !isEnumType(type) && !isEnumValue(type)) {
             return false;
         }
+        const contractType = isEnumValue(type) ? type.$container : type;
         const method = AstUtils.getContainerOfType(source, (node): node is Method => node.$type === 'Method');
         return method !== undefined && method.reads.some(read => read.sources.some(reference => {
-            const query = reference.target.ref;
+            const query = reference.target?.ref;
             return query?.$type === 'Method' && isQueryService(query.$container) &&
-                this.isExposedQueryResult(query) && this.hasQueryResultType(query, type) &&
+                this.isExposedQueryResult(query) && this.hasQueryResultType(query, contractType) &&
                 getOwningContextName(query) !== getOwningContextName(method) &&
                 this.isQueryServiceExposed(query.$container) && this.hasAuthorizedQueryRelationship(method, query);
         }));

@@ -7,6 +7,7 @@ import {
     createThinaiServices,
     isBoundedContext,
     isBoundedContextPart,
+    isDataObject,
     isJourney,
     isModel
 } from 'thinai-language';
@@ -62,6 +63,31 @@ describe('Parsing tests', () => {
         expect(document.parseResult.parserErrors.filter(error =>
             error.message === 'Event names must be unquoted identifiers declared in the model.'
         )).toHaveLength(2);
+    });
+
+    test('supports quoted identifiers for reserved words', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object D {
+                    \`value\`: string
+                    \`event\`: number
+                }
+                application service S {
+                    method \`run\`(input: D) returns string
+                }
+            }
+        `);
+
+        expect(document.parseResult.lexerErrors).toHaveLength(0);
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        const fields = document.parseResult.value.declarations
+            .filter(isBoundedContextPart)
+            .flatMap(part => part.members)
+            .filter(isDataObject)
+            .flatMap(dataObject => dataObject.fields)
+            .map(field => field.name);
+        expect(fields).toEqual(['value', 'event']);
     });
 
     test('rejects entity inheritance syntax', async () => {

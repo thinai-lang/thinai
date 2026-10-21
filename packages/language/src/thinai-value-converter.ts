@@ -6,6 +6,9 @@ export class ThinaiValueConverter extends DefaultValueConverter {
         input: string,
         cstNode: Parameters<DefaultValueConverter['runConverter']>[2]
     ): ReturnType<DefaultValueConverter['runConverter']> {
+        if (rule.name === 'ID' && input.startsWith('`') && input.endsWith('`')) {
+            return input.slice(1, -1);
+        }
         if (rule.name === 'TRIPLE_DOUBLE_STRING_START' || rule.name === 'TRIPLE_DOUBLE_STRING_END'
             || rule.name === 'DOUBLE_STRING_START' || rule.name === 'DOUBLE_STRING_END'
             || rule.name === 'SINGLE_STRING_START' || rule.name === 'SINGLE_STRING_END') {

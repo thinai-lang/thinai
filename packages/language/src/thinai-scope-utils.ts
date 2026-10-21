@@ -7,6 +7,7 @@ import {
     type URI,
     UriUtils
 } from 'langium';
+import { THINAI_KEYWORDS } from './thinai-constants.js';
 import {
     isBoundedContext,
     isBoundedContextPart,
@@ -37,6 +38,21 @@ const exportedTypes = new Set([
 ]);
 
 type NamedNode = AstNode & { name: string };
+
+const plainIdentifier = /^[_a-zA-Z][\w_]*$/u;
+
+/** Formats a declaration or reference name for insertion into Thinai source. */
+export function formatIdentifier(name: string): string {
+    if (plainIdentifier.test(name) && !THINAI_KEYWORDS.has(name)) {
+        return name;
+    }
+    return `\`${name.replace(/`/gu, '')}\``;
+}
+
+/** Formats a dotted reference or declaration name for source insertion. */
+export function formatQualifiedName(name: string): string {
+    return name.split('.').map(formatIdentifier).join('.');
+}
 
 export function isNamedExport(node: AstNode): node is NamedNode {
     if (isField(node) && !isEntity(node.$container) && !isValueObject(node.$container) &&

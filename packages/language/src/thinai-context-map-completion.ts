@@ -11,6 +11,7 @@ import type { ContextMap } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getSiblingCompletionKeywords } from './thinai-layout.js';
+import { formatQualifiedName } from './thinai-scope-utils.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
 
 const contextEndpointPattern = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
@@ -168,7 +169,7 @@ export class ThinaiContextMapCompletion {
             .filter(description => !leftContext || description.node !== leftContext)
             .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
             .map(description => {
-                const insertText = `${needsLeadingSpace ? ' ' : ''}${description.name}`;
+                const insertText = `${needsLeadingSpace ? ' ' : ''}${formatQualifiedName(description.name)}`;
                 const item: CompletionValueItem = {
                     nodeDescription: description,
                     kind: this.services.shared.lsp.NodeKindProvider.getCompletionItemKind(description),

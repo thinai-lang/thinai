@@ -2965,6 +2965,238 @@ in bounded context Ordering {
         );
     });
 
+    test('does not throw while repository declarations are incomplete', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                repository ExistingRepository { manages Order.Order }
+                repository IncompleteRepository
+            }
+        `);
+
+        expect(exceptionDiagnostics(document)).toEqual([]);
+    });
+
+    test('does not throw while a referenced query repository has no read model', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                read model Summary { id: OrderId }
+                event OrderPlaced
+                query repository SummaryQueries reads from Order
+                projector SummaryProjector {
+                    method onOrderPlaced(source: OrderPlaced) {
+                        projects Summary
+                        behavior "Read [[SummaryQueries]]."
+                    }
+                }
+            }
+        `);
+
+        expect(exceptionDiagnostics(document)).toEqual([]);
+    });
+
+    test('links quoted identifiers in declarations and references', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object D {
+                    \`value\`: string
+                }
+                application service S {
+                    method run(input: D) {
+                        behavior "Use [[D.\`value\`]] and [[input.\`value\`]]."
+                    }
+                }
+            }
+        `);
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows exposed nested declarations through structural paths', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Api {
+                    exposes Agg.Value
+                    aggregate Agg {
+                        root entity Root { identifier id: RootId }
+                        value object RootId { raw: string }
+                        value object Value { raw: string }
+                    }
+                }
+                module Consumer depends on Api {
+                    data object D { item: Agg.Value }
+                    application service S {
+                        method run() {
+                            behavior "Use [[Agg.Value.raw]]."
+                        }
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows invocation through a method exposed from a sibling module', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Api {
+                    exposes Command.run
+                    application service Command {
+                        method run() {}
+                    }
+                }
+                module Consumer depends on Api {
+                    event Trigger
+                    application service App {
+                        method onTrigger(source: Trigger) {
+                            invokes Api.Command.run
+                        }
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows integration-event payload types from an exposed sibling module', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Types {
+                    exposes Payload
+                    value object Payload { raw: string }
+                }
+                module Contracts depends on Types {
+                    exposes OrderPlacedV1
+                    integration event OrderPlacedV1 { payload: Payload }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows published query result value-object and enum references', async () => {
+        const document = await parse(`
+            bounded context Api
+            bounded context Consumer
+            in bounded context Api {
+                module Contracts {
+                    exposes Status, Address, Result
+                    enum Status { Ready, Done }
+                    value object Address { city: string }
+                    data object Result { status: Status address: Address }
+                }
+                module Services depends on Contracts {
+                    exposes Queries
+                    query service Queries { method find() returns Result }
+                }
+            }
+            in bounded context Consumer {
+                application service App {
+                    method use() {
+                        reads from Api.Services.Queries.find
+                        behavior "Use [[Api.Contracts.Result.address]], [[Api.Contracts.Address]], [[Api.Contracts.Result.status]], and [[Api.Contracts.Status.Ready]]."
+                    }
+                }
+            }
+            context map M {
+                customer Consumer -> supplier Api
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('warns when a published query exposes aggregate-owned contract types', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                module Api {
+                    exposes Queries, Result
+                    data object Result { id: OrderId }
+                    query service Queries {
+                        method find() returns Result
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.code === 'exposed-query-aggregate-contract'
+        )).toBe(true);
+    });
+
+    test('rejects entity instances in factory and context-level value-object signatures', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    entity Line { identifier lineId: LineId }
+                    value object OrderId { raw: string }
+                    value object LineId { raw: string }
+                }
+                factory OrderFactory {
+                    method create(line: Order.Line) returns Order.Order
+                }
+                value object Snapshot {
+                    raw: string
+                    constructor(line: Order.Line)
+                    method inspect(line: Order.Line) returns Order.Line
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Factory method signatures must use identifiers or domain values, not entity instances.');
+        expect(messages).toContain('Value-object signatures must use identifiers or domain values, not entity instances.');
+        expect(messages).toContain('A constructor must reference another aggregate through its identifier, not its entity.');
+    });
+
+    test('allows projector behavior to reference its aggregate-repository read source', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                repository OrderRepository { manages Order.Order }
+                read model Summary { id: OrderId }
+                event OrderPlaced
+                projector SummaryProjector {
+                    method onOrderPlaced(source: OrderPlaced) {
+                        reads from OrderRepository
+                        projects Summary
+                        behavior "Read [[OrderRepository]] to summarize."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
     test('reports one owner-level diagnostic for invalid event and object fields', async () => {
         const document = await parse(`
             bounded context Ordering
@@ -3027,5 +3259,11 @@ function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
     // Most semantic-validation fixtures are compact; line-break policy has dedicated coverage.
     return (document.diagnostics ?? []).filter(diagnostic =>
         diagnostic.code !== 'line-break-required' && diagnostic.code !== 'line-break-required-after-open-brace'
+    );
+}
+
+function exceptionDiagnostics(document: LangiumDocument): Diagnostic[] {
+    return (document.diagnostics ?? []).filter(diagnostic =>
+        String(diagnostic.message).startsWith('An error occurred')
     );
 }

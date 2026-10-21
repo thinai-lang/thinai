@@ -2,7 +2,7 @@ import { GrammarUtils, type LangiumDocument, URI, UriUtils } from 'langium';
 import { CompletionItemKind, type CompletionItem } from 'vscode-languageserver';
 import type { ThinaiServices } from './thinai-module.js';
 import { isModel } from './generated/ast.js';
-import { toImportPath } from './thinai-scope-utils.js';
+import { resolveImportUri, toImportPath } from './thinai-scope-utils.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
 
 export interface ImportPathContext {
@@ -124,9 +124,27 @@ export class ThinaiImportCompletion {
 
         const currentDirectory = UriUtils.dirname(document.uri);
         const matchPrefix = typedPath.replace(/^(?:(?:\r\n|\r|\n)[\t ]*)+/u, '');
+        const importedUris = new Set<string>();
+        const root = document.parseResult.value;
+        if (isModel(root)) {
+            for (const declaration of root.imports) {
+                const uri = resolveImportUri(document, declaration);
+                if (uri) {
+                    importedUris.add(uri.toString());
+                }
+            }
+            const currentImport = root.imports.find(declaration => {
+                const pathNode = GrammarUtils.findNodeForProperty(declaration.$cstNode, 'path');
+                return pathNode !== undefined && pathNode.offset <= pathStart && pathStart <= pathNode.end;
+            });
+            const currentUri = currentImport ? resolveImportUri(document, currentImport) : undefined;
+            if (currentUri) {
+                importedUris.delete(currentUri.toString());
+            }
+        }
         const items: CompletionItem[] = [];
         for (const uri of files.values()) {
-            if (UriUtils.equals(uri, document.uri)) {
+            if (UriUtils.equals(uri, document.uri) || importedUris.has(uri.toString())) {
                 continue;
             }
             const relativePath = toImportPath(currentDirectory, uri);

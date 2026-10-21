@@ -142,6 +142,45 @@ in bounded context Ordering {
         expect(labels).not.toContain('ProductQueries');
     });
 
+    test('does not offer an already imported file or component again', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-duplicate-target.tni'),
+            'bounded context Alpha\nbounded context Beta'
+        );
+        const pathText = `import "./import-duplicate-target.tni"
+import "${marker}"
+bounded context Consumer`;
+        const pathOffset = pathText.indexOf(marker);
+        const pathDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-duplicate-path.tni'), pathText.replace(marker, '')
+        );
+        documents.push(target, pathDocument);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+        const pathCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(pathDocument, {
+            textDocument: { uri: pathDocument.uri.toString() },
+            position: pathDocument.textDocument.positionAt(pathOffset)
+        });
+        expect(pathCompletion?.items.map(item => item.label)).not.toContain('./import-duplicate-target.tni');
+
+        const componentText = `import { Alpha } from "./import-duplicate-target.tni"
+import { ${marker} } from "./import-duplicate-target.tni"
+bounded context Consumer`;
+        const componentOffset = componentText.indexOf(marker);
+        const componentDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-duplicate-component.tni'), componentText.replace(marker, '')
+        );
+        documents.push(componentDocument);
+        await services.shared.workspace.DocumentBuilder.build([componentDocument], { validation: false });
+        const componentCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(componentDocument, {
+            textDocument: { uri: componentDocument.uri.toString() },
+            position: componentDocument.textDocument.positionAt(componentOffset)
+        });
+        const labels = componentCompletion?.items.map(item => item.label) ?? [];
+        expect(labels).not.toContain('Alpha');
+        expect(labels).not.toContain('actor');
+        expect(labels).not.toContain('journey');
+    });
+
     test('replaces the complete import path when completing inside it', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/import-target.tni'),
@@ -287,6 +326,246 @@ in bounded context Ordering {
         const typedLabels = typedExposure.completion?.items.map(item => item.label) ?? [];
         expect(typedLabels).not.toContain('Outer');
         expect(typedLabels).not.toContain('Outer.Foreign');
+    });
+
+    test('offers exposed sibling-module integration-event payload types', async () => {
+        const completion = await build(`bounded context O
+in bounded context O {
+    module Types {
+        exposes Payload
+        value object Payload { raw: string }
+    }
+    module Contracts depends on Types {
+        exposes OrderPlacedV1
+        integration event OrderPlacedV1 { payload: ${marker} }
+    }
+}`);
+        expect(completion.completion?.items.map(item => item.label)).toContain('Payload');
+    });
+
+    test('inserts quoted identifiers for reserved-word names', async () => {
+        const quotedValue = '`value`';
+        const completion = await build(`bounded context O
+in bounded context O {
+    data object D {
+        ${quotedValue}: string
+    }
+    application service S {
+        method run(input: D) {
+            behavior "Use [[input.${marker}]]."
+        }
+    }
+}`);
+        const item = completion.completion?.items.find(candidate => candidate.label === 'value');
+        expect(item).toBeDefined();
+        expect(item?.textEdit?.newText ?? item?.insertText).toBe(quotedValue);
+    });
+
+    test('filters entity types for factories and value objects but not domain services', async () => {
+        const factory = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    factory F { method create(arg: ${marker}) returns A.E }
+}`);
+        const factoryLabels = factory.completion?.items.map(item => item.label) ?? [];
+        expect(factoryLabels).not.toContain('E');
+        expect(factoryLabels).not.toContain('A.E');
+
+        const valueObjectMethod = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    value object V {
+        raw: string
+        method use(arg: ${marker})
+    }
+}`);
+        expect(valueObjectMethod.completion?.items.map(item => item.label)).not.toContain('E');
+
+        const valueObjectReturn = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    value object V {
+        raw: string
+        method create() returns ${marker}
+    }
+}`);
+        expect(valueObjectReturn.completion?.items.map(item => item.label)).not.toContain('E');
+
+        const domainService = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    domain service D {
+        method use(arg: ${marker}) returns string
+    }
+}`);
+        expect(domainService.completion?.items.map(item => item.label)).toEqual(
+            expect.arrayContaining(['E', 'A.E'])
+        );
+    });
+
+    test('does not offer initial or identifier keywords outside their documented positions', async () => {
+        for (const declaration of [
+            'data object D { x: string',
+            'read model R { x: string',
+            'event E { x: string',
+            'value object V { x: string'
+        ]) {
+            const completion = await build(`bounded context O
+in bounded context O {
+    ${declaration}
+        ${marker}
+    }
+}`);
+            expect(completion.completion?.items.map(item => item.label), declaration).not.toContain('initial');
+        }
+
+        const nonEnumField = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            name: string
+            ${marker}
+        }
+        value object Id { raw: string }
+    }
+}`);
+        expect(nonEnumField.completion?.items.map(item => item.label)).not.toContain('initial');
+
+        const duplicateIdentifier = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            ${marker}
+        }
+        value object Id { raw: string }
+    }
+}`);
+        expect(duplicateIdentifier.completion?.items.map(item => item.label)).not.toContain('identifier');
+
+        const identifierType = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: ${marker}
+        }
+        value object Id { raw: string }
+    }
+}`);
+        const identifierLabels = identifierType.completion?.items.map(item => item.label) ?? [];
+        expect(identifierLabels).not.toContain('string');
+        expect(identifierLabels).not.toContain('List');
+        expect(identifierLabels).not.toContain('Set');
+        expect(identifierLabels).not.toContain('Map');
+    });
+
+    test('does not offer values already selected in list contexts', async () => {
+        const dependency = await build(`bounded context O
+in bounded context O {
+    module A {}
+    module B depends on A, ${marker} {}
+}`);
+        expect(dependency.completion?.items.map(item => item.label)).not.toEqual(
+            expect.arrayContaining(['A', 'O.A'])
+        );
+
+        const exposures = await build(`bounded context O
+in bounded context O {
+    module Api {
+        exposes Foo
+        exposes ${marker}
+        value object Foo { raw: string }
+        value object Bar { raw: string }
+    }
+}`);
+        expect(exposures.completion?.items.map(item => item.label)).not.toEqual(
+            expect.arrayContaining(['Foo', 'O.Api.Foo', 'Api.Foo'])
+        );
+
+        const emissions = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            method run() { emits E1, ${marker} }
+        }
+        value object Id { raw: string }
+        event E1
+        event E2
+    }
+}`);
+        expect(emissions.completion?.items.map(item => item.label)).not.toEqual(
+            expect.arrayContaining(['E1', 'O.E1'])
+        );
+
+        const projects = await build(`bounded context O
+in bounded context O {
+    read model R1 { x: string }
+    read model R2 { x: string }
+    event E1
+    projector P {
+        method onE(source: E1) {
+            projects R1, ${marker}
+        }
+    }
+}`);
+        expect(projects.completion?.items.map(item => item.label)).not.toEqual(
+            expect.arrayContaining(['R1', 'O.R1'])
+        );
+
+        const reads = await build(`bounded context O
+in bounded context O {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    aggregate B { root entity E { identifier id: Id } value object Id { raw: string } }
+    repository R1 { manages A.E }
+    repository R2 { manages B.E }
+    application service S {
+        method run() {
+            reads from R1, ${marker}
+        }
+    }
+}`);
+        expect(reads.completion?.items.map(item => item.label)).not.toEqual(
+            expect.arrayContaining(['R1', 'O.R1'])
+        );
+    });
+
+    test('offers published query result value-object and enum references', async () => {
+        const model = `bounded context Api
+bounded context Consumer
+in bounded context Api {
+    module Contracts {
+        exposes Status, Address, Result
+        enum Status { Ready, Done }
+        value object Address { city: string }
+        data object Result { status: Status address: Address }
+    }
+    module Services depends on Contracts {
+        exposes Queries
+        query service Queries { method find() returns Result }
+    }
+}
+in bounded context Consumer {
+    application service App {
+        method use() {
+            reads from Api.Services.Queries.find
+            behavior "Use [[Api.Contracts.${marker}]] and [[Api.Contracts.Status.Ready]]."
+        }
+    }
+}
+context map M { customer Consumer -> supplier Api }`;
+
+        const contract = await build(model);
+        const contractLabels = contract.completion?.items.map(item => item.label) ?? [];
+        expect(contractLabels).toEqual(expect.arrayContaining(['Address', 'Status', 'Result']));
+
+        const enumModel = model.replace(
+            `Api.Contracts.${marker}`,
+            `Api.Contracts.Status.${marker}`
+        );
+        const enumCompletion = await build(enumModel);
+        expect(enumCompletion.completion?.items.map(item => item.label)).toContain('Ready');
     });
 
     test('collects only terminal type references from collection types', async () => {
