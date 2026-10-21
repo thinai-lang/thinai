@@ -33,7 +33,7 @@ const keywordPairs = [
 ];
 
 const keywordValueSeparators = [
-    'aggregate', 'actor', 'by', 'depends', 'emits', 'entity', 'enum', 'event', 'exposes', 'factory', 'from',
+    'aggregate', 'actor', 'behavior', 'by', 'depends', 'emits', 'entity', 'enum', 'event', 'exposes', 'factory', 'from',
     'identifier', 'in', 'invariant', 'integration', 'invokes', 'invoke', 'journey', 'kind', 'manages', 'method',
     'kernel', 'map', 'mirrors', 'model', 'module', 'object', 'on', 'postcondition', 'precondition', 'projector', 'projects', 'realizes',
     'reads', 'repository', 'service',
@@ -175,6 +175,25 @@ export class ThinaiFormatter extends AbstractFormatter {
                         newText: statementIndent
                     });
                 }
+            } else if (bodyLines.length === 0 && openingNewline > 0) {
+                // The opening newline is the only line break before an empty
+                // closing delimiter; do not insert a second blank line.
+                let closingLineStart = closingQuote;
+                while (closingLineStart > 0 && source[closingLineStart - 1] !== '\n' &&
+                    source[closingLineStart - 1] !== '\r') {
+                    closingLineStart--;
+                }
+                const closingIndent = source.slice(closingLineStart, closingQuote);
+                if (/^[\t ]*$/u.test(closingIndent) && closingIndent !== statementIndent) {
+                    const absoluteStart = cstNode.offset + closingLineStart;
+                    edits.push({
+                        range: {
+                            start: textDocument.positionAt(absoluteStart),
+                            end: textDocument.positionAt(absoluteStart + closingIndent.length)
+                        },
+                        newText: statementIndent
+                    });
+                }
             } else {
                 const absoluteClosingQuote = cstNode.offset + closingQuote;
                 edits.push({
@@ -227,6 +246,7 @@ export class ThinaiFormatter extends AbstractFormatter {
         formatter.keywords('.').surround(Formatting.noSpace());
         formatter.keywords('(').prepend(Formatting.noSpace());
         formatter.keywords(')').prepend(Formatting.noSpace());
+        formatter.keyword('?').prepend(Formatting.noSpace());
         for (const keyword of keywordPairs) {
             formatter.keyword(keyword).append(Formatting.oneSpace());
         }

@@ -113,7 +113,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     protected override getReferenceCandidates(refInfo: ReferenceInfo, context: CompletionContext) {
         const { container, property } = refInfo;
         const pathCandidates = (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
-            .getPathCompletionCandidates(refInfo);
+            .getPathCompletionCandidates(refInfo, context.offset);
         if (pathCandidates !== undefined) {
             return stream(pathCandidates);
         }
@@ -273,7 +273,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
         }
 
-        const importItems = await this.importCompletion.getCompletions(document, importContext.path, importContext.pathStart);
+        const importItems = await this.importCompletion.getCompletions(
+            document,
+            importContext.path,
+            importContext.pathStart,
+            importContext.pathEnd
+        );
         const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, {
             isIncomplete: completionWithKeywords?.isIncomplete ?? false,
             items: [...completionItems, ...constrainedValueCompletions, ...importItems]

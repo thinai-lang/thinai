@@ -2794,6 +2794,29 @@ in bounded context Ordering {
         ).length).toBeGreaterThanOrEqual(3);
     });
 
+    test('does not validate an unfinished transition at the parent closing brace', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            transition status from
+                        }
+                        identifier id: OrderId
+                        status: OrderStatus
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+            }
+        `);
+
+        expect(document.parseResult.parserErrors.length).toBeGreaterThan(0);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.message === 'Transition states must be values of OrderStatus.'
+        )).toEqual([]);
+    });
+
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

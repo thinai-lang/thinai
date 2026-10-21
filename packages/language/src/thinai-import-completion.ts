@@ -8,6 +8,7 @@ import { scanThinaiSource } from './thinai-source-scanner.js';
 export interface ImportPathContext {
     path: string;
     pathStart: number;
+    pathEnd: number;
 }
 
 /** Workspace file discovery and text edits for import-path completion. */
@@ -53,7 +54,15 @@ export class ThinaiImportCompletion {
                 .find(node => node !== undefined && node.offset <= stringStart && stringStart < node.end && offset <= node.end);
             if (pathNode) {
                 const pathStart = stringStart + delimiterLength;
-                return { path: text.slice(pathStart, offset), pathStart };
+                const pathText = pathNode.text;
+                const delimiter = pathText.startsWith('"""') ? '"""' : pathText[0];
+                const closed = delimiter !== undefined && pathText.length >= delimiter.length * 2 &&
+                    pathText.endsWith(delimiter);
+                return {
+                    path: text.slice(pathStart, offset),
+                    pathStart,
+                    pathEnd: closed ? Math.max(pathStart, pathNode.end - delimiter.length) : offset
+                };
             }
         }
 
@@ -74,13 +83,14 @@ export class ThinaiImportCompletion {
             return undefined;
         }
         const pathStart = stringStart + delimiterLength;
-        return { path: text.slice(pathStart, offset), pathStart };
+        return { path: text.slice(pathStart, offset), pathStart, pathEnd: offset };
     }
 
     async getCompletions(
         document: LangiumDocument,
         typedPath: string,
-        pathStart: number
+        pathStart: number,
+        pathEnd = pathStart + typedPath.length
     ): Promise<CompletionItem[]> {
         const files = new Map<string, URI>();
         for (const knownDocument of this.services.shared.workspace.LangiumDocuments.all) {
@@ -129,7 +139,7 @@ export class ThinaiImportCompletion {
                 textEdit: {
                     range: {
                         start: document.textDocument.positionAt(pathStart),
-                        end: document.textDocument.positionAt(pathStart + typedPath.length)
+                        end: document.textDocument.positionAt(pathEnd)
                     },
                     newText: relativePath
                 },

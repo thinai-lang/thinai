@@ -63,26 +63,58 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         return undefined;
     }
 
-    getPathCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] | undefined {
+    getPathCompletionCandidates(context: ReferenceInfo, offset?: number): AstNodeDescription[] | undefined {
         const { container, property } = context;
-        const wrapperPath = property === 'path';
-        const pathProperty = wrapperPath ? 'path' : property.endsWith('Path') ? property : undefined;
-        if (!pathProperty) {
+        const values = container as unknown as Record<string, unknown>;
+        const metadata = this.reflection.getTypeMetaData(container.$type).properties;
+        const pathProperty = this.getPathPropertyName(property, values);
+        if (!pathProperty || !metadata[pathProperty]?.referenceType) {
             return undefined;
         }
-        const values = (container as unknown as Record<string, unknown>)[pathProperty];
-        if (!Array.isArray(values)) {
+        const pathValues = values[pathProperty];
+        if (!Array.isArray(pathValues)) {
             return undefined;
         }
-        const terminalProperty = wrapperPath ? 'target' : pathProperty.slice(0, -'Path'.length);
-        const terminalReference = (container as unknown as Record<string, unknown>)[terminalProperty];
-        if (!terminalReference || typeof terminalReference !== 'object' || !('$refText' in terminalReference)) {
-            return [];
+        const completingPathProperty = property === pathProperty;
+        const terminalProperty = completingPathProperty
+            ? pathProperty === 'path' ? 'target' : pathProperty.slice(0, -'Path'.length)
+            : property;
+        if (!metadata[terminalProperty]?.referenceType) {
+            return completingPathProperty ? [] : undefined;
+        }
+        const parsedTerminalReference = values[terminalProperty];
+        const hasTerminalReference = parsedTerminalReference !== undefined && parsedTerminalReference !== null &&
+            typeof parsedTerminalReference === 'object' && '$refText' in parsedTerminalReference;
+        const terminalReference = hasTerminalReference
+            ? parsedTerminalReference as ReferenceInfo['reference']
+            : { $refText: '' } as ReferenceInfo['reference'];
+        // When the parsed terminal reference is followed by a dot, that
+        // reference is actually the last path segment being edited. Treat it
+        // as part of the prefix so completion offers its children.
+        const trailingTerminalSegment = this.hasTrailingDot(terminalReference, container, offset);
+        if (pathValues.length === 0 && !trailingTerminalSegment) {
+            // A path property with no parsed path means the user has not begun
+            // a qualified path yet; suppress its generic completion so path
+            // containers are not offered as a first token. A terminal property
+            // still falls through to normal reference completion.
+            return completingPathProperty ? [] : undefined;
+        }
+        const completedPathCount = offset === undefined
+            ? context.index ?? pathValues.length
+            : (pathValues as ReferenceInfo['reference'][]).filter(reference =>
+                reference.$refNode !== undefined && reference.$refNode.end < offset
+            ).length;
+        const index = completingPathProperty
+            ? Math.min(completedPathCount, pathValues.length)
+            : pathValues.length;
+        const prefix = (pathValues as ReferenceInfo['reference'][]).slice(0, index).map(reference => reference.$refText);
+        if (trailingTerminalSegment) {
+            prefix.push((terminalReference as ReferenceInfo['reference']).$refText);
         }
         const finalContext: ReferenceInfo = {
             ...context,
             property: terminalProperty,
-            reference: terminalReference as ReferenceInfo['reference'],
+            reference: (completingPathProperty ? terminalReference : context.reference) as ReferenceInfo['reference'],
             index: undefined
         };
         const finalType = this.getDeclaredReferenceType(finalContext);
@@ -96,8 +128,6 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 .filter((node): node is AstNode => node !== undefined)
                 .toArray()
         );
-        const index = context.property === 'target' ? values.length : context.index ?? 0;
-        const prefix = (values as ReferenceInfo['reference'][]).slice(0, index).map(reference => reference.$refText);
         const referenceType = this.getDeclaredReferenceType(context);
         if (!referenceType) {
             return [];
@@ -107,8 +137,31 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             referenceType,
             prefix,
             allowedTargets,
-            context.property === 'path' && !isReadSourceReference(container)
+            completingPathProperty && pathProperty === 'path' && !isReadSourceReference(container)
         );
+    }
+
+    private getPathPropertyName(property: string, container: Record<string, unknown>): string | undefined {
+        if (property.endsWith('Path') || property === 'path') {
+            return property;
+        }
+        if (property === 'target' && Array.isArray(container.path)) {
+            return 'path';
+        }
+        return `${property}Path`;
+    }
+
+    private hasTrailingDot(
+        reference: ReferenceInfo['reference'],
+        container: AstNode,
+        offset: number | undefined
+    ): boolean {
+        const refNode = reference.$refNode;
+        if (!refNode || reference.$refText.length === 0 || offset === undefined || offset <= refNode.end) {
+            return false;
+        }
+        const text = AstUtils.getDocument(container).textDocument.getText();
+        return /^[\t \r\n]*\.[\t \r\n]*$/u.test(text.slice(refNode.end, offset));
     }
 
     getSpecificationRootCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
@@ -128,11 +181,20 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             }
             const path = description.name.split('.');
             for (let index = 0; index < path.length; index++) {
-                const segmentTarget = this.getPathSegmentTarget(target, path, index, context);
+                const segmentName = path[index]!;
+                const ancestorTarget = this.getPathSegmentTarget(target, path, index, context);
+                // Synthetic contract roots such as `result` are attached to the
+                // operation node, so they are not ancestors of their own path
+                // segments. Resolve the root through the scope in that case.
+                const directRootTarget = index === 0
+                    ? description.name === segmentName
+                        ? target
+                        : scope.getElement(segmentName)?.node
+                    : undefined;
+                const segmentTarget = ancestorTarget ?? directRootTarget;
                 if (!segmentTarget) {
                     continue;
                 }
-                const segmentName = path[index]!;
                 const segmentDescription = this.descriptions.createDescription(
                     segmentTarget,
                     segmentName,
@@ -222,7 +284,9 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             index: undefined
         };
         const scopeContext = wrapperPath ? this.getPathScopeContext(finalContext) : finalContext;
-        const segmentIndex = context.property === prefixProperty ? context.index ?? 0 : path.length - 1;
+        const segmentIndex = context.property === prefixProperty
+            ? context.index ?? Math.max(0, path.length - 1)
+            : path.length - 1;
         const completePath = path.join('.');
         const finalType = this.getDeclaredReferenceType(finalContext);
         if (!finalType) {
@@ -261,11 +325,17 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             : this.callbacks.getUnsegmentedScope(scopeContext, 'NamedDeclaration')
                 .getElement(path.slice(0, segmentIndex + 1).join('.'));
         const target = targetDescription?.node ?? this.getPathSegmentTarget(finalDescription.node, path, segmentIndex, context);
-        if (!target || !this.nameProvider.getName(target)) {
+        const targetName = target ? this.nameProvider.getName(target) : undefined;
+        if (!target || !targetName) {
             return this.callbacks.createScope([]);
         }
+        const requestedName = context.reference.$refText;
         return this.callbacks.createScope([
-            this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))
+            this.descriptions.createDescription(
+                target,
+                requestedName.length > 0 ? requestedName : targetName,
+                AstUtils.getDocument(target)
+            )
         ]);
     }
 

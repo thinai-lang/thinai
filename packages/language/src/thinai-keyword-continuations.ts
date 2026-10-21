@@ -278,6 +278,21 @@ export class ThinaiKeywordContinuations {
         return [];
     }
 
+    getSiblingKeywordLabelsAt(container: AstNode, offset: number): readonly string[] {
+        const labels = this.getSiblingKeywordLabels(container);
+        if (!isModule(container) || !labels.includes('exposes')) {
+            return labels;
+        }
+        // Exposures must precede the module members. Once a member has been
+        // parsed before the cursor, `exposes` is no longer a valid insertion.
+        const members = container.members ?? [];
+        const hasMemberBeforeCursor = members.some(member => {
+            const cstNode = member.$cstNode;
+            return cstNode !== undefined && cstNode.offset < offset;
+        });
+        return hasMemberBeforeCursor ? labels.filter(label => label !== 'exposes') : labels;
+    }
+
     getSiblingKeywordLabels(container: AstNode): readonly string[] {
         let labels = getSiblingCompletionKeywords(container.$type, isModule(container) && isInSharedKernel(container));
         if (!isMethod(container)) {

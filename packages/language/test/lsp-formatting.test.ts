@@ -707,6 +707,41 @@ bounded context C in bounded context C { aggregate A { entity     X { identifier
         expect(formatted).toContain('reads from A, B');
     });
 
+    test('spaces behavior clauses and optional field markers', async () => {
+        const source = `bounded context C
+in bounded context C {
+  data object D {
+    a ?: string
+  }
+  application service A {
+    method m() {behavior"B" invariant"I" precondition"P" postcondition"Q"}
+  }
+}`;
+        const formatted = await formatSource('/workspace/format-behavior-and-optional.tni', source);
+
+        expect(formatted).toContain('a?: string');
+        expect(formatted).toContain('behavior "B"');
+        expect(formatted).toContain('invariant "I"');
+        expect(formatted).toContain('precondition "P"');
+        expect(formatted).toContain('postcondition "Q"');
+    });
+
+    test('does not add an extra blank line to an empty triple-quoted specification', async () => {
+        const source = `bounded context C
+in bounded context C {
+  application service A {
+    method m() {
+      behavior """
+"""
+    }
+  }
+}`;
+        const formatted = await formatSource('/workspace/format-empty-behavior.tni', source);
+
+        expect(formatted).toContain('behavior """\n      """');
+        expect(formatted).not.toContain('behavior """\n\n');
+    });
+
     async function formatSource(uri: string, source: string): Promise<string> {
         const document = services.shared.workspace.LangiumDocuments.createDocument(URI.file(uri), source);
         documents.push(document);

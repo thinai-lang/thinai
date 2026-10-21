@@ -10,6 +10,7 @@ export function getTypeReferences(
         ...(type ? [type] : []),
         ...(collection
             ? AstUtils.streamReferences(collection)
+                .filter(referenceInfo => !referenceInfo.property?.endsWith('Path'))
                 .map(referenceInfo => isReference(referenceInfo.reference)
                     ? referenceInfo.reference as Reference<TypeDeclaration>
                     : undefined

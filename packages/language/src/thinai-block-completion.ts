@@ -108,7 +108,7 @@ export class ThinaiBlockCompletion {
         const openingBrace = scanThinaiSource(text.slice(0, offset)).openBraceOffsets.at(-1) ?? -1;
         const linePrefixStart = (openingBrace: number) => openingBrace >= lineStart ? openingBrace + 1 : lineStart;
         const container = AstUtils.streamAst(root)
-            .filter(candidate => this.keywordContinuations.getSiblingKeywordLabels(candidate).length > 0)
+            .filter(candidate => this.keywordContinuations.getSiblingKeywordLabelsAt(candidate, offset).length > 0)
             .filter(candidate => {
                 const cstNode = candidate.$cstNode;
                 if (!cstNode || cstNode.offset > offset) {
@@ -139,12 +139,15 @@ export class ThinaiBlockCompletion {
                     return true;
                 }
                 const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
-                return this.matchesKeywordPrefix(this.keywordContinuations.getSiblingKeywordLabels(candidate), prefix);
+                return this.matchesKeywordPrefix(
+                    this.keywordContinuations.getSiblingKeywordLabelsAt(candidate, offset),
+                    prefix
+                );
             });
         if (!container) {
             return [];
         }
-        const labels = this.keywordContinuations.getSiblingKeywordLabels(container);
+        const labels = this.keywordContinuations.getSiblingKeywordLabelsAt(container, offset);
         const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
         const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
         const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
@@ -221,12 +224,12 @@ export class ThinaiBlockCompletion {
         if (!parent) {
             return [];
         }
-        const labels = this.keywordContinuations.getSiblingKeywordLabels(parent);
+        const offset = document.textDocument.offsetAt(position);
+        const labels = this.keywordContinuations.getSiblingKeywordLabelsAt(parent, offset);
         if (labels.length === 0) {
             return [];
         }
 
-        const offset = document.textDocument.offsetAt(position);
         const end = sibling.$cstNode?.end;
         if (end === undefined || end > offset) {
             return [];

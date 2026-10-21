@@ -2,6 +2,7 @@ import {
     type AstNode,
     type Reference,
     AstUtils,
+    DocumentState,
     type ValidationAcceptor,
     type ValidationChecks,
     isReference
@@ -143,6 +144,8 @@ export class ThinaiValidator {
     private readonly referencePolicy: ThinaiReferencePolicy;
     private readonly modelValidator: ThinaiModelValidator;
     private readonly readDependencyValidator: ThinaiReadDependencyValidator;
+    private duplicateNameCounts: Map<string, number> | undefined;
+    private writeRepositoriesByAggregate: Map<Aggregate, Repository[]> | undefined;
 
     constructor(private readonly services: ThinaiServices) {
         this.referencePolicy = new ThinaiReferencePolicy(services);
@@ -155,6 +158,12 @@ export class ThinaiValidator {
             this.referencePolicy,
             parameter => this.isEventParameter(parameter)
         );
+        const clearWorkspaceCaches = () => {
+            this.duplicateNameCounts = undefined;
+            this.writeRepositoriesByAggregate = undefined;
+        };
+        services.shared.workspace.DocumentBuilder.onUpdate(clearWorkspaceCaches);
+        services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.Validated, clearWorkspaceCaches);
     }
 
     checkBoundedContext(context: BoundedContext, accept: ValidationAcceptor): void {
@@ -873,8 +882,7 @@ export class ThinaiValidator {
                 return;
             }
             const method = target;
-            const isCommand = isApplicationService(method.$container) && !method.parameters.some(parameter => this.isEventParameter(parameter));
-            if (!isCommand) {
+            if (!isJourneyCommand(method)) {
                 accept('error', 'A journey may invoke only user-facing application-service commands, not event handlers or query methods.', {
                     node: step,
                     property: 'targets'
@@ -1244,11 +1252,7 @@ export class ThinaiValidator {
                 property: 'root'
             });
         }
-        const writeRepositories = this.services.shared.workspace.LangiumDocuments.all.toArray()
-            .flatMap(document => document.parseResult.value
-                ? AstUtils.streamAst(document.parseResult.value).filter(isRepository)
-                    .filter(candidate => candidate.root.ref && getOwningAggregate(candidate.root.ref) === aggregate).toArray()
-                : []);
+        const writeRepositories = this.getWriteRepositoriesByAggregate().get(aggregate) ?? [];
         if (writeRepositories.length > 1) {
             const otherRepository = writeRepositories.find(candidate => candidate !== repository);
             accept('error', `Aggregate '${aggregate.name}' already has write repository '${otherRepository?.name ?? 'another repository'}'; '${repository.name}' is a second write repository.`, {
@@ -1336,11 +1340,7 @@ export class ThinaiValidator {
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
-        const descriptions = this.services.shared.workspace.IndexManager
-            .allElements()
-            .filter(description => description.name === name)
-            .toArray();
-        if (descriptions.length < 2) {
+        if ((this.getDuplicateNameCounts().get(name) ?? 0) < 2) {
             return;
         }
 
@@ -1348,6 +1348,40 @@ export class ThinaiValidator {
             node,
             property: 'name'
         });
+    }
+
+    private getDuplicateNameCounts(): Map<string, number> {
+        if (!this.duplicateNameCounts) {
+            const counts = new Map<string, number>();
+            for (const description of this.services.shared.workspace.IndexManager.allElements()) {
+                counts.set(description.name, (counts.get(description.name) ?? 0) + 1);
+            }
+            this.duplicateNameCounts = counts;
+        }
+        return this.duplicateNameCounts;
+    }
+
+    private getWriteRepositoriesByAggregate(): Map<Aggregate, Repository[]> {
+        if (!this.writeRepositoriesByAggregate) {
+            const repositories = new Map<Aggregate, Repository[]>();
+            for (const document of this.services.shared.workspace.LangiumDocuments.all) {
+                const root = document.parseResult.value;
+                if (!root) {
+                    continue;
+                }
+                for (const repository of AstUtils.streamAst(root).filter(isRepository)) {
+                    const aggregate = repository.root.ref ? getOwningAggregate(repository.root.ref) : undefined;
+                    if (!aggregate) {
+                        continue;
+                    }
+                    const existing = repositories.get(aggregate) ?? [];
+                    existing.push(repository);
+                    repositories.set(aggregate, existing);
+                }
+            }
+            this.writeRepositoriesByAggregate = repositories;
+        }
+        return this.writeRepositoriesByAggregate;
     }
 
     private checkCrossContextTypeUse(

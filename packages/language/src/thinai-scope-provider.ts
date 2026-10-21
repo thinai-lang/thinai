@@ -54,6 +54,8 @@ import {
     isModule,
     isModuleReference,
     isImportComponent,
+    isExposure,
+    isNamedDeclarationReference,
     isReadModel,
     isReadModelReference,
     isReadSourceReference,
@@ -218,8 +220,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return this.pathScope.getSpecificationRootCompletionCandidates(context);
     }
 
-    getPathCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] | undefined {
-        return this.pathScope.getPathCompletionCandidates(context);
+    getPathCompletionCandidates(context: ReferenceInfo, offset?: number): AstNodeDescription[] | undefined {
+        return this.pathScope.getPathCompletionCandidates(context, offset);
     }
 
     private getTransitionFieldScope(transition: TransitionChange): Scope {
@@ -415,10 +417,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         for (const parameter of operation.parameters) {
             this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
-            const parameterType = parameter.type?.ref;
-            if (parameterType && (isDataObject(parameterType) || isReadModel(parameterType) || isValueObject(parameterType))) {
-                this.addShapeFields(pending, parameterType, parameter.name, referenceType, new Set());
-            }
+            this.addTypeShapeSymbols(pending, parameter.type?.ref, parameter.name, referenceType, new Set());
             if (parameter.collection) {
                 this.addCollectionShapeFields(pending, parameter.collection, parameter.name, referenceType, new Set());
             }
@@ -456,10 +455,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 }
                 resultPrefixes.add(resultPrefix);
                 this.addSpecificationSymbol(pending, queryMethod, resultPrefix, referenceType);
-                const shape = queryMethod.returnType?.ref;
-                if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {
-                    this.addShapeFields(pending, shape, resultPrefix, referenceType, new Set());
-                }
+                this.addTypeShapeSymbols(pending, queryMethod.returnType?.ref, resultPrefix, referenceType, new Set());
                 if (queryMethod.returnCollection) {
                     this.addCollectionShapeFields(pending, queryMethod.returnCollection, resultPrefix, referenceType, new Set());
                 }
@@ -478,9 +474,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (resultType || operation.returnPrimitive || operation.returnCollection) {
             this.addSpecificationSymbol(descriptions, operation, prefix, referenceType);
         }
-        if (resultType && (isDataObject(resultType) || isReadModel(resultType) || isValueObject(resultType))) {
-            this.addShapeFields(descriptions, resultType, prefix, referenceType, new Set());
-        }
+        this.addTypeShapeSymbols(descriptions, resultType, prefix, referenceType, new Set());
         if (operation.returnCollection) {
             this.addCollectionShapeFields(descriptions, operation.returnCollection, prefix, referenceType, new Set());
         }
@@ -495,10 +489,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         for (const parameter of command.parameters) {
             const parameterPrefix = `${prefix}.${parameter.name}`;
             this.addSpecificationSymbol(descriptions, parameter, parameterPrefix, referenceType);
-            const parameterType = parameter.type?.ref;
-            if (parameterType && (isDataObject(parameterType) || isReadModel(parameterType) || isValueObject(parameterType))) {
-                this.addShapeFields(descriptions, parameterType, parameterPrefix, referenceType, new Set());
-            }
+            this.addTypeShapeSymbols(descriptions, parameter.type?.ref, parameterPrefix, referenceType, new Set());
             if (parameter.collection) {
                 this.addCollectionShapeFields(descriptions, parameter.collection, parameterPrefix, referenceType, new Set());
             }
@@ -541,6 +532,27 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }).length === 0;
     }
 
+    private addTypeShapeSymbols(
+        descriptions: AstNodeDescription[],
+        type: AstNode | undefined,
+        prefix: string,
+        referenceType: string,
+        visited: Set<AstNode>
+    ): void {
+        if (!type) {
+            return;
+        }
+        if (isEnumType(type)) {
+            for (const value of type.values) {
+                this.addSpecificationSymbol(descriptions, value, `${prefix}.${value.name}`, referenceType);
+            }
+            return;
+        }
+        if (isDataObject(type) || isReadModel(type) || isValueObject(type)) {
+            this.addShapeFields(descriptions, type, prefix, referenceType, visited);
+        }
+    }
+
     private addShapeFields(
         descriptions: AstNodeDescription[],
         shape: DataObject | ReadModel | ValueObject,
@@ -555,10 +567,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         for (const field of shape.fields) {
             const name = `${prefix}.${field.name}`;
             this.addSpecificationSymbol(descriptions, field, name, referenceType);
-            const nested = field.type?.ref;
-            if (nested && (isDataObject(nested) || isReadModel(nested) || isValueObject(nested))) {
-                this.addShapeFields(descriptions, nested, name, referenceType, visited);
-            }
+            this.addTypeShapeSymbols(descriptions, field.type?.ref, name, referenceType, visited);
             if (field.collection) {
                 this.addCollectionShapeFields(descriptions, field.collection, name, referenceType, visited);
             }
@@ -580,9 +589,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         const shape = (collection.kind === 'Map' ? collection.valueType : collection.elementType)?.ref;
-        if (shape && (isDataObject(shape) || isReadModel(shape) || isValueObject(shape))) {
-            this.addShapeFields(descriptions, shape, prefix, referenceType, visited);
-        }
+        this.addTypeShapeSymbols(descriptions, shape, prefix, referenceType, visited);
     }
 
     private addSpecificationSymbol(
@@ -608,13 +615,16 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
 
-        const exposure = context.container.$type === 'Exposure'
-            ? context.container
-            : context.container.$container?.$type === 'Exposure'
-                ? context.container.$container
-                : undefined;
-        if (exposure && (context.property === 'declarations' || context.property === 'target')) {
-            const owningModule = getOwningModule(exposure);
+        const exposure = AstUtils.getContainerOfType(context.container, isExposure);
+        const declarationReference = exposure
+            ? undefined
+            : AstUtils.getContainerOfType(context.container, isNamedDeclarationReference);
+        if (exposure || declarationReference) {
+            // NamedDeclarationReference nodes are only used by `exposes`
+            // clauses. Resolve ownership from the enclosing module even when
+            // completion supplies a synthetic reference whose Exposure node
+            // has not been parsed yet.
+            const owningModule = getOwningModule(exposure ?? declarationReference!);
             return owningModule !== undefined && getOwningModule(target) === owningModule;
         }
 
