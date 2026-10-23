@@ -206,10 +206,20 @@ export class ThinaiReferencePolicy {
     }
 
     isExposedQueryResult(method: Method): boolean {
-        const resultTypes = getTypeReferences(method.returnType, method.returnCollection)
-            .map(reference => reference.ref)
-            .filter((type): type is TypeDeclaration => type !== undefined);
-        return resultTypes.length === 0 || resultTypes.every(type => {
+        if (!method.returnPrimitive && !method.returnType && !method.returnCollection) {
+            return false;
+        }
+        const references = getTypeReferences(method.returnType, method.returnCollection);
+        const resultTypes: TypeDeclaration[] = [];
+        for (const reference of references) {
+            if (!reference.ref) {
+                // An incomplete or unresolved result type is not a published
+                // contract yet.
+                return false;
+            }
+            resultTypes.push(reference.ref);
+        }
+        return resultTypes.every(type => {
             if (!isDataObject(type)) {
                 return false;
             }
@@ -243,11 +253,26 @@ export class ThinaiReferencePolicy {
         if (!contextName || !isModel(model)) {
             return false;
         }
-        return this.getVisibleContextMaps(model).some(contextMap => contextMap.relationships.some(relationship =>
-            isSyntacticallyComplete(relationship) && isSharedKernelRelationship(relationship) &&
-            relationship.sharedKernel?.ref === sharedKernel &&
-            relationship.participants.some(participant => participant.target?.ref?.name === contextName)
-        ));
+        const contextMaps = this.getVisibleContextMaps(model);
+        return contextMaps.some(contextMap => contextMap.relationships.some(relationship => {
+            if (!isSyntacticallyComplete(relationship) || !isSharedKernelRelationship(relationship) ||
+                relationship.sharedKernel?.ref !== sharedKernel) {
+                return false;
+            }
+            const participants = relationship.participants
+                .map(participant => participant.target?.ref?.name)
+                .filter((name): name is string => name !== undefined);
+            if (!participants.includes(contextName)) {
+                return false;
+            }
+            // Conflicting relationship definitions must not authorize shared-kernel
+            // use either. Event/query authorization already applies this rule.
+            return [...new Set(participants)]
+                .filter(participant => participant !== contextName)
+                .every(participant =>
+                    this.haveCompatibleRelationshipDefinitions(contextMaps, contextName, participant, 'event')
+                );
+        }));
     }
 
     hasAuthorizedEventRelationship(source: AstNode, event: IntegrationEvent): boolean {

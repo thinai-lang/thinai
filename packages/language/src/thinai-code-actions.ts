@@ -19,7 +19,7 @@ import {
     type Import,
     type ImportableComponent
 } from './generated/ast.js';
-import { resolveAstNodeDescription, resolveImportUri, toImportPath } from './thinai-scope-utils.js';
+import { formatIdentifier, resolveAstNodeDescription, resolveImportUri, toImportPath } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getNewline } from './thinai-text-utils.js';
 
@@ -65,7 +65,7 @@ export class ThinaiCodeActionProvider {
                         start: textDocument.positionAt(closingBrace.offset),
                         end: textDocument.positionAt(closingBrace.offset)
                     };
-                    newText = `, ${component.name}`;
+                    newText = `, ${formatIdentifier(component.name)}`;
                 } else {
                     const newline = getNewline(textDocument.getText());
                     range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };

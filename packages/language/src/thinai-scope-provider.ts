@@ -17,6 +17,7 @@ import {
     type DataObject,
     type DomainEvent,
     type IntegrationEvent,
+    type Entity,
     type Exposure,
     type Field,
     type ImportComponent,
@@ -562,7 +563,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
             return;
         }
-        if (isDataObject(type) || isReadModel(type) || isValueObject(type) ||
+        if (isEntity(type) || isDataObject(type) || isReadModel(type) || isValueObject(type) ||
             isDomainEvent(type) || isIntegrationEvent(type)) {
             this.addShapeFields(descriptions, type, prefix, referenceType, visited);
         }
@@ -570,7 +571,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     private addShapeFields(
         descriptions: AstNodeDescription[],
-        shape: DataObject | ReadModel | ValueObject | DomainEvent | IntegrationEvent,
+        shape: Entity | DataObject | ReadModel | ValueObject | DomainEvent | IntegrationEvent,
         prefix: string,
         referenceType: string,
         visited: Set<AstNode>

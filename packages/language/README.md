@@ -224,7 +224,9 @@ participating bounded contexts; it does not authorize event consumption.
 For an IntegrationEvent nested in a module, expose the event, then import its
 owning bounded context and use the qualified module path. Modules organize one
 bounded context; their names are part of the public path for nested contracts.
-IntegrationEvent payloads cannot expose entities or types owned by aggregates.
+A context-level event and its context-level payload types are public; when the
+event or a payload type is nested in a module, expose it. IntegrationEvent
+payloads cannot expose entities or types owned by aggregates.
 A payload value object or enum may come from an exposed sibling module when the
 event's module depends on that module; the normal dependency and exposure rules
 apply.
@@ -256,8 +258,10 @@ domain meaning. Method bodies may also contain structured `invokes`, `emits`,
 and `transition` relationships. Interpolated specifications can link to
 methods, parameters, repositories, entities, value objects, enum types and
 values, read models, events, and fields. A dotted reference such as
-`[[input.address.street]]` makes each segment independently navigable. Links
-are descriptive references, not expressions or executable calls. A specification
+`[[input.address.street]]` makes each segment independently navigable. A
+qualified path may also continue through a field's declared type, for example
+`[[Shop.Dto.address.city]]`. Links are descriptive references, not expressions
+or executable calls. A specification
 inside an entity or value object may refer to that enclosing object's fields by
 their bare names; fields on other objects should use an owner-qualified path, such
 as `[[Order.Order.customerId]]`. Operation inputs and results use their named

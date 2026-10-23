@@ -745,7 +745,7 @@ import { Second } from "./import-range-map-two.tni"
         expect(conflictText).not.toContain('separateWays');
     });
 
-    test('treats different integration patterns across imported maps as a conflict', async () => {
+    test('does not treat different integration patterns across imported maps as a conflict', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/pattern-conflict-contexts.tni'),
             'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
@@ -775,10 +775,57 @@ import { Second } from "./import-range-map-two.tni"
 
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             "define conflicting relationships between 'Ordering' and 'Shipping'"
-        ))).toBe(true);
+        ))).toBe(false);
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'requires an imported context map with an authorized relationship'
-        ))).toBe(true);
+        ))).toBe(false);
+    });
+
+    test('denies shared-kernel use when imported context maps conflict', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-contexts.tni'),
+            `bounded context Alpha
+bounded context Beta
+shared kernel Common {
+    value object Code {
+        raw: string
+    }
+}`
+        );
+        const sharedMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-map-one.tni'),
+            `import "./shared-conflict-contexts.tni"
+context map SharedTypes {
+    sharedKernel Common {
+        participants: [Alpha, Beta]
+    }
+}`
+        );
+        const separateMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-map-two.tni'),
+            `import "./shared-conflict-contexts.tni"
+context map SeparateTypes {
+    separateWays Alpha -x- Beta
+}`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-consumer.tni'),
+            `import "./shared-conflict-contexts.tni"
+import { SharedTypes } from "./shared-conflict-map-one.tni"
+import { SeparateTypes } from "./shared-conflict-map-two.tni"
+in bounded context Beta {
+    value object Local {
+        code: Common.Code
+    }
+}`
+        );
+        documents = [contexts, sharedMap, separateMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const messages = (consumer.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain("Imported context maps 'SharedTypes' and 'SeparateTypes' define conflicting relationships between 'Alpha' and 'Beta'.");
+        expect(messages).toContain('Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.');
     });
 
     test('separate-ways relationships do not authorize event consumption', async () => {

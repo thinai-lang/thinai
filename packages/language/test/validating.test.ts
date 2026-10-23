@@ -1766,7 +1766,301 @@ in bounded context Ordering {
         ))).toBe(true);
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             'Integration-event payload types must be public contract types'
-        ))).toBe(true);
+        ))).toBe(false);
+    });
+
+    test('allows context-level integration-event payload types', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                value object Payload {
+                    raw: string
+                }
+                integration event Published {
+                    payload: Payload
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('rejects nested aggregate-owned and private integration-event payload types', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                module Contracts {
+                    exposes E, PublicInfo
+                    value object PublicInfo {
+                        id: OrderId
+                        secret: Secret
+                    }
+                    value object Secret {
+                        raw: string
+                    }
+                    integration event E {
+                        info: PublicInfo
+                    }
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('An integration-event payload must not expose types owned by an aggregate.');
+        expect(messages).toContain('Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.');
+    });
+
+    test('rejects entities hidden in a nested integration-event payload value object', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    value object OrderRef {
+                        order: Order
+                    }
+                }
+                module Contracts {
+                    exposes E, Payload
+                    value object Payload {
+                        ref: OrderRef
+                    }
+                    integration event E {
+                        payload: Payload
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => diagnostic.message)).toContain(
+            'Event payloads must not expose entity instances; use stable value data instead.'
+        );
+    });
+
+    test('rejects entities hidden in a value object nested by a data object or read model', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    value object OrderRef {
+                        order: Order
+                    }
+                }
+                data object Dto {
+                    ref: OrderRef
+                }
+                read model Summary {
+                    ref: OrderRef
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('Data objects may contain value data, but not entities or read models.');
+        expect(messages).toContain('Read models must project data rather than reference entity instances.');
+    });
+
+    test('rejects entities hidden in application-service and factory signatures', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    value object OrderRef {
+                        order: Order
+                    }
+                }
+                application service App {
+                    method use(ref: OrderRef) {}
+                }
+                factory OrderFactory {
+                    method create(ref: OrderRef) returns Order.Order
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages.filter(message =>
+            message === 'Application-service signatures must use identifiers or data values, not entity instances.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'Factory method signatures must use identifiers or domain values, not entity instances.'
+        )).toHaveLength(1);
+    });
+
+    test('resolves nested canonical specification field paths', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                value object Address {
+                    city: string
+                }
+                data object Dto {
+                    address: Address
+                }
+                application service App {
+                    method handle() {
+                        behavior "[[Shop.Dto.address.city]]."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message).includes('Could not resolve reference')
+        )).toEqual([]);
+    });
+
+    test('resolves entity fields from specification result and parameter roots', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        status: OrderStatus
+                        method check() returns Order {
+                            behavior "[[result.status]]."
+                        }
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    enum OrderStatus {
+                        Draft,
+                        Done
+                    }
+                }
+                domain service Policy {
+                    method inspect(order: Order.Order) {
+                        behavior "[[order.status]]."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message).includes('Could not resolve reference')
+        )).toEqual([]);
+    });
+
+    test('resolves nested canonical fields in journey prose', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                value object Address {
+                    city: string
+                }
+                module Contracts {
+                    exposes E, Address
+                    integration event E {
+                        address: Address
+                    }
+                }
+                application service App {
+                    method run() {}
+                }
+            }
+            actor User
+            journey CheckEvent {
+                by User {
+                    invoke Shop.App.run
+                        when "[[Shop.Contracts.E.address.city]]."
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message).includes('Could not resolve reference')
+        )).toEqual([]);
+    });
+
+    test('distinguishes optional and required constructor signatures', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        constructor(name?: string) {}
+                        constructor(name: string) {}
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Duplicate constructor signature.'
+        )).toBe(false);
+    });
+
+    test('does not report initial-state or optional-identifier errors while typing', async () => {
+        const initialDocument = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        status: OrderStatus initial D
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    enum OrderStatus {
+                        Draft,
+                        Done
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(initialDocument).some(diagnostic =>
+            String(diagnostic.message).includes('An initial state must be a declared value')
+        )).toBe(false);
+
+        const identifierDocument = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order {
+                        identifier id?
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(identifierDocument).some(diagnostic =>
+            String(diagnostic.message).includes('cannot be optional') ||
+            String(diagnostic.message).includes('must reference a value object')
+        )).toBe(false);
     });
 
     test('accepts integration-event payload types explicitly exposed by their contract module', async () => {
@@ -2915,6 +3209,7 @@ in bounded context Ordering {
                 application service App {
                     method handle(source: Api.Contracts.E) {
                         behavior "Use [[source.address.city]]."
+                        behavior "Use canonical [[Api.Contracts.E.address.city]]."
                     }
                 }
             }

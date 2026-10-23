@@ -4,21 +4,46 @@ import {
     type AstNode,
     type AstNodeDescription,
     type LangiumCoreServices,
+    type Reference,
     type ReferenceInfo,
     type Scope,
     type Stream
 } from 'langium';
 import {
     isBoundedContextPart,
+    isDataObject,
+    isDomainEvent,
+    isEntity,
+    isEnumType,
+    isField,
     isImportableComponent,
+    isIntegrationEvent,
     isJourneyStep,
     isMethod,
     isMethodInvocation,
     isModel,
+    isParameter,
+    isReadModel,
     isReadSourceReference,
     isSpecificationTextPart,
-    type Method
+    isValueObject,
+    type DataObject,
+    type DomainEvent,
+    type Entity,
+    type IntegrationEvent,
+    type Method,
+    type ReadModel,
+    type TypeDeclaration,
+    type ValueObject
 } from './generated/ast.js';
+import { getTypeReferences } from './thinai-type-utils.js';
+
+type FieldShape = DataObject | DomainEvent | Entity | IntegrationEvent | ReadModel | ValueObject;
+
+function isFieldShape(node: AstNode): node is FieldShape {
+    return isEntity(node) || isDataObject(node) || isReadModel(node) || isValueObject(node) ||
+        isDomainEvent(node) || isIntegrationEvent(node);
+}
 
 interface ThinaiPathScopeCallbacks {
     createScope(elements: Iterable<AstNodeDescription>): Scope;
@@ -466,7 +491,99 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
             }
         }
+        if (isSpecificationTextPart(context.container)) {
+            for (const target of this.getSpecificationShapeMembers(context, prefix, scope)) {
+                const name = this.nameProvider.getName(target);
+                if (!name) {
+                    continue;
+                }
+                const description = this.descriptions.createDescription(target, name, AstUtils.getDocument(target));
+                results.set(`${description.documentUri.toString()}#${description.path}`, description);
+            }
+        }
         return [...results.values()];
+    }
+
+    /**
+     * Resolves the field shape at the end of a prefix. A specification path can
+     * continue through a field's declared type (and collection element/value
+     * types), which is not represented by AST containment and therefore cannot
+     * be resolved by getPathSegmentTarget alone.
+     */
+    private getSpecificationShapeMembers(
+        context: ReferenceInfo,
+        prefix: string[],
+        scope: Scope
+    ): AstNode[] {
+        const target = this.resolveSpecificationShapePrefix(context, prefix, scope);
+        if (!target) {
+            return [];
+        }
+        const members = new Set<AstNode>();
+        for (const type of this.getShapeTypes(target)) {
+            if (isEnumType(type)) {
+                for (const value of type.values) {
+                    members.add(value);
+                }
+                continue;
+            }
+            if (isFieldShape(type)) {
+                for (const field of type.fields) {
+                    members.add(field);
+                }
+            }
+        }
+        return [...members];
+    }
+
+    private resolveSpecificationShapePrefix(
+        context: ReferenceInfo,
+        prefix: string[],
+        scope: Scope
+    ): AstNode | undefined {
+        if (prefix.length === 0) {
+            return undefined;
+        }
+        const direct = scope.getElement(prefix.join('.'))?.node;
+        if (direct) {
+            return direct;
+        }
+        const parent = this.resolveSpecificationShapePrefix(context, prefix.slice(0, -1), scope);
+        if (!parent) {
+            return undefined;
+        }
+        const segment = prefix[prefix.length - 1]!;
+        return this.getShapeMemberTargets(parent, segment)[0];
+    }
+
+    private getShapeMemberTargets(target: AstNode, name: string): AstNode[] {
+        const matches: AstNode[] = [];
+        for (const type of this.getShapeTypes(target)) {
+            if (isEnumType(type)) {
+                matches.push(...type.values.filter(value => value.name === name));
+                continue;
+            }
+            if (isFieldShape(type)) {
+                matches.push(...type.fields.filter(field => field.name === name));
+            }
+        }
+        return matches;
+    }
+
+    private getShapeTypes(target: AstNode): AstNode[] {
+        const references = isField(target)
+            ? getTypeReferences(target.type, target.collection)
+            : isParameter(target)
+                ? getTypeReferences(target.type as Reference<TypeDeclaration> | undefined, target.collection)
+                : isMethod(target)
+                    ? getTypeReferences(target.returnType, target.returnCollection)
+                    : [];
+        if (references.length > 0) {
+            return references
+                .map(reference => reference.ref as AstNode | undefined)
+                .filter((node): node is AstNode => node !== undefined);
+        }
+        return [target];
     }
 
     private getPathSegmentTarget(target: AstNode, path: string[], segmentIndex: number, context: ReferenceInfo): AstNode | undefined {

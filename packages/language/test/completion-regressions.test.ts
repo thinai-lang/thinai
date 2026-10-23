@@ -88,6 +88,96 @@ in bounded context Shipping {
         expect(mirrorLabels).not.toContain('Ordering.Order.OrderId');
     });
 
+    test('completes canonical specification fields through a field type', async () => {
+        const nested = await build(`bounded context Shop
+in bounded context Shop {
+    value object Address {
+        city: string
+    }
+    data object Dto {
+        address: Address
+    }
+    application service App {
+        method handle() {
+            behavior "[[Shop.Dto.address.${marker}]]."
+        }
+    }
+}`);
+        expect(nested.completion?.items.map(item => item.label)).toContain('city');
+    });
+
+    test('completes entity fields from specification result and parameter roots', async () => {
+        const result = await build(`bounded context Shop
+in bounded context Shop {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            status: OrderStatus
+            method check() returns Order {
+                behavior "[[result.${marker}]]."
+            }
+        }
+        value object OrderId {
+            raw: string
+        }
+        enum OrderStatus {
+            Draft,
+            Done
+        }
+    }
+}`);
+        expect(result.completion?.items.map(item => item.label)).toContain('status');
+
+        const parameter = await build(`bounded context Shop
+in bounded context Shop {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            status: OrderStatus
+        }
+        value object OrderId {
+            raw: string
+        }
+        enum OrderStatus {
+            Draft,
+            Done
+        }
+    }
+    domain service Policy {
+        method inspect(order: Order.Order) {
+            behavior "[[order.${marker}]]."
+        }
+    }
+}`);
+        expect(parameter.completion?.items.map(item => item.label)).toContain('status');
+    });
+
+    test('completes canonical nested journey event fields', async () => {
+        const journey = await build(`bounded context Shop
+in bounded context Shop {
+    value object Address {
+        city: string
+    }
+    module Contracts {
+        exposes E, Address
+        integration event E {
+            address: Address
+        }
+    }
+    application service App {
+        method run() {}
+    }
+}
+actor User
+journey CheckEvent {
+    by User {
+        invoke Shop.App.run
+            when "[[Shop.Contracts.E.address.${marker}]]."
+    }
+}`);
+        expect(journey.completion?.items.map(item => item.label)).toContain('city');
+    });
+
     test('does not offer path roots or terminal names when completing after a qualified path', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/qualified-path-contexts.tni'),

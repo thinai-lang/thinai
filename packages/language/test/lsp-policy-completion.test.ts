@@ -1041,6 +1041,31 @@ in bounded context Ordering {
             .toBe(', Shipping');
     });
 
+    test('escapes keyword component names in import code actions', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/keyword-components.tni'),
+            'bounded context Other\nbounded context `value`'
+        );
+        const sourceText = 'import { Other } from "./keyword-components.tni"\nin bounded context `value` {}';
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/keyword-component-consumer.tni'), sourceText
+        );
+        documents = [target, source];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(source, {
+            textDocument: { uri: source.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 1, character: sourceText.length - sourceText.indexOf('\n') - 1 }
+            },
+            context: { diagnostics: source.diagnostics ?? [] }
+        });
+        const action = actions?.find(candidate => 'title' in candidate && candidate.title === "Import 'value' from './keyword-components.tni'");
+        expect(action && 'edit' in action ? action.edit?.changes?.[source.uri.toString()]?.[0]?.newText : undefined)
+            .toBe(', `value`');
+    });
+
     test('does not offer import quick fixes for private cross-context types', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/private-types.tni'),

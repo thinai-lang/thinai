@@ -240,14 +240,14 @@ export class ThinaiValidator {
             });
         }
         const optionalIdentifier = identifierFields.find(field => field.optional);
-        if (optionalIdentifier) {
+        if (optionalIdentifier && isSyntacticallyComplete(entity)) {
             accept('error', 'An entity identifier field cannot be optional.', {
                 node: optionalIdentifier,
                 property: 'optional'
             });
         }
         const identifierType = identifierFields[0]?.type?.ref;
-        if (identifierType && aggregate && identifierType.$container !== aggregate) {
+        if (identifierType && aggregate && identifierType.$container !== aggregate && isSyntacticallyComplete(entity)) {
             accept('error', 'An entity identifier value object must be declared in the same aggregate.', {
                 node: identifierFields[0],
                 property: 'type'
@@ -304,53 +304,21 @@ export class ThinaiValidator {
                 property: 'type'
             });
         }
-        if (field.initialState !== undefined) {
+        if (field.initialState !== undefined && isSyntacticallyComplete(field)) {
             const stateType = field.type?.ref;
             const initialState = field.initialState.ref;
-            if (!isEntity(owner) || !stateType || !isEnumType(stateType) || field.optional) {
+            const validInitialField = isEntity(owner) && !field.optional && stateType !== undefined && isEnumType(stateType);
+            if (!validInitialField) {
                 accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
                     node: field,
                     keyword: 'initial'
                 });
-            } else if (!isEnumValue(initialState) || initialState.$container !== stateType) {
+            } else if (initialState !== undefined &&
+                (!isEnumValue(initialState) || initialState.$container !== stateType)) {
                 accept('error', 'An initial state must be a declared value of a non-optional enum field on an entity.', {
                     node: field,
                     property: 'initialState'
                 });
-            }
-        }
-        if (isDomainEvent(owner) || isIntegrationEvent(owner)) {
-            if (typeReferences.some(reference => isEntity(reference.ref))) {
-                accept('error', 'Event payloads must not expose entity instances; use stable value data instead.', {
-                    node: field,
-                    property: 'type'
-                });
-            }
-            if (isIntegrationEvent(owner) && typeReferences.some(reference =>
-                reference.ref !== undefined && !isEntity(reference.ref) &&
-                getOwningAggregate(reference.ref) !== undefined
-            )) {
-                accept('error', 'An integration-event payload must not expose types owned by an aggregate.', {
-                    node: field,
-                    property: 'type'
-                });
-            }
-            if (isIntegrationEvent(owner)) {
-                const privateContractType = typeReferences.find(reference => {
-                    const target = reference.ref;
-                    if (!target || isInSharedKernel(target) || getOwningAggregate(target) !== undefined ||
-                        (target.$type !== 'ValueObject' && target.$type !== 'EnumType')) {
-                        return false;
-                    }
-                    const targetModule = getOwningModule(target);
-                    return targetModule === undefined || !isExposedByModule(targetModule, target);
-                });
-                if (privateContractType) {
-                    accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
-                        node: field,
-                        property: 'type'
-                    });
-                }
             }
         }
         if (isEntity(owner) || isValueObject(owner)) {
@@ -367,7 +335,7 @@ export class ThinaiValidator {
                 }
             }
         }
-        if (!field.identifier || !isEntity(owner)) {
+        if (!field.identifier || !isEntity(owner) || !isSyntacticallyComplete(field)) {
             return;
         }
         const identifierType = field.type?.ref;
@@ -420,20 +388,21 @@ export class ThinaiValidator {
     }
 
     private getParameterTypeSignature(parameter: Parameter): string | undefined {
+        const optional = parameter.optional ? '?' : '';
         const eventType = this.getEventParameterType(parameter);
         if (eventType) {
-            return `event:${getExportedName(eventType as AstNode & { name: string })}`;
+            return `event:${getExportedName(eventType as AstNode & { name: string })}${optional}`;
         }
         if (parameter.primitive) {
-            return parameter.primitive;
+            return `${parameter.primitive}${optional}`;
         }
         if (parameter.type) {
             return parameter.type.ref
-                ? getExportedName(parameter.type.ref as AstNode & { name: string })
+                ? `${getExportedName(parameter.type.ref as AstNode & { name: string })}${optional}`
                 : undefined;
         }
         if (parameter.collection && this.isCompleteCollectionType(parameter.collection)) {
-            return this.getCollectionTypeSignature(parameter.collection);
+            return `${this.getCollectionTypeSignature(parameter.collection)}${optional}`;
         }
         return undefined;
     }
@@ -631,6 +600,12 @@ export class ThinaiValidator {
             this.checkCrossContextTypeUse(method, returnTypes, accept, 'returnType');
             if (applicationService || queryService) {
                 this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType', 'application');
+                if (this.hasNestedEntityInReferences(returnTypes)) {
+                    accept('error', 'Application-service signatures must use identifiers or data values, not entity instances.', {
+                        node: method,
+                        property: 'returnType'
+                    });
+                }
             } else if (isEntity(method.$container) || isValueObject(method.$container)) {
                 this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType',
                     getOwningAggregate(method) ? 'aggregate' : 'value-object');
@@ -824,11 +799,23 @@ export class ThinaiValidator {
     checkReadModel(readModel: ReadModel, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(readModel, accept);
         this.checkDuplicateFieldNames(readModel.fields, accept);
+        if (isSyntacticallyComplete(readModel) && this.hasNestedEntityShape(readModel, false)) {
+            accept('error', 'Read models must project data rather than reference entity instances.', {
+                node: readModel,
+                property: 'fields'
+            });
+        }
     }
 
     checkDataObject(dataObject: DataObject, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(dataObject, accept);
         this.checkDuplicateFieldNames(dataObject.fields, accept);
+        if (isSyntacticallyComplete(dataObject) && this.hasNestedEntityShape(dataObject, false)) {
+            accept('error', 'Data objects may contain value data, but not entities or read models.', {
+                node: dataObject,
+                property: 'fields'
+            });
+        }
     }
 
     checkProjector(projector: Projector, accept: ValidationAcceptor): void {
@@ -1014,8 +1001,20 @@ export class ThinaiValidator {
             const owner = parameter.$container.$container;
             if (isApplicationService(owner) || isQueryService(owner)) {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'application');
+                if (this.hasNestedEntityInReferences(typeReferences)) {
+                    accept('error', 'Application-service signatures must use identifiers or data values, not entity instances.', {
+                        node: parameter,
+                        property: 'type'
+                    });
+                }
             } else if (isFactory(owner)) {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type', 'factory');
+                if (this.hasNestedEntityInReferences(typeReferences)) {
+                    accept('error', 'Factory method signatures must use identifiers or domain values, not entity instances.', {
+                        node: parameter,
+                        property: 'type'
+                    });
+                }
                 this.checkDataObjectBoundaryUse(
                     parameter,
                     typeReferences,
@@ -1124,6 +1123,52 @@ export class ThinaiValidator {
                 property
             });
         }
+    }
+
+    /**
+     * Finds an entity hidden behind a value object (or nested data object)
+     * shape. Direct entity fields are handled by the regular field checks, so
+     * they are skipped here to avoid duplicating diagnostics.
+     */
+    private hasNestedEntityShape(node: AstNode, reportDirect: boolean): boolean {
+        return this.hasNestedEntityInShape(node, reportDirect, new Set());
+    }
+
+    private hasNestedEntityInReferences(references: Reference<TypeDeclaration>[]): boolean {
+        const visited = new Set<AstNode>();
+        return references.some(reference => this.hasNestedEntityInShape(reference.ref, false, visited));
+    }
+
+    private hasNestedEntityInShape(
+        type: AstNode | undefined,
+        reportEntity: boolean,
+        visited: Set<AstNode>
+    ): boolean {
+        if (!type || visited.has(type)) {
+            return false;
+        }
+        if (isEntity(type)) {
+            return reportEntity;
+        }
+        visited.add(type);
+        if (isValueObject(type)) {
+            return type.fields.some(field =>
+                getTypeReferences(field.type, field.collection).some(reference =>
+                    this.hasNestedEntityInShape(reference.ref, true, visited)
+                )
+            );
+        }
+        if (isDataObject(type) || isReadModel(type)) {
+            return type.fields.some(field =>
+                getTypeReferences(field.type, field.collection).some(reference => {
+                    if (isEntity(reference.ref)) {
+                        return false;
+                    }
+                    return this.hasNestedEntityInShape(reference.ref, isValueObject(reference.ref), visited);
+                })
+            );
+        }
+        return false;
     }
 
     checkValueObject(valueObject: ValueObject, accept: ValidationAcceptor): void {
@@ -1467,11 +1512,71 @@ export class ThinaiValidator {
     checkDomainEvent(event: DomainEvent, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(event, accept);
         this.checkDuplicateFieldNames(event.fields, accept);
+        this.checkEventPayloadShape(event, accept);
     }
 
     checkIntegrationEvent(event: IntegrationEvent, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(event, accept);
         this.checkDuplicateFieldNames(event.fields, accept);
+        this.checkEventPayloadShape(event, accept);
+    }
+
+    /**
+     * Event payload contracts are recursive: a value object can nest another
+     * value object, and that nested shape is still part of the event contract.
+     * Validate the whole reachable shape, not only the direct field types.
+     */
+    private checkEventPayloadShape(event: DomainEvent | IntegrationEvent, accept: ValidationAcceptor): void {
+        if (!isSyntacticallyComplete(event)) {
+            return;
+        }
+        const integrationEvent = isIntegrationEvent(event);
+        const visited = new Set<AstNode>();
+        const visit = (type: AstNode | undefined, field: Field): void => {
+            if (!type || visited.has(type)) {
+                return;
+            }
+            visited.add(type);
+            if (isEntity(type)) {
+                accept('error', 'Event payloads must not expose entity instances; use stable value data instead.', {
+                    node: field,
+                    property: 'type'
+                });
+                return;
+            }
+            // Data objects and read models are already rejected by checkField
+            // when they appear anywhere in a domain/event payload shape.
+            if (isDataObject(type) || isReadModel(type)) {
+                return;
+            }
+            if (integrationEvent) {
+                if (getOwningAggregate(type) !== undefined) {
+                    accept('error', 'An integration-event payload must not expose types owned by an aggregate.', {
+                        node: field,
+                        property: 'type'
+                    });
+                }
+                const targetModule = getOwningModule(type);
+                if (targetModule !== undefined && !isExposedByModule(targetModule, type)) {
+                    accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
+                        node: field,
+                        property: 'type'
+                    });
+                }
+            }
+            if (isValueObject(type)) {
+                for (const nestedField of type.fields) {
+                    for (const reference of getTypeReferences(nestedField.type, nestedField.collection)) {
+                        visit(reference.ref, nestedField);
+                    }
+                }
+            }
+        };
+        for (const field of event.fields) {
+            for (const reference of getTypeReferences(field.type, field.collection)) {
+                visit(reference.ref, field);
+            }
+        }
     }
 
     checkNamedDeclaration(

@@ -1,4 +1,4 @@
-import type { BoundedContext, ContextMapEndpoint, ContextRelationship } from './generated/ast.js';
+import type { BoundedContext, ContextRelationship } from './generated/ast.js';
 import {
     isCustomerSupplierRelationship,
     isPartnershipRelationship,
@@ -48,7 +48,6 @@ export function getRelationshipPairSemantics(relationship: ContextRelationship):
             name: contexts.map(name => `'${name}'`).join(' and ')
         };
     };
-    const patterns = (endpoint: ContextMapEndpoint) => [...endpoint.integrationPatterns].sort();
 
     if (isCustomerSupplierRelationship(relationship)) {
         const customer = relationship.customer?.context?.ref;
@@ -57,9 +56,12 @@ export function getRelationshipPairSemantics(relationship: ContextRelationship):
             return [];
         }
         const identity = ['customerSupplier', customer.name, supplier.name];
-        const pair = createPair(customer, supplier, 'customerSupplier', identity, [
-            'customerSupplier', customer.name, patterns(relationship.customer), supplier.name, patterns(relationship.supplier)
-        ]);
+        // Integration patterns are descriptive metadata. They must not make two
+        // otherwise identical relationship definitions incompatible or affect
+        // cross-context authorization. Label spelling/uniqueness is validated on
+        // the endpoint itself.
+        const signature = ['customerSupplier', customer.name, supplier.name];
+        const pair = createPair(customer, supplier, 'customerSupplier', identity, signature);
         return pair ? [pair] : [];
     }
     if (isPartnershipRelationship(relationship)) {
@@ -68,14 +70,9 @@ export function getRelationshipPairSemantics(relationship: ContextRelationship):
         if (!left || !right) {
             return [];
         }
-        const sides = [
-            { context: left, patterns: patterns(relationship.left) },
-            { context: right, patterns: patterns(relationship.right) }
-        ].sort((a, b) => a.context.name.localeCompare(b.context.name));
-        const identity = ['partnership', ...[left.name, right.name].sort()];
-        const pair = createPair(left, right, 'partnership', identity, [
-            'partnership', ...sides.map(side => [side.context.name, side.patterns])
-        ]);
+        const contextNames = [left.name, right.name].sort();
+        const identity = ['partnership', ...contextNames];
+        const pair = createPair(left, right, 'partnership', identity, ['partnership', ...contextNames]);
         return pair ? [pair] : [];
     }
     if (isSeparateWaysRelationship(relationship)) {
