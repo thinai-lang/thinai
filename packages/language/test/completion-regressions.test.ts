@@ -322,6 +322,33 @@ in bounded context Ordering {
         expect(typedRoot.completion?.items.map(item => item.label)).toContain('result');
     });
 
+    test('completes backtick-delimited names while the closing backtick is being typed', async () => {
+        const result = await build(`bounded context Ordering
+in bounded context Ordering {
+    data object \`Order Result\` { raw: string }
+    application service App {
+        method run(input: \`Ord${marker})
+    }
+}`);
+        expect(result.completion?.items.map(item => item.label)).toContain('Order Result');
+    });
+
+    test('the implicit result root wins over a colliding parameter in completion', async () => {
+        const result = await build(`bounded context Ordering
+in bounded context Ordering {
+    data object Input { raw: string }
+    data object Output { actualStatus: string }
+    application service OrderApplication {
+        method place(result: Input) returns Output {
+            behavior "Use [[res${marker}]]."
+        }
+    }
+}`);
+        const resultItems = result.completion?.items.filter(item => item.label === 'result') ?? [];
+        expect(resultItems).toHaveLength(1);
+        expect(resultItems[0]?.kind).toBe(CompletionItemKind.Method);
+    });
+
     test('links and completes enum values through command contract fields', async () => {
         const source = `bounded context Ordering
 in bounded context Ordering {

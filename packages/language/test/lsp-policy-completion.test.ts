@@ -39,7 +39,7 @@ describe('LSP policy completion', () => {
         });
         const item = completion?.items.find(candidate => candidate.label === 'behavior');
 
-        expect(item?.textEdit).toMatchObject({ newText: '\r\n        behavior\r\n        ' });
+        expect(item?.textEdit).toMatchObject({ newText: '\r\n            behavior\r\n        ' });
     });
 
     test('offers the allowed declaration and method-body keywords in each block', async () => {

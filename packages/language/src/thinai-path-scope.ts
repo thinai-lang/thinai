@@ -77,10 +77,6 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             isSpecificationTextPart(context.container)) {
             return this.callbacks.createScope(this.getSpecificationRootPathSymbols(context, referenceType));
         }
-        if (context.property === 'targets' &&
-            (isJourneyStep(context.container) || isMethodInvocation(context.container))) {
-            return this.callbacks.createScope(this.getInvocationPathSymbols(context, referenceType));
-        }
         const wrapperPath = (context.container as unknown as { path?: unknown }).path;
         if (context.property === 'target' && Array.isArray(wrapperPath) && wrapperPath.length === 0) {
             return this.callbacks.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
@@ -199,6 +195,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         }
         const scope = this.callbacks.getUnsegmentedScope(context, referenceType);
         const candidates = new Map<string, AstNodeDescription>();
+        const seenSegments = new Map<AstNode, Set<string>>();
         for (const description of scope.getAllElements()) {
             const target = this.callbacks.getDescriptionNode(description);
             if (!target) {
@@ -207,6 +204,9 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             const path = description.name.split('.');
             for (let index = 0; index < path.length; index++) {
                 const segmentName = path[index]!;
+                if (segmentName === 'result' && this.isBareResultCollision(context, target)) {
+                    continue;
+                }
                 const ancestorTarget = this.getPathSegmentTarget(target, path, index, context);
                 // Synthetic contract roots such as `result` are attached to the
                 // operation node, so they are not ancestors of their own path
@@ -220,6 +220,12 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (!segmentTarget) {
                     continue;
                 }
+                const names = seenSegments.get(segmentTarget) ?? new Set<string>();
+                if (names.has(segmentName)) {
+                    continue;
+                }
+                names.add(segmentName);
+                seenSegments.set(segmentTarget, names);
                 const segmentDescription = this.descriptions.createDescription(
                     segmentTarget,
                     segmentName,
@@ -231,48 +237,74 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         return [...candidates.values()];
     }
 
-    getInvocationCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
-        const referenceType = this.getDeclaredReferenceType(context);
-        if (!referenceType) {
+    private isBareResultCollision(context: ReferenceInfo, target: AstNode): boolean {
+        if ((!isField(target) && !isMethod(target) && !isParameter(target)) || target.name !== 'result') {
+            return false;
+        }
+        const operation = AstUtils.getContainerOfType(context.container, isMethod);
+        return isMethod(operation) && (operation.returnPrimitive !== undefined ||
+            operation.returnType !== undefined || operation.returnCollection !== undefined);
+    }
+
+    getInvocationCompletionCandidates(context: ReferenceInfo, offset?: number): AstNodeDescription[] {
+        const container = context.container;
+        if (!isJourneyStep(container) && !isMethodInvocation(container)) {
             return [];
         }
-        const references = isJourneyStep(context.container) || isMethodInvocation(context.container)
-            ? context.container.targets
-            : [];
-        const index = context.index ?? (context.reference.$refText.length === 0 ? references.length : 0);
-        const path = references.map(reference => reference.$refText);
-        const scope = this.callbacks.getUnsegmentedScope(context, referenceType);
+        const prefix = this.getTypedInvocationPath(context, offset);
+        const scope = this.callbacks.getUnsegmentedScope(context, 'NamedDeclaration');
         const allowedTargets = new Set<AstNode>();
+        const allowedPaths: string[] = [];
         for (const description of scope.getAllElements()) {
             const target = this.callbacks.getDescriptionNode(description);
-            if (isMethod(target) && (isJourneyStep(context.container)
+            if (isMethod(target) && (isJourneyStep(container)
                 ? this.callbacks.isJourneyCommand(target) && this.callbacks.isSupportedCandidate(context, target)
-                : this.callbacks.isSupportedInvocationTarget(context.container, target) &&
+                : this.callbacks.isSupportedInvocationTarget(container, target) &&
                     this.callbacks.isSupportedCandidate(context, target))) {
                 allowedTargets.add(target);
+                allowedPaths.push(description.name);
             }
         }
-        if (context.reference.$refText.length > 0 && index < references.length && path.length > 0) {
-            const description = scope.getElement(path.join('.'));
-            const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
-            if (target && allowedTargets.has(target)) {
-                return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
-            }
-        }
-        const prefix = references.slice(0, index).map(reference => reference.$refText);
-        const completions = this.callbacks.filterCompletionCandidates(context, this.getPathSegmentCompletions(
-            context,
-            referenceType,
-            prefix,
-            allowedTargets
-        )).toArray();
-        if (isJourneyStep(context.container) && prefix.length === 0) {
-            // Guide authors toward a service- or context-qualified command path.
-            return completions.filter(description =>
-                !(isMethod(description.node) && description.name === description.node.name)
-            );
+        const completions = this.getPathSegmentCompletions(context, 'NamedDeclaration', prefix)
+            .filter(description => {
+                if (isMethod(description.node)) {
+                    return allowedTargets.has(description.node);
+                }
+                const segmentPath = [...prefix, description.name].join('.');
+                return allowedPaths.some(path => path.startsWith(`${segmentPath}.`));
+            });
+        if (isJourneyStep(container) && prefix.length === 0) {
+            // A journey step must name at least a service or context segment;
+            // bare command names are not valid journey syntax.
+            return completions.filter(description => !isMethod(description.node));
         }
         return completions;
+    }
+
+    /**
+     * Reads the invocation path directly from the document. The parser treats
+     * the segment before a trailing dot as the terminal `target`, so the AST
+     * alone cannot distinguish a completed target from a path segment that is
+     * still being typed.
+     */
+    private getTypedInvocationPath(context: ReferenceInfo, offset?: number): string[] {
+        const container = context.container;
+        const cstNode = container.$cstNode;
+        if (!cstNode) {
+            return [];
+        }
+        const document = AstUtils.getDocument(container);
+        const end = offset ?? cstNode.end;
+        const statement = document.textDocument.getText().slice(cstNode.offset, end);
+        const withoutKeyword = statement.replace(/^\s*invokes?\b/u, '').trimEnd();
+        if (withoutKeyword.length === 0) {
+            return [];
+        }
+        const segments = withoutKeyword.split('.').map(segment => segment.trim());
+        if (!withoutKeyword.endsWith('.')) {
+            segments.pop();
+        }
+        return segments.filter(segment => segment.length > 0);
     }
 
     private getDeclaredReferenceType(context: ReferenceInfo): string | undefined {
@@ -444,22 +476,6 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             return scope.getAllElements().toArray();
         }
         return [this.descriptions.createDescription(target, path[0]!, AstUtils.getDocument(target))];
-    }
-
-    private getInvocationPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
-        const references = isJourneyStep(context.container) || isMethodInvocation(context.container)
-            ? context.container.targets
-            : [];
-        const index = context.index ?? (context.reference.$refText.length === 0 ? references.length : 0);
-        const path = references.map(reference => reference.$refText);
-        if (context.reference.$refText.length > 0 && index < references.length && path.length > 0) {
-            const description = this.callbacks.getUnsegmentedScope(context, referenceType).getElement(path.join('.'));
-            const target = description?.node ? this.getPathSegmentTarget(description.node, path, index, context) : undefined;
-            if (target) {
-                return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
-            }
-        }
-        return this.getPathSegmentCompletions(context, referenceType, references.slice(0, index).map(reference => reference.$refText));
     }
 
     private getPathSegmentCompletions(
@@ -635,7 +651,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             return false;
         }
         return root.imports.some(importDeclaration => importDeclaration.components.some(component =>
-            component.alias?.$refText === alias && component.component.ref === node
+            component.alias === alias && component.component.ref === node
         ));
     }
 }

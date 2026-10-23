@@ -18,7 +18,7 @@ Import:
     | path=StringLiteral);
 
 ImportComponent:
-    component=[ImportableComponent:ID] ('as' alias=[ImportableComponent:ID])?;
+    component=[ImportableComponent:ID] ('as' alias=ID)?;
 
 
 BoundedContext:
@@ -193,7 +193,8 @@ Method:
         'projects' projects+=ReadModelReference (',' projects+=ReadModelReference)*)* '}')?;
 
 MethodInvocation:
-    'invokes' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('when' guard=SpecificationText)? ;
+    'invokes' (path+=[NamedDeclaration:ID] '.')* target=[Method:ID]
+    ('when' guard=SpecificationText)? ;
 
 Transition:
     'transition' changes+=TransitionChange (',' changes+=TransitionChange)* ('when' guard=SpecificationText)?;
@@ -279,7 +280,7 @@ JourneyActor:
     'by' actor=[Actor:ID] '{' steps+=JourneyStep* '}';
 
 JourneyStep:
-    'invoke' targets+=[NamedDeclaration:ID] ('.' targets+=[NamedDeclaration:ID])* ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ;
+    'invoke' (path+=[NamedDeclaration:ID] '.')+ target=[Method:ID] ('with' arguments=SpecificationText)? ('when' guard=SpecificationText)? ;
 
 type ImportableComponent = BoundedContext | ContextMap | SharedKernel;
 

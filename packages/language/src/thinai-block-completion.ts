@@ -16,6 +16,7 @@ import {
 } from './thinai-layout.js';
 import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
+import { inferIndentationOptions } from './thinai-indentation.js';
 
 interface BlockCompletionCallbacks {
     createKeywordCompletionItem(
@@ -159,10 +160,8 @@ export class ThinaiBlockCompletion {
         const text = document.textDocument.getText();
         const lineStart = getLineStartOffset(document, offset);
         const depth = getBlockNestingDepth(parent);
-        const indentationCandidates = text.slice(0, offset).split(/\r\n|\r|\n/u)
-            .map(line => /^[\t ]+/u.exec(line)?.[0] ?? '')
-            .filter(indentation => indentation.length > 0);
-        const unit = indentationCandidates.some(indentation => indentation.startsWith('\t')) ? '\t' : '  ';
+        const indentation = inferIndentationOptions(text);
+        const unit = indentation.insertSpaces ? ' '.repeat(indentation.tabSize) : '\t';
         const lineIndent = /^[\t ]*/u.exec(text.slice(lineStart, offset))?.[0] ?? '';
         return `${lineIndent}${unit.repeat(Math.max(0, depth - Math.floor(lineIndent.length / unit.length)))}`;
     }

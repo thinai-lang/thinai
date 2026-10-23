@@ -66,7 +66,7 @@ export function getComponentAliases(model: Model): ComponentAlias[] {
     for (const declaration of model.imports) {
         for (const component of declaration.components) {
             const target = component.component.ref;
-            const alias = component.alias?.$refText;
+            const alias = component.alias;
             if (!target || !alias) {
                 continue;
             }

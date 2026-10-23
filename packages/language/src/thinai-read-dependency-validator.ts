@@ -12,7 +12,6 @@ import {
     type Parameter,
     type Projector,
     type QueryRepository,
-    type QueryService,
     type ReadDependency,
     type Repository
 } from './generated/ast.js';
@@ -29,47 +28,6 @@ export class ThinaiReadDependencyValidator {
         private readonly referencePolicy: ThinaiReferencePolicy,
         private readonly isEventParameter: IsEventParameter
     ) {}
-
-    checkQueryServiceMethod(method: Method, service: QueryService, accept: ValidationAcceptor): void {
-        const queryContext = getOwningContextName(service);
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                const target = source.target.ref;
-                if (isRepository(target) || isQueryRepository(target) && getOwningContextName(target) !== queryContext) {
-                    accept('error', 'A query service may read only query repositories in its own bounded context.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
-
-    checkApplicationServiceReads(method: Method, accept: ValidationAcceptor): void {
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                if (isQueryRepository(source.target.ref)) {
-                    accept('error', 'An application-service method must use command-side repositories, not query repositories.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
-
-    checkDomainServiceReads(method: Method, accept: ValidationAcceptor): void {
-        for (const read of method.reads) {
-            for (const source of read.sources) {
-                if (isQueryRepository(source.target.ref)) {
-                    accept('error', 'A domain service must not depend on a query repository; use a domain repository or port.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-            }
-        }
-    }
 
     checkReadDependency(read: ReadDependency, accept: ValidationAcceptor): void {
         if (!isSyntacticallyComplete(read)) {
@@ -102,29 +60,54 @@ export class ThinaiReadDependencyValidator {
                 });
             }
             seenSources.add(target);
-            if (isRepository(target) || isQueryRepository(target)) {
-                if (getOwningContextName(read) !== getOwningContextName(target)) {
+            const sameContext = getOwningContextName(read) === getOwningContextName(target);
+
+            if (isRepository(target)) {
+                if (isQueryService(owner)) {
+                    accept('error', 'A query service may read only query repositories in its own bounded context.', {
+                        node: source,
+                        property: 'target'
+                    });
+                } else if (!sameContext) {
                     accept('error', 'A reads from repository dependency must belong to the same bounded context.', {
                         node: source,
                         property: 'target'
                     });
-                }
-                if (isProjector(owner) && isRepository(target)) {
+                } else if (isProjector(owner)) {
                     accept('warning', 'A projector reading current aggregate state may produce different results when events are replayed.', {
-                        node: source,
-                        property: 'target'
-                    });
-                }
-                if (isProjector(owner) && isQueryRepository(target)) {
-                    accept('error', 'A projector must not read from a query repository; use event data or an explicit aggregate/reference source.', {
                         node: source,
                         property: 'target'
                     });
                 }
                 continue;
             }
-            if (!isMethod(target) || !isQueryService(target.$container) ||
-                getOwningContextName(read) === getOwningContextName(target)) {
+
+            if (isQueryRepository(target)) {
+                if (isApplicationService(owner)) {
+                    accept('error', 'An application-service method must use command-side repositories, not query repositories.', {
+                        node: source,
+                        property: 'target'
+                    });
+                } else if (isDomainService(owner)) {
+                    accept('error', 'A domain service must not depend on a query repository; use a domain repository or port.', {
+                        node: source,
+                        property: 'target'
+                    });
+                } else if (isProjector(owner)) {
+                    accept('error', 'A projector must not read from a query repository; use event data or an explicit aggregate/reference source.', {
+                        node: source,
+                        property: 'target'
+                    });
+                } else if (!sameContext) {
+                    accept('error', 'A query service may read only query repositories in its own bounded context.', {
+                        node: source,
+                        property: 'target'
+                    });
+                }
+                continue;
+            }
+
+            if (!isMethod(target) || !isQueryService(target.$container) || sameContext) {
                 accept('error', 'A reads from method target must be a published query-service method in another bounded context.', {
                     node: source,
                     property: 'target'

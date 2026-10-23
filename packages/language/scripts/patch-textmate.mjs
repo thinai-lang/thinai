@@ -4,6 +4,13 @@ const grammarPath = new URL('../syntaxes/thinai.tmLanguage.json', import.meta.ur
 const original = await readFile(grammarPath, 'utf8');
 const grammar = JSON.parse(original);
 
+// Keep TextMate identifier lexing aligned with the grammar's `ID` terminal:
+// a plain identifier or a backtick-delimited name that may contain spaces and
+// hyphens. The boundary avoids partially scoping plain identifiers.
+const identifierSource = '(?:[_a-zA-Z][\\w_]*|`[a-zA-Z0-9_ -]+`)';
+const identifierPattern = `(?<![\\w\`])${identifierSource}(?![\\w\`])`;
+const qualifiedIdentifierSource = `${identifierSource}(?:\\.${identifierSource})*`;
+
 if (!grammar.patterns || !grammar.repository) {
     throw new Error('Generated Thinai TextMate grammar has an unexpected structure.');
 }
@@ -62,7 +69,7 @@ grammar.repository['linked-reference'] = {
     patterns: [
         {
             name: 'variable.other.reference.thinai',
-            match: '[_a-zA-Z][\\w_]*(?:\\.[_a-zA-Z][\\w_]*)*'
+            match: qualifiedIdentifierSource
         }
     ]
 };
@@ -106,14 +113,14 @@ const scopedNamePatterns = scopedDeclarations.map(({ words, scope }) => {
     const phrase = words.map(word => `(${word})`).join('\\s+');
     return {
         name: 'meta.declaration.thinai',
-        match: `\\b${phrase}\\s+([_a-zA-Z][\\w_]*)\\b`,
+        match: `\\b${phrase}\\s+(${identifierPattern})`,
         captures
     };
 });
 
 const enumDeclaration = {
     name: 'meta.enum.thinai',
-    begin: '\\b(enum)\\s+([_a-zA-Z][\\w_]*)\\s*(\\{)',
+    begin: `\\b(enum)\\s+(${identifierPattern})\\s*(\\{)`,
     beginCaptures: {
         '1': { name: 'keyword.control.thinai' },
         '2': { name: 'entity.name.type.thinai' },
@@ -123,7 +130,7 @@ const enumDeclaration = {
     endCaptures: { '0': { name: 'punctuation.section.block.end.thinai' } },
     patterns: [
         { include: '#comments' },
-        { name: 'constant.other.enum-member.thinai', match: '\\b[_a-zA-Z][\\w_]*\\b' },
+        { name: 'constant.other.enum-member.thinai', match: identifierPattern },
         { name: 'punctuation.separator.comma.thinai', match: ',' }
     ]
 };
@@ -135,13 +142,13 @@ const additionalScopes = [
     { name: 'keyword.operator.relationship.thinai', match: '<->|->|-x-' },
     {
         name: 'meta.field.optional.thinai',
-        match: '\\b([_a-zA-Z][\\w_]*)(\\?)(?=\\s*:)',
+        match: `(${identifierPattern})(\\?)(?=\\s*:)`,
         captures: {
             '1': { name: 'variable.other.property.thinai' },
             '2': { name: 'keyword.operator.optional.thinai' }
         }
     },
-    { name: 'variable.other.property.thinai', match: '\\b[_a-zA-Z][\\w_]*(?=\\s*:)' }
+    { name: 'variable.other.property.thinai', match: `${identifierPattern}(?=\\s*:)` }
 ];
 
 grammar.patterns = grammar.patterns.filter(pattern => pattern.name !== 'meta.declaration.thinai');

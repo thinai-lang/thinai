@@ -1568,8 +1568,8 @@ in bounded context Ordering {
         expect(domainServiceInvocationErrors.map(diagnostic =>
             document.textDocument.offsetAt(diagnostic.range.start)
         )).toEqual(expect.arrayContaining([
-            source.indexOf('Queries.find'),
-            source.indexOf('OrderFactory.create')
+            source.indexOf('Queries.find') + 'Queries.'.length,
+            source.indexOf('OrderFactory.create') + 'OrderFactory.'.length
         ]));
     });
 
@@ -3626,6 +3626,86 @@ in bounded context Ordering {
         expect(messages.filter(message =>
             message === 'An aggregate must reference another aggregate through its identifier, not its entity.'
         )).toHaveLength(0);
+    });
+
+    test('requires query-repository serves and reads clauses on separate lines', async () => {
+        const compact = await parse(`bounded context Ordering in bounded context Ordering {
+            aggregate Order { root entity Order { identifier id: OrderId } value object OrderId { raw: string } }
+            read model Summary { status: string }
+            query repository SummaryQueries { serves Summary reads from Order }
+        }`);
+        const source = compact.textDocument.getText();
+        const readsOffset = source.indexOf('reads');
+        expect((compact.diagnostics ?? []).some(diagnostic =>
+            diagnostic.code === 'line-break-required' &&
+            compact.textDocument.offsetAt(diagnostic.range.start) === readsOffset
+        )).toBe(true);
+
+        const multiline = await parse(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+        }
+        value object OrderId {
+            raw: string
+        }
+    }
+    read model Summary {
+        status: string
+    }
+    query repository SummaryQueries {
+        serves Summary
+        reads from Order
+    }
+}`);
+        expect((multiline.diagnostics ?? []).filter(diagnostic =>
+            diagnostic.code === 'line-break-required'
+        )).toEqual([]);
+    });
+
+    test('reports one read-source diagnostic per invalid source', async () => {
+        const document = await parse(`bounded context Ordering in bounded context Ordering {
+            read model Summary { status: string }
+            query repository SummaryQueries { serves Summary }
+            query repository OtherQueries { serves Summary }
+            application service App {
+                method run() { reads from SummaryQueries, OtherQueries }
+            }
+        }`);
+        const errors = semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message) === 'An application-service method must use command-side repositories, not query repositories.'
+        );
+        expect(errors).toHaveLength(2);
+        const source = document.textDocument.getText();
+        const readsClauseStart = source.indexOf('reads from');
+        expect(errors.map(diagnostic => document.textDocument.offsetAt(diagnostic.range.start))).toEqual([
+            source.indexOf('SummaryQueries', readsClauseStart),
+            source.indexOf('OtherQueries', readsClauseStart)
+        ]);
+    });
+
+    test('rejects result parameter names that collide with operation result contracts', async () => {
+        const source = `bounded context Ordering in bounded context Ordering {
+            data object Input { raw: string }
+            data object Output { raw: string }
+            application service App {
+                method command(result: Input) returns Output
+                method fire(result: Input)
+            }
+            domain service Policy {
+                method calculate(result: Input)
+            }
+        }`;
+        const document = await parse(source);
+        const reserved = semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.code === 'reserved-result-name'
+        );
+        expect(reserved).toHaveLength(2);
+        expect(reserved.map(diagnostic => document.textDocument.offsetAt(diagnostic.range.start))).toEqual([
+            source.indexOf('result: Input'),
+            source.indexOf('result: Input', source.indexOf('result: Input') + 1)
+        ]);
     });
 
 });

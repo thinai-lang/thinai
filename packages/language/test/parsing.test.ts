@@ -150,7 +150,7 @@ describe('Parsing tests', () => {
         expect(journey && isJourney(journey)).toBe(true);
         if (journey && isJourney(journey)) {
             expect(journey.actors[0].actor.ref?.name).toBe('Customer');
-            expect(journey.actors[0].steps[0].targets.at(-1)?.ref?.name).toBe('placeOrder');
+            expect(journey.actors[0].steps[0].target?.ref?.name).toBe('placeOrder');
         }
 
         expect(document.parseResult.value && isModel(document.parseResult.value)).toBe(true);

@@ -80,6 +80,21 @@ describe('TextMate highlighting', () => {
         expect(scopesOn('customer Shipping -> supplier Ordering', '->')).toContain('keyword.operator.relationship.thinai');
     });
 
+    test('scopes backtick-delimited declarations and linked references', () => {
+        const scopesOn = (line: string, identifier: string) => {
+            const tokens = grammar!.tokenizeLine(line, INITIAL).tokens;
+            const index = line.indexOf(identifier);
+            return tokens.find(token => token.startIndex <= index && index < token.endIndex)?.scopes ?? [];
+        };
+
+        expect(scopesOn('bounded context `My Context`', 'My Context')).toContain('entity.name.namespace.thinai');
+        expect(scopesOn('aggregate `Order Book`', 'Order Book')).toContain('entity.name.class.thinai');
+        expect(scopesOn('method `Do Work`', 'Do Work')).toContain('entity.name.function.thinai');
+        expect(scopesOn('`Order Total`?: string', 'Order Total')).toContain('variable.other.property.thinai');
+        expect(scopesOn('behavior "Call [[Order.`Order Book`.`Do Work`]]"', 'Order Book'))
+            .toContain('variable.other.reference.thinai');
+    });
+
     test('tokenizes linked references in both quote styles and ignores escaped markers', () => {
         expect(grammar).toBeDefined();
         const lines = [

@@ -152,7 +152,8 @@ describe('Linking tests', () => {
         expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
         const model = document.parseResult.value as Model;
         type GuardedInvocation = {
-            targets: Array<{ ref?: AstNode }>;
+            path: Array<{ ref?: AstNode }>;
+            target?: { ref?: AstNode };
             guard?: { parts: Array<{ target?: { ref?: AstNode } }> };
         };
         const context = model.declarations[1] as Model['declarations'][number] & {
@@ -161,7 +162,7 @@ describe('Linking tests', () => {
         const aggregate = context.members[0];
         const entity = aggregate.members?.[0];
         const invocation = entity?.methods?.[0].invocations?.[0];
-        expect(invocation?.targets.at(-1)?.ref?.$type).toBe('Method');
+        expect(invocation?.target?.ref?.$type).toBe('Method');
         expect(invocation?.guard?.parts[1].target?.ref?.$type).toBe('Field');
     });
 
@@ -265,12 +266,12 @@ describe('Linking tests', () => {
         expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ target: { ref?: unknown } }> }).subdomains[0].target.ref).toBe(contextModel.declarations[0]);
         expect(partNode.$type).toBe('BoundedContextPart');
         expect((partNode as Model['declarations'][number] & { context: { ref?: unknown } }).context.ref).toBe(contextNode);
-        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ type?: { ref?: { $type?: string } } }>; invocations?: Array<{ targets: Array<{ ref?: unknown }> }> }> }> }).members;
+        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ type?: { ref?: { $type?: string } } }>; invocations?: Array<{ target: { ref?: unknown } }> }> }> }).members;
         const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter =>
             parameter.type?.ref?.$type === 'DomainEvent' || parameter.type?.ref?.$type === 'IntegrationEvent'
         )));
         expect(shippingService?.methods?.[0].parameters[0].type?.ref?.$type).toBe('IntegrationEvent');
-        expect(shippingService?.methods?.[0].invocations?.[0].targets.at(-1)?.ref).toBeDefined();
+        expect(shippingService?.methods?.[0].invocations?.[0].target.ref).toBeDefined();
 
         const contextPath = services.Thinai.workspace.AstNodeLocator.getAstNodePath(contextNode);
         const contextReferences = services.shared.workspace.IndexManager

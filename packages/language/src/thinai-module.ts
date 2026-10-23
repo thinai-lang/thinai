@@ -1,4 +1,4 @@
-import { type Module, inject } from 'langium';
+import { type Module, createGrammarConfig, inject } from 'langium';
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices, type PartialLangiumSharedServices } from 'langium/lsp';
 import { ThinaiGeneratedModule, ThinaiGeneratedSharedModule } from './generated/module.js';
 import { ThinaiValidator, registerValidationChecks } from './thinai-validator.js';
@@ -14,6 +14,7 @@ import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 import { ThinaiFormatter } from './thinai-formatter.js';
+import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -50,6 +51,10 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         ScopeProvider: services => new ThinaiScopeProvider(services)
     },
     parser: {
+        GrammarConfig: services => ({
+            ...createGrammarConfig(services),
+            nameRegexp: THINAI_NAME_CHARACTER_REGEXP
+        }),
         TokenBuilder: () => new ThinaiTokenBuilder(),
         ValueConverter: () => new ThinaiValueConverter(),
         ParserErrorMessageProvider: () => new ThinaiParserErrorMessageProvider(),

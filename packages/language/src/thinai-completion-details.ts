@@ -31,10 +31,10 @@ export class ThinaiCompletionDetails {
             return `Method ${name}(${parameters})${result ? ` returns ${result}` : ''}`;
         }
         if (isField(node)) {
-            return `Field ${name}: ${this.getTypeDetail(node)}`;
+            return `Field ${name}${node.optional ? '?' : ''}: ${this.getTypeDetail(node)}`;
         }
         if (isParameter(node)) {
-            return `Parameter ${name}: ${this.getParameterDetail(node).replace(`${node.name}: `, '')}`;
+            return `Parameter ${this.getParameterDetail(node)}`;
         }
         if (isEnumValue(node)) {
             const enumName = this.getCanonicalName(node.$container, node.$container.name);

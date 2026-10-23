@@ -60,7 +60,6 @@ import {
     isEnumType,
     isModule,
     isMethod,
-    isMethodInvocation,
     isProjector,
     isDataObject,
     isQueryRepository,
@@ -532,11 +531,11 @@ export class ThinaiValidator {
     checkMethod(method: Method, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(method, accept);
         this.checkUniqueParameterNames(method.parameters, accept);
+        this.checkReservedResultParameter(method, accept);
         const eventParameters = method.parameters.filter(parameter => this.isEventParameter(parameter));
         const applicationService = isApplicationService(method.$container) ? method.$container : undefined;
         const queryService = isQueryService(method.$container) ? method.$container : undefined;
         const projectorService = isProjector(method.$container) ? method.$container : undefined;
-        const domainService = isDomainService(method.$container) ? method.$container : undefined;
         const emissionMode = getEventEmissionMode(method);
         if (method.projects.length > 0 && !canDeclareProjects(method)) {
             accept('error', 'The projects clause is allowed only in projector methods.', {
@@ -653,13 +652,6 @@ export class ThinaiValidator {
         }
         if (queryService) {
             this.checkExposedQueryContract(method, queryService, accept);
-            this.readDependencyValidator.checkQueryServiceMethod(method, queryService, accept);
-        }
-        if (applicationService) {
-            this.readDependencyValidator.checkApplicationServiceReads(method, accept);
-        }
-        if (domainService) {
-            this.readDependencyValidator.checkDomainServiceReads(method, accept);
         }
         if (projectorService) {
             this.readDependencyValidator.checkProjectorMethod(method, projectorService, accept);
@@ -909,12 +901,12 @@ export class ThinaiValidator {
                 });
             }
             for (const step of actorBlock.steps) {
-                const target = step.targets.at(-1)?.ref;
+                const target = step.target?.ref;
                 if (isMethod(target) && isJourneyCommand(target)) {
                     if (seenCommands.has(target)) {
                         accept('warning', `Command '${target.name}' is invoked more than once in this journey; references resolve to the nearest prior invocation.`, {
                             node: step,
-                            property: 'targets',
+                            property: 'target',
                             code: 'duplicate-journey-command'
                         });
                     } else {
@@ -929,21 +921,21 @@ export class ThinaiValidator {
     }
 
     private checkJourneyStep(step: JourneyStep, accept: ValidationAcceptor): void {
-            const target = step.targets.at(-1)?.ref;
-            if (!isMethod(target)) {
-                accept('error', 'A journey command path must end at a method.', {
-                    node: step,
-                    property: 'targets'
-                });
-                return;
-            }
-            const method = target;
-            if (!isJourneyCommand(method)) {
-                accept('error', 'A journey may invoke only user-facing application-service commands, not event handlers or query methods.', {
-                    node: step,
-                    property: 'targets'
-                });
-            }
+        const target = step.target?.ref;
+        if (!isMethod(target)) {
+            accept('error', 'A journey command path must end at a method.', {
+                node: step,
+                property: 'target'
+            });
+            return;
+        }
+        const method = target;
+        if (!isJourneyCommand(method)) {
+            accept('error', 'A journey may invoke only user-facing application-service commands, not event handlers or query methods.', {
+                node: step,
+                property: 'target'
+            });
+        }
     }
 
     checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {
@@ -977,6 +969,25 @@ export class ThinaiValidator {
                 });
             }
         }
+    }
+
+    private checkReservedResultParameter(method: Method, accept: ValidationAcceptor): void {
+        const parameter = method.parameters.find(candidate => candidate.name === 'result');
+        if (!parameter) {
+            return;
+        }
+        const hasResult = method.returnPrimitive !== undefined || method.returnType !== undefined ||
+            method.returnCollection !== undefined;
+        // Application-service commands publish a `result` contract to journeys,
+        // so the name is reserved even when this particular command returns nothing.
+        if (!hasResult && !isApplicationService(method.$container)) {
+            return;
+        }
+        accept('error', "The name 'result' is reserved for the operation result and cannot be used as a parameter name.", {
+            node: parameter,
+            property: 'name',
+            code: 'reserved-result-name'
+        });
     }
 
     private checkUniqueParameterNames(parameters: Parameter[], accept: ValidationAcceptor): void {
@@ -1260,10 +1271,6 @@ export class ThinaiValidator {
         const { container, property } = referenceInfo;
         if (property.endsWith('Path') || property === 'path') {
             return true;
-        }
-        if ((isJourneyStep(container) || isMethodInvocation(container)) && property === 'targets') {
-            const index = referenceInfo.index ?? container.targets.length - 1;
-            return index < container.targets.length - 1;
         }
         if (isSpecificationTextPart(container)) {
             if (property === 'target') {

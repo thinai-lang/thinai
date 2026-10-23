@@ -1,4 +1,4 @@
-import { GrammarUtils, type AstNode, type LangiumDocument } from 'langium';
+import { AstUtils, GrammarUtils, type AstNode, type LangiumDocument } from 'langium';
 import { DefaultDefinitionProvider } from 'langium/lsp';
 import { LocationLink, type DefinitionParams } from 'vscode-languageserver';
 import { isImport, isModel } from './generated/ast.js';
@@ -17,8 +17,40 @@ export class ThinaiDefinitionProvider extends DefaultDefinitionProvider {
     override getDefinition(document: LangiumDocument, params: DefinitionParams) {
         const root = document.parseResult.value;
         const offset = document.textDocument.offsetAt(params.position);
+        const aliasLink = this.getImportAliasLink(document, root, offset);
+        if (aliasLink) {
+            return [aliasLink];
+        }
         const importPathLink = this.getImportPathLink(document, root, offset);
         return importPathLink ? [importPathLink] : super.getDefinition(document, params);
+    }
+
+    private getImportAliasLink(document: LangiumDocument, root: AstNode, offset: number) {
+        if (!isModel(root)) {
+            return undefined;
+        }
+        for (const importDeclaration of root.imports) {
+            for (const component of importDeclaration.components) {
+                const aliasNode = component.$cstNode
+                    ? GrammarUtils.findNodeForProperty(component.$cstNode, 'alias')
+                    : undefined;
+                if (!aliasNode || offset < aliasNode.offset || offset > aliasNode.end) {
+                    continue;
+                }
+                const target = component.component.ref;
+                const targetName = target ? this.nameProvider.getNameNode(target) : undefined;
+                if (!target || !targetName) {
+                    return undefined;
+                }
+                return LocationLink.create(
+                    AstUtils.getDocument(target).uri.toString(),
+                    targetName.range,
+                    targetName.range,
+                    aliasNode.range
+                );
+            }
+        }
+        return undefined;
     }
 
     private getImportPathLink(document: LangiumDocument, root: AstNode, offset: number) {

@@ -283,7 +283,8 @@ inside an entity or value object may refer to that enclosing object's fields and
 methods by their bare names; fields or methods on other objects require an
 owner-qualified path, such as `[[Order.Order.customerId]]` or
 `[[Order.Order.ensureOwner]]`. Operation inputs and results use their named
-roots, such as `[[input.orderId]]` and `[[result.status]]`. Factory
+roots, such as `[[input.orderId]]` and `[[result.status]]`. The name `result` is
+reserved for the operation result and cannot be used for a parameter. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
 Use triple double quotes for multiline specifications; keep single or double

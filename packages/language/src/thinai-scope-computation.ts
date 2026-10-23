@@ -38,7 +38,7 @@ function getContextNameForIndexing(node: AstNode): string | undefined {
             }
             const selectedComponent = root.imports
                 .flatMap(importDeclaration => importDeclaration.components)
-                .find(component => component.alias?.$refText === referenceText);
+                .find(component => component.alias === referenceText);
             if (selectedComponent) {
                 return selectedComponent.component.$refText;
             }

@@ -27,7 +27,7 @@ export function validateMethodInvocations(
         if (!target) {
             accept('error', 'An invokes path must end at a method.', {
                 node: invocation,
-                property: 'targets'
+                property: 'target'
             });
             continue;
         }
@@ -39,7 +39,7 @@ export function validateMethodInvocations(
             eventParameters,
             context
         )) {
-            accept('error', message, { node: invocation, property: 'targets' });
+            accept('error', message, { node: invocation, property: 'target' });
         }
     }
 }

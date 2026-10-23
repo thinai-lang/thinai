@@ -25,7 +25,7 @@ import {
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics, type ContextRelationshipPairSemantics } from './thinai-context-map-utils.js';
 import type { ThinaiServices } from './thinai-module.js';
-import { findCstTokenOffset, getSiblingStatementPolicy, isLineSeparatedSibling } from './thinai-layout.js';
+import { findCstTokenOffset, getSiblingStatementPolicy, isLineSeparatedSibling, siblingContainerPolicies } from './thinai-layout.js';
 import { resolveImportUri } from './thinai-scope-utils.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
@@ -147,7 +147,7 @@ export class ThinaiModelValidator {
             const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
             for (const component of importDeclaration.components) {
                 declarations.push({
-                    name: component.alias?.$refText ?? component.component.$refText,
+                    name: component.alias ?? component.component.$refText,
                     node: component,
                     property: component.alias ? 'alias' : 'component'
                 });
@@ -222,6 +222,32 @@ export class ThinaiModelValidator {
                 },
                 code: 'line-break-required-after-open-brace'
             });
+        }
+        for (const node of AstUtils.streamAst(model)) {
+            const clauses = siblingContainerPolicies[node.$type]?.bodyClauses;
+            const cstNode = node.$cstNode;
+            if (!clauses || clauses.length < 2 || !cstNode) {
+                continue;
+            }
+            let previousLine: number | undefined;
+            for (const clause of clauses) {
+                const clauseOffset = findCstTokenOffset(cstNode, clause);
+                if (clauseOffset === undefined) {
+                    continue;
+                }
+                const line = textDocument.positionAt(clauseOffset).line;
+                if (previousLine !== undefined && line <= previousLine) {
+                    accept('error', 'Start each sibling declaration or statement on a new line.', {
+                        node,
+                        range: {
+                            start: textDocument.positionAt(clauseOffset),
+                            end: textDocument.positionAt(clauseOffset + clause.length)
+                        },
+                        code: 'line-break-required'
+                    });
+                }
+                previousLine = line;
+            }
         }
         for (const [parent, children] of siblings) {
             children.sort((left, right) => left.$cstNode!.offset - right.$cstNode!.offset);

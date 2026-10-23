@@ -68,6 +68,7 @@ import {
     isQueryRepositoryReadCompletionPosition
 } from './thinai-query-repository-completion.js';
 import { getSpecificationCompletionContext } from './thinai-specification-completion-context.js';
+import { applyConfiguredIndentationToCompletions } from './thinai-indentation.js';
 import { hasReferenceText } from './thinai-ast-utils.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
 
@@ -124,17 +125,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     protected override getReferenceCandidates(refInfo: ReferenceInfo, context: CompletionContext) {
         const { container, property } = refInfo;
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        if ((isJourneyStep(container) || isMethodInvocation(container)) &&
+            (property === 'path' || property === 'target')) {
+            return this.dedupeCompletionCandidates(refInfo, stream(
+                scopeProvider.getInvocationCompletionCandidates(refInfo, context.offset)
+            ));
+        }
         const pathCandidates = scopeProvider.getPathCompletionCandidates(refInfo, context.offset);
         if (pathCandidates !== undefined) {
             return this.dedupeCompletionCandidates(refInfo, stream(pathCandidates));
-        }
-        if ((isJourneyStep(container) || isMethodInvocation(container)) && property === 'targets') {
-            const completedSegments = container.targets.filter(reference =>
-                reference.$refNode !== undefined && reference.$refNode.end < context.offset
-            ).length;
-            return this.dedupeCompletionCandidates(refInfo, stream(
-                scopeProvider.getInvocationCompletionCandidates({ ...refInfo, index: completedSegments })
-            ));
         }
         if (isSpecificationTextPart(container) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
@@ -242,6 +241,49 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     }
 
     override async getCompletion(
+        document: LangiumDocument,
+        params: CompletionParams,
+        cancelToken?: CancellationToken
+    ): Promise<CompletionList | undefined> {
+        const indentation = await this.getClientIndentationOptions(document);
+        const completion = await this.getCompletionInternal(document, params, cancelToken);
+        return completion && indentation
+            ? {
+                ...completion,
+                items: applyConfiguredIndentationToCompletions(
+                    completion.items,
+                    indentation.tabSize,
+                    indentation.insertSpaces
+                )
+            }
+            : completion;
+    }
+
+    private async getClientIndentationOptions(document: LangiumDocument) {
+        const connection = this.thinaiServices.shared.lsp.Connection;
+        if (!connection) {
+            return undefined;
+        }
+        try {
+            const configuration = await connection.workspace.getConfiguration({
+                section: 'editor',
+                scopeUri: document.uri.toString()
+            }) as { tabSize?: unknown; insertSpaces?: unknown } | null;
+            const tabSize = typeof configuration?.tabSize === 'number' && Number.isFinite(configuration.tabSize) &&
+                configuration.tabSize > 0 ? Math.floor(configuration.tabSize) : undefined;
+            const insertSpaces = typeof configuration?.insertSpaces === 'boolean'
+                ? configuration.insertSpaces
+                : undefined;
+            if (tabSize !== undefined && insertSpaces !== undefined) {
+                return { tabSize, insertSpaces };
+            }
+        } catch {
+            // The client may not support a scoped editor configuration request.
+        }
+        return undefined;
+    }
+
+    private async getCompletionInternal(
         document: LangiumDocument,
         params: CompletionParams,
         cancelToken?: CancellationToken
@@ -930,6 +972,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const parserErrors = document.parseResult.parserErrors as Array<{ token?: { startOffset: number } }>;
         if (parserErrors.some(error => error.token && error.token.startOffset >= cstNode.offset &&
             error.token.startOffset <= cstNode.end)) {
+            return false;
+        }
+        if ((isMethodInvocation(node) || isJourneyStep(node)) && source.trimEnd().endsWith('.')) {
+            return false;
+        }
+        if ((isMethodInvocation(node) || isJourneyStep(node)) && !hasReferenceText(node.target)) {
             return false;
         }
         const lexerErrors = document.parseResult.lexerErrors as Array<{ offset: number }>;

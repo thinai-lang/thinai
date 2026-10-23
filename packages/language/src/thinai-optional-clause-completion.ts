@@ -42,7 +42,7 @@ export class ThinaiOptionalClauseCompletion {
                 .some(keyword => keyword.offset < offset);
             let keywords: string[] = [];
             const journeyStep = isJourneyStep(node) ? node : undefined;
-            const journeyTarget = journeyStep?.targets.at(-1)?.ref;
+            const journeyTarget = journeyStep?.target?.ref;
             if (journeyStep && isMethod(journeyTarget) && isJourneyCommand(journeyTarget) && !whenAlreadyTyped) {
                 keywords = [
                     ...(!journeyStep.arguments ? ['with'] : []),
@@ -68,7 +68,7 @@ export class ThinaiOptionalClauseCompletion {
                     keywords = ['when'];
                 }
             } else if (isMethodInvocation(node)) {
-                const target = node.targets.at(-1)?.ref;
+                const target = node.target?.ref;
                 if (isMethod(target) && scopeProvider.canInvokeMethod(node, target) && !node.guard && !whenAlreadyTyped) {
                     keywords = ['when'];
                 }

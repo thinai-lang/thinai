@@ -50,7 +50,7 @@ export function getPriorJourneySteps(step: JourneyStep): JourneyStep[] {
 }
 
 export function getJourneyStepCommand(step: JourneyStep): Method | undefined {
-    const target = step.targets.at(-1)?.ref;
+    const target = step.target?.ref;
     return isMethod(target) ? target : undefined;
 }
 

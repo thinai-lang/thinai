@@ -11,7 +11,7 @@ import {
 } from './generated/ast.js';
 
 export function getInvokedMethod(invocation: MethodInvocation): Method | undefined {
-    const target = invocation.targets.at(-1)?.ref;
+    const target = invocation.target?.ref;
     return isMethod(target) ? target : undefined;
 }
 

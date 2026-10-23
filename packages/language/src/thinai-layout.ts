@@ -19,6 +19,8 @@ export interface SiblingContainerPolicy {
     properties?: ReadonlySet<string>;
     completionKeywords?: readonly string[];
     sharedKernelCompletionKeywords?: readonly string[];
+    /** Clause keywords that must each start on a new line. */
+    bodyClauses?: readonly string[];
     statement?: SiblingStatementPolicy;
 }
 
@@ -145,14 +147,18 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
     JourneyStep: {
         statement: {
             bareNameBoundary: true,
-            referenceLists: [{ property: 'targets' }],
+            requiredReferences: ['target'],
             incompleteSuffixes: ['invoke', 'with', 'when']
         }
     },
     MethodInvocation: {
-        statement: { referenceLists: [{ property: 'targets' }], incompleteSuffixes: ['invokes', 'when'] }
+        statement: {
+            requiredReferences: ['target'],
+            incompleteSuffixes: ['invokes', 'when']
+        }
     },
     QueryRepository: {
+        bodyClauses: ['serves', 'reads'],
         statement: {
             block: 'required',
             firstStatementKeyword: 'serves',

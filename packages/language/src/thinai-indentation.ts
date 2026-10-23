@@ -1,3 +1,34 @@
+export interface ThinaiIndentationOptions {
+    tabSize: number;
+    insertSpaces: boolean;
+}
+
+/**
+ * Infers the document's own indentation style. This is the fallback when the
+ * client does not answer a scoped `editor` configuration request.
+ */
+export function inferIndentationOptions(text: string): ThinaiIndentationOptions {
+    const indentation = text.split(/\r\n|\r|\n/u)
+        .map(line => /^[ \t]+/u.exec(line)?.[0] ?? '')
+        .filter(value => value.length > 0);
+    if (indentation.some(value => value.includes('\t'))) {
+        return { tabSize: 4, insertSpaces: false };
+    }
+    const widths = indentation
+        .map(value => value.length)
+        .filter(width => width > 0);
+    if (widths.length === 0) {
+        return { tabSize: 2, insertSpaces: true };
+    }
+    const greatestCommonDivisor = (left: number, right: number): number =>
+        right === 0 ? left : greatestCommonDivisor(right, left % right);
+    const tabSize = widths.reduce((current, width) => greatestCommonDivisor(current, width), widths[0]!);
+    return {
+        tabSize: tabSize >= 1 && tabSize <= 8 ? tabSize : 2,
+        insertSpaces: true
+    };
+}
+
 export function applyConfiguredIndentation(
     text: string,
     depth: number,

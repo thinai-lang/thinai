@@ -54,6 +54,7 @@ import {
     isContextMap,
     isSharedKernel,
     isMethod,
+    isMethodInvocation,
     isEnumType,
     isTransitionChange,
     isModel,
@@ -158,13 +159,6 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (context.property === 'component' && isImportComponent(context.container)) {
             return this.createScope(this.getImportableComponents(context.container, referenceType));
         }
-        if (context.property === 'alias' && isImportComponent(context.container)) {
-            const target = context.container.component?.ref;
-            const alias = context.reference.$refText;
-            return this.createScope(target && alias
-                ? [this.descriptions.createDescription(target, alias, AstUtils.getDocument(target))]
-                : []);
-        }
         return this.getUnsegmentedScope(context, referenceType);
     }
 
@@ -198,10 +192,24 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
         return stream(candidates).filter(description =>
             this.isAllowedUnqualifiedSpecificationTarget(context, description) &&
+            this.isAllowedInvocationTarget(context, this.getDescriptionNode(description)) &&
             this.isSupportedCandidate(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionField(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionState(context, this.getDescriptionNode(description))
         );
+    }
+
+    private isAllowedInvocationTarget(context: ReferenceInfo, target: AstNode | undefined): boolean {
+        if (!isMethod(target) || context.property !== 'target') {
+            return true;
+        }
+        if (isMethodInvocation(context.container)) {
+            return this.canInvokeMethod(context.container, target);
+        }
+        if (isJourneyStep(context.container)) {
+            return isJourneyCommand(target);
+        }
+        return true;
     }
 
     getContextMapBoundedContextCandidates(contextMap: ContextMap): AstNodeDescription[] {
@@ -415,7 +423,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         );
         if (isJourneyStep(enclosingOperation)) {
             journeyStep = enclosingOperation;
-            const target = enclosingOperation.targets.at(-1)?.ref;
+            const target = enclosingOperation.target?.ref;
             operation = isMethod(target) ? target : undefined;
         } else if (isMethod(enclosingOperation) || isConstructor(enclosingOperation)) {
             operation = enclosingOperation;
@@ -424,7 +432,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return pending;
         }
 
+        const hasOperationResult = isMethod(operation) && (operation.returnPrimitive !== undefined ||
+            operation.returnType !== undefined || operation.returnCollection !== undefined);
         for (const parameter of operation.parameters) {
+            // `result` is the implicit operation result binding. A colliding
+            // parameter is diagnosed by validation, and the implicit binding wins
+            // in scope so specification lookups remain unambiguous.
+            if (parameter.name === 'result' && hasOperationResult) {
+                continue;
+            }
             this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
             this.addTypeShapeSymbols(pending, parameter.type?.ref, parameter.name, referenceType, new Set());
             if (parameter.collection) {
@@ -446,10 +462,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     continue;
                 }
                 seenPriorCommands.add(command);
-                const commandPath = prior.targets
-                    .map(reference => reference.$refText)
-                    .filter(text => text.length > 0)
-                    .join('.');
+                const commandPath = [
+                    ...prior.path.map(reference => reference.$refText),
+                    prior.target?.$refText
+                ].filter((text): text is string => typeof text === 'string' && text.length > 0).join('.');
                 this.addJourneyCommandContractSymbols(
                     pending,
                     command,
@@ -515,8 +531,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         this.addOperationResultSymbols(descriptions, command, `${prefix}.result`, referenceType);
     }
 
-    getInvocationCompletionCandidates(context: ReferenceInfo): AstNodeDescription[] {
-        return this.pathScope.getInvocationCompletionCandidates(context);
+    getInvocationCompletionCandidates(context: ReferenceInfo, offset?: number): AstNodeDescription[] {
+        return this.pathScope.getInvocationCompletionCandidates(context, offset);
     }
 
     canInvokeMethod(context: AstNode, target: Method): boolean {
@@ -714,6 +730,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
         const sourceModule = getOwningModule(context.container);
         const targetModule = getOwningModule(target);
+        const specificationPathContainer = isSpecificationTextPart(context.container) &&
+            this.isStructuralSpecificationPathTarget(target);
         if (isModuleReference(context.container) && context.property === 'target') {
             const dependencySource = context.container.$container;
             if (!isModule(dependencySource)) {
@@ -726,13 +744,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 getOwningContextName(dependencySource) === getOwningContextName(target) &&
                 !moduleDependsTransitivelyOn(target, dependencySource);
         }
-        if (!sourceModule && targetModule && !isModule(target) &&
+        if (!specificationPathContainer && !sourceModule && targetModule && !isModule(target) &&
             getOwningContextName(context.container) === getOwningContextName(targetModule)) {
             if (!isExposedByModule(targetModule, target)) {
                 return false;
             }
         }
-        if (sourceModule && targetModule && sourceModule !== targetModule && !isModule(target) &&
+        if (!specificationPathContainer && sourceModule && targetModule && sourceModule !== targetModule && !isModule(target) &&
             getOwningContextName(sourceModule) === getOwningContextName(targetModule)) {
             if (!isModulePubliclyVisible(sourceModule, targetModule) || !isExposedByModule(targetModule, target)) {
                 return false;
@@ -1037,6 +1055,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
      */
     private isSpecificationPathContainer(target: AstNode): boolean {
         return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target);
+    }
+
+    private isStructuralSpecificationPathTarget(target: AstNode): boolean {
+        return this.isSpecificationPathContainer(target) || isAggregate(target) || isEntity(target) ||
+            isApplicationService(target) || isQueryService(target) || isDomainService(target);
     }
 
     private isSupportedSpecificationCandidate(context: ReferenceInfo, target: AstNode): boolean {

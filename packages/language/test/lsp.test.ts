@@ -7,6 +7,7 @@ import {
     applyConfiguredIndentation,
     applyConfiguredIndentationToCompletions,
     createThinaiServices,
+    inferIndentationOptions,
     isQueryRepositoryReadCompletionPosition
 } from '../src/index.js';
 import { ThinaiNodeKindProvider } from '../src/thinai-node-kind-provider.js';
@@ -192,6 +193,12 @@ in bounded context Ordering {
         }];
         expect(applyConfiguredIndentationToCompletions(blockCompletionItems, 4, false)[0]?.textEdit?.newText)
             .toBe('\n\t\tmethod\n\t');
+        expect(inferIndentationOptions('root {\n    child {\n        leaf\n    }\n}'))
+            .toEqual({ tabSize: 4, insertSpaces: true });
+        expect(inferIndentationOptions('root {\n\tchild {\n\t\tleaf\n\t}\n}'))
+            .toEqual({ tabSize: 4, insertSpaces: false });
+        expect(inferIndentationOptions('root { child { leaf } }'))
+            .toEqual({ tabSize: 2, insertSpaces: true });
         const crlfCompletionItems = [{
             label: 'method',
             data: { thinaiIndentationDepth: 2, thinaiClosingIndentationDepth: 1 },
@@ -588,6 +595,11 @@ in bounded context Ordering {
             name: 'source',
             node: { $type: 'Parameter', name: 'source', type: { ref: domainEvent, $refText: 'OrderPlaced' }, optional: false } as unknown as AstNode
         } as AstNodeDescription)).toBe('Parameter source: event OrderPlaced');
+        expect(getDetail({
+            type: 'Parameter',
+            name: 'source',
+            node: { $type: 'Parameter', name: 'source', type: { ref: domainEvent, $refText: 'OrderPlaced' }, optional: true } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Parameter source?: event OrderPlaced');
         expect(getDetail({
             type: 'Parameter',
             name: 'value',
