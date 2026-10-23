@@ -3,6 +3,7 @@ import {
     type AstNodeDescription,
     type LangiumDocument,
     type ReferenceInfo,
+    type Stream,
     AstUtils,
     CstUtils,
     GrammarUtils,
@@ -30,13 +31,21 @@ import {
     isJourneyStep,
     isMethod,
     isMethodInvocation,
+    isModel,
     isModule,
     isParameter,
     isProjector,
     isReadSourceReference,
     isSpecificationTextPart
 } from './generated/ast.js';
-import { formatQualifiedName, isInSharedKernel } from './thinai-scope-utils.js';
+import {
+    formatQualifiedName,
+    getComponentAliasNames,
+    getComponentAliases,
+    getExportedName,
+    isInSharedKernel,
+    resolveAstNodeDescription
+} from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiCompletionDetails } from './thinai-completion-details.js';
@@ -114,39 +123,108 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     protected override getReferenceCandidates(refInfo: ReferenceInfo, context: CompletionContext) {
         const { container, property } = refInfo;
-        const pathCandidates = (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
-            .getPathCompletionCandidates(refInfo, context.offset);
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        const pathCandidates = scopeProvider.getPathCompletionCandidates(refInfo, context.offset);
         if (pathCandidates !== undefined) {
-            return stream(pathCandidates);
+            return this.dedupeCompletionCandidates(refInfo, stream(pathCandidates));
         }
         if ((isJourneyStep(container) || isMethodInvocation(container)) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < context.offset
             ).length;
-            return stream((this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
-                .getInvocationCompletionCandidates({ ...refInfo, index: completedSegments }));
+            return this.dedupeCompletionCandidates(refInfo, stream(
+                scopeProvider.getInvocationCompletionCandidates({ ...refInfo, index: completedSegments })
+            ));
         }
         if (isSpecificationTextPart(container) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < context.offset
             ).length;
             const scopedReference = { ...refInfo, index: completedSegments };
-            return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
+            return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
                 scopedReference,
-                this.thinaiServices.references.ScopeProvider.getScope(scopedReference).getAllElements()
-            );
+                scopeProvider.getScope(scopedReference).getAllElements()
+            ).toArray()));
         }
         if (isSpecificationTextPart(container) && property === 'target') {
-            const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
-            return scopeProvider.filterCompletionCandidates(
+            return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
                 refInfo,
                 scopeProvider.getSpecificationRootCompletionCandidates(refInfo)
-            );
+            ).toArray()));
         }
-        return (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).filterCompletionCandidates(
+        return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
             refInfo,
             super.getReferenceCandidates(refInfo, context)
-        );
+        ).toArray()));
+    }
+
+    private dedupeCompletionCandidates(refInfo: ReferenceInfo, candidates: Stream<AstNodeDescription>): Stream<AstNodeDescription> {
+        const document = AstUtils.getDocument(refInfo.container);
+        const model = document.parseResult.value;
+        const aliases = isModel(model) ? getComponentAliases(model) : [];
+        const journeyReference = AstUtils.getContainerOfType(refInfo.container, isJourneyStep) !== undefined;
+        const typedPrefix = refInfo.reference.$refText ?? '';
+        const groups = new Map<string, AstNodeDescription[]>();
+        const synthetic: AstNodeDescription[] = [];
+        for (const description of candidates) {
+            const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+            if (!target || !('name' in target) || typeof target.name !== 'string') {
+                synthetic.push(description);
+                continue;
+            }
+            const exportedName = getExportedName(target as AstNode & { name: string });
+            const aliasNames = getComponentAliasNames(exportedName, aliases);
+            const pathSpelling = description.name === exportedName ||
+                exportedName.endsWith(`.${description.name}`) ||
+                aliasNames.includes(description.name);
+            if (!pathSpelling) {
+                synthetic.push(description);
+                continue;
+            }
+            const key = `${description.documentUri.toString()}#${description.path}`;
+            const group = groups.get(key) ?? [];
+            group.push(description);
+            groups.set(key, group);
+        }
+        const preferred: AstNodeDescription[] = [];
+        for (const group of groups.values()) {
+            const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
+            const selected = group.find(candidate => candidate.name === name) ?? group[0]!;
+            preferred.push(selected);
+        }
+        return stream([...preferred, ...synthetic]);
+    }
+
+    private chooseCompletionDescriptionName(
+        candidates: AstNodeDescription[],
+        journeyReference: boolean,
+        typedPrefix: string
+    ): string {
+        const matching = typedPrefix.length > 0
+            ? candidates.filter(candidate => candidate.name.startsWith(typedPrefix))
+            : candidates;
+        const pool = matching.length > 0 ? matching : candidates;
+        const score = (candidate: AstNodeDescription): number => {
+            const segments = candidate.name.split('.').length;
+            let value = 0;
+            if (typedPrefix.length > 0 && candidate.name.startsWith(typedPrefix)) {
+                value += 100;
+            }
+            if (journeyReference) {
+                value += segments * 3;
+            } else {
+                value -= segments;
+                if (typedPrefix.includes('.')) {
+                    value += segments * 3;
+                }
+            }
+            return value;
+        };
+        return [...pool].sort((left, right) =>
+            score(right) - score(left) ||
+            left.name.length - right.name.length ||
+            left.name.localeCompare(right.name)
+        )[0]!.name;
     }
 
     protected override createReferenceCompletionItem(

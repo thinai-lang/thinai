@@ -553,9 +553,8 @@ in bounded context O {
 }`);
         const domainServiceParameterLabels = domainServiceParameter.completion?.items.map(item => item.label) ?? [];
         expect(domainServiceParameterLabels).not.toContain('Input');
-        expect(domainServiceParameterLabels).toEqual(
-            expect.arrayContaining(['E', 'A.E'])
-        );
+        expect(domainServiceParameterLabels).toContain('E');
+        expect(domainServiceParameterLabels.filter(label => label === 'E' || label === 'A.E')).toEqual(['E']);
 
         const domainServiceReturn = await build(`bounded context O
 in bounded context O {

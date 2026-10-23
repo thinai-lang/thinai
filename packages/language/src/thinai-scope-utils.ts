@@ -25,6 +25,7 @@ import {
     isParameter,
     type Aggregate,
     type Import,
+    type Model,
     type Module,
     type SharedKernel,
     type ValueObject
@@ -52,6 +53,48 @@ export function formatIdentifier(name: string): string {
 /** Formats a dotted reference or declaration name for source insertion. */
 export function formatQualifiedName(name: string): string {
     return name.split('.').map(formatIdentifier).join('.');
+}
+
+export interface ComponentAlias {
+    canonical: string;
+    alias: string;
+}
+
+/** Collects explicit component aliases. Aliases are document-local scope names. */
+export function getComponentAliases(model: Model): ComponentAlias[] {
+    const aliases = new Map<string, ComponentAlias>();
+    for (const declaration of model.imports) {
+        for (const component of declaration.components) {
+            const target = component.component.ref;
+            const alias = component.alias?.$refText;
+            if (!target || !alias) {
+                continue;
+            }
+            const canonical = getExportedName(target as AstNode & { name: string });
+            if (canonical) {
+                const key = `${canonical}\u0000${alias}`;
+                aliases.set(key, { canonical, alias });
+            }
+        }
+    }
+    return [...aliases.values()];
+}
+
+/**
+ * Returns alias spellings for an exported declaration name. This applies to
+ * declarations declared in any visible file, not only the file that owns the
+ * aliased import.
+ */
+export function getComponentAliasNames(name: string, aliases: readonly ComponentAlias[]): string[] {
+    const names: string[] = [];
+    for (const { canonical, alias } of aliases) {
+        if (name === canonical) {
+            names.push(alias);
+        } else if (name.startsWith(`${canonical}.`)) {
+            names.push(`${alias}.${name.slice(canonical.length + 1)}`);
+        }
+    }
+    return names;
 }
 
 export function isNamedExport(node: AstNode): node is NamedNode {
@@ -152,6 +195,55 @@ export function isExposedByModule(module: Module, target: AstNode): boolean {
     return module.exposures.some(exposure =>
         exposure.declarations.some(candidate => candidate.target.ref === declaration)
     );
+}
+
+/**
+ * Collects a module's public API. Exposing a nested module re-exports that
+ * module's public API; dependencies are intentionally not followed here.
+ */
+export function getModulePublicApi(module: Module, visited = new Set<Module>()): AstNode[] {
+    if (visited.has(module)) {
+        return [];
+    }
+    visited.add(module);
+    const api: AstNode[] = [];
+    for (const exposure of module.exposures) {
+        for (const declaration of exposure.declarations) {
+            const target = declaration.target.ref;
+            if (!target) {
+                continue;
+            }
+            api.push(target);
+            if (isModule(target)) {
+                api.push(...getModulePublicApi(target, visited));
+            }
+        }
+    }
+    return api;
+}
+
+/**
+ * True when the target module is reachable from the source module either as a
+ * direct dependency or through the public API of a direct dependency (or the
+ * source module's own explicit re-exports).
+ */
+export function isModulePubliclyVisible(source: Module, target: Module): boolean {
+    if (source === target) {
+        return true;
+    }
+    if (getModulePublicApi(source).includes(target)) {
+        return true;
+    }
+    for (const dependency of source.dependencies) {
+        const dependencyModule = dependency.target.ref;
+        if (!dependencyModule) {
+            continue;
+        }
+        if (dependencyModule === target || getModulePublicApi(dependencyModule).includes(target)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 export function isInSharedKernel(node: AstNode): boolean {

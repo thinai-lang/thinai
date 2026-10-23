@@ -89,6 +89,7 @@ import {
     isExposedByModule,
     isIdentifierValueObject,
     moduleDependsTransitivelyOn,
+    isModulePubliclyVisible,
     resolveAstNodeDescription,
     resolveImportUri
 } from './thinai-scope-utils.js';
@@ -173,12 +174,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
      */
     protected override getGlobalScope(referenceType: string, context: ReferenceInfo): Scope {
         const document = AstUtils.getDocument(context.container);
-        let result = this.createScope(this.filterUnqualifiedSpecificationFields(
+        let result = this.createScope(this.filterUnqualifiedSpecificationTargets(
             context,
             referenceType,
             this.externalScope.getImportedSymbols(document, referenceType)
         ));
-        result = this.createScope(this.filterUnqualifiedSpecificationFields(
+        result = this.createScope(this.filterUnqualifiedSpecificationTargets(
             context,
             referenceType,
             this.externalScope.getDocumentSymbols(context, document, referenceType)
@@ -189,14 +190,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             ? []
             : this.externalScope.getModuleSymbols(context, referenceType);
         return this.createScope(
-            this.filterUnqualifiedSpecificationFields(context, referenceType, moduleSymbols),
+            this.filterUnqualifiedSpecificationTargets(context, referenceType, moduleSymbols),
             result
         );
     }
 
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {
         return stream(candidates).filter(description =>
-            this.isAllowedUnqualifiedSpecificationField(context, description) &&
+            this.isAllowedUnqualifiedSpecificationTarget(context, description) &&
             this.isSupportedCandidate(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionField(context, this.getDescriptionNode(description)) &&
             this.isAvailableTransitionState(context, this.getDescriptionNode(description))
@@ -359,7 +360,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return result;
     }
 
-    private filterUnqualifiedSpecificationFields(
+    private filterUnqualifiedSpecificationTargets(
         context: ReferenceInfo,
         referenceType: string,
         candidates: AstNodeDescription[]
@@ -367,12 +368,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (referenceType !== 'SpecificationTarget' || !isSpecificationTextPart(context.container)) {
             return candidates;
         }
-        return candidates.filter(candidate => this.isAllowedUnqualifiedSpecificationField(context, candidate));
+        return candidates.filter(candidate => this.isAllowedUnqualifiedSpecificationTarget(context, candidate));
     }
 
-    private isAllowedUnqualifiedSpecificationField(context: ReferenceInfo, candidate: AstNodeDescription): boolean {
+    private isAllowedUnqualifiedSpecificationTarget(context: ReferenceInfo, candidate: AstNodeDescription): boolean {
         const target = this.getDescriptionNode(candidate);
-        if (!isSpecificationTextPart(context.container) || !isField(target) || candidate.name !== target.name) {
+        if (!isSpecificationTextPart(context.container) ||
+            (!isField(target) && !isMethod(target)) ||
+            candidate.name !== target.name) {
             return true;
         }
         if (this.hasSpecificationPathPrefix(context.container, context)) {
@@ -731,8 +734,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         if (sourceModule && targetModule && sourceModule !== targetModule && !isModule(target) &&
             getOwningContextName(sourceModule) === getOwningContextName(targetModule)) {
-            const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
-            if (!dependsOn || !isExposedByModule(targetModule, target)) {
+            if (!isModulePubliclyVisible(sourceModule, targetModule) || !isExposedByModule(targetModule, target)) {
                 return false;
             }
         }

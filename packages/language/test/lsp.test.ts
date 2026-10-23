@@ -1009,6 +1009,7 @@ in bounded context Ordering {
             URI.file('/workspace/aliased-query-catalog.tni'),
             `bounded context Catalog in bounded context Catalog {
                 module PublicApi {
+                    exposes ProductQueries, ProductInfo
                     query service ProductQueries {
                         method findProduct() returns ProductInfo
                     }

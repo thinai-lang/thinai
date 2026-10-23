@@ -83,7 +83,8 @@ import {
     isCrossContextOwned,
     isExposedByModule,
     isIdentifierValueObject,
-    moduleDependsTransitivelyOn
+    moduleDependsTransitivelyOn,
+    isModulePubliclyVisible
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
@@ -1303,7 +1304,12 @@ export class ThinaiValidator {
             const journeyStep = AstUtils.getContainerOfType(referenceInfo.container, isJourneyStep);
             if (isSpecificationTextPart(referenceInfo.container) && journeyStep) {
                 const kind = getJourneySpecificationKind(referenceInfo.container) ?? 'when';
-                if (isTerminalSpecificationSegment &&
+                if (isTerminalSpecificationSegment && this.referencePolicy.isJourneyPathOnlyTarget(target)) {
+                    accept('error', 'A journey specification must end at a visible declaration, operation, field, or value, not a module, context, map, kernel, or service container.', {
+                        node: referenceInfo.container as AstNode,
+                        property: referenceInfo.property
+                    });
+                } else if (isTerminalSpecificationSegment &&
                     !this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind)) {
                     accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.', {
                         node: referenceInfo.container as AstNode,
@@ -1415,8 +1421,7 @@ export class ThinaiValidator {
             if (getOwningContextName(sourceModule) !== getOwningContextName(targetModule)) {
                 return;
             }
-            const dependsOn = sourceModule.dependencies.some(dependency => dependency.target.ref === targetModule);
-            if (!dependsOn || !isExposedByModule(targetModule, target)) {
+            if (!isModulePubliclyVisible(sourceModule, targetModule) || !isExposedByModule(targetModule, target)) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property

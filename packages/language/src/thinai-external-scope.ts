@@ -1,3 +1,4 @@
+import { AstUtils } from 'langium';
 import type {
     AstNode,
     AstNodeDescription,
@@ -12,14 +13,19 @@ import {
     isEntity,
     isEnumType,
     isIntegrationEvent,
+    isJourneyStep,
     isModel,
+    isModule,
     isReadModel,
     isValueObject,
     type Import,
     type ImportableComponent
 } from './generated/ast.js';
 import {
+    getComponentAliasNames,
+    getComponentAliases,
     getExportedName,
+    getModulePublicApi,
     getOwningContextName,
     getOwningModule,
     isInSharedKernel,
@@ -49,47 +55,59 @@ export class ThinaiExternalScope {
             return [];
         }
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
+        // Dependencies contribute their public API, including recursively
+        // exposed nested modules.
+        const publicApiRoots: AstNode[] = [];
         for (const dependency of module.dependencies) {
-            const targetModule = dependency.target.ref;
-            if (!targetModule) {
-                continue;
+            if (dependency.target.ref) {
+                publicApiRoots.push(dependency.target.ref);
             }
-            for (const exposure of targetModule.exposures) {
-                for (const declaration of exposure.declarations) {
-                    const target = declaration.target.ref;
-                    if (!target) {
-                        continue;
-                    }
-                    if (this.reflection.isSubtype(target.$type, referenceType)) {
-                        const name = this.nameProvider.getName(target);
-                        if (name) {
-                            this.addScopeCandidate(candidates, this.descriptions.createDescription(target, name), name);
-                        }
-                        const exportedName = getExportedName(target as AstNode & { name: string });
-                        this.addScopeCandidate(candidates, this.descriptions.createDescription(target, exportedName), exportedName);
-                    }
-                    if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) ||
-                        isIntegrationEvent(target) || isReadModel(target) || isDataObject(target)) &&
-                        this.reflection.isSubtype('Field', referenceType)) {
-                        for (const field of target.fields) {
-                            const fieldName = getExportedName(field);
-                            for (const name of this.getUnaliasedNames(fieldName)) {
-                                this.addScopeCandidate(candidates, this.descriptions.createDescription(field, name), name);
-                            }
-                        }
-                    }
-                    if (isEnumType(target) && this.reflection.isSubtype('EnumValue', referenceType)) {
-                        for (const value of target.values) {
-                            const valueName = getExportedName(value);
-                            for (const name of this.getUnaliasedNames(valueName)) {
-                                this.addScopeCandidate(candidates, this.descriptions.createDescription(value, name), name);
-                            }
-                        }
-                    }
+        }
+        const visited = new Set<AstNode>();
+        for (const root of publicApiRoots) {
+            const targets = isModule(root) ? getModulePublicApi(root) : [];
+            for (const target of targets) {
+                if (visited.has(target)) {
+                    continue;
                 }
+                visited.add(target);
+                this.addPublicApiTarget(candidates, target, referenceType);
             }
         }
         return this.getUniqueScopeCandidates(candidates);
+    }
+
+    private addPublicApiTarget(
+        candidates: Map<string, Map<string, AstNodeDescription>>,
+        target: AstNode,
+        referenceType: string
+    ): void {
+        if (this.reflection.isSubtype(target.$type, referenceType)) {
+            const name = this.nameProvider.getName(target);
+            if (name) {
+                this.addScopeCandidate(candidates, this.descriptions.createDescription(target, name), name);
+            }
+            const exportedName = getExportedName(target as AstNode & { name: string });
+            this.addScopeCandidate(candidates, this.descriptions.createDescription(target, exportedName), exportedName);
+        }
+        if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) ||
+            isIntegrationEvent(target) || isReadModel(target) || isDataObject(target)) &&
+            this.reflection.isSubtype('Field', referenceType)) {
+            for (const field of target.fields) {
+                const fieldName = getExportedName(field);
+                for (const name of this.getUnaliasedNames(fieldName)) {
+                    this.addScopeCandidate(candidates, this.descriptions.createDescription(field, name), name);
+                }
+            }
+        }
+        if (isEnumType(target) && this.reflection.isSubtype('EnumValue', referenceType)) {
+            for (const value of target.values) {
+                const valueName = getExportedName(value);
+                for (const name of this.getUnaliasedNames(valueName)) {
+                    this.addScopeCandidate(candidates, this.descriptions.createDescription(value, name), name);
+                }
+            }
+        }
     }
 
     getImportedSymbols(document: import('langium').LangiumDocument, referenceType: string): AstNodeDescription[] {
@@ -102,6 +120,7 @@ export class ThinaiExternalScope {
         if (!isModel(root) || root.imports.length === 0) {
             return [];
         }
+        const aliases = getComponentAliases(root);
         const importsByUri = new Map<string, Import[]>();
         for (const declaration of root.imports) {
             const uri = resolveImportUri(document, declaration);
@@ -113,9 +132,13 @@ export class ThinaiExternalScope {
         }
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
         for (const description of this.indexManager.allElements(referenceType, new Set(importsByUri.keys()))) {
-            for (const declaration of importsByUri.get(description.documentUri.toString()) ?? []) {
+            const declarations = importsByUri.get(description.documentUri.toString()) ?? [];
+            let visible = false;
+            let unaliased = false;
+            for (const declaration of declarations) {
                 if (declaration.components.length === 0) {
-                    this.addScopeCandidates(candidates, description, this.getUnaliasedNames(description.name));
+                    visible = true;
+                    unaliased = true;
                     continue;
                 }
                 for (const component of declaration.components) {
@@ -123,11 +146,22 @@ export class ThinaiExternalScope {
                     if (!target || !this.isWithinComponent(description.name, target)) {
                         continue;
                     }
-                    const names = component.alias?.$refText
-                        ? this.getComponentAliasNames(description.name, getExportedName(target as AstNode & { name: string }), component.alias.$refText)
-                        : this.getUnaliasedNames(description.name);
-                    this.addScopeCandidates(candidates, description, names);
+                    visible = true;
+                    if (!component.alias) {
+                        unaliased = true;
+                    }
                 }
+            }
+            if (!visible) {
+                continue;
+            }
+            if (unaliased) {
+                this.addScopeCandidates(candidates, description, this.getUnaliasedNames(description.name));
+            }
+            // Aliases apply to every visible declaration of the selected
+            // component, including members contributed by other imported files.
+            for (const name of getComponentAliasNames(description.name, aliases)) {
+                this.addScopeCandidate(candidates, description, name);
             }
         }
         const result = this.getUniqueScopeCandidates(candidates);
@@ -136,15 +170,19 @@ export class ThinaiExternalScope {
     }
 
     getDocumentSymbols(context: ReferenceInfo, document: import('langium').LangiumDocument, referenceType: string): AstNodeDescription[] {
+        const journeyReference = AstUtils.getContainerOfType(context.container, isJourneyStep) !== undefined;
         const cacheKey = JSON.stringify([
             document.uri.toString(),
             referenceType,
-            this.getLexicalContextName(context) ?? null
+            this.getLexicalContextName(context) ?? null,
+            journeyReference
         ]);
         const cached = this.documentSymbolsCache.get(cacheKey);
         if (cached) {
             return cached;
         }
+        const root = document.parseResult.value;
+        const aliases = isModel(root) ? getComponentAliases(root) : [];
         const descriptions = this.indexManager.allElements(referenceType, new Set([document.uri.toString()]));
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
         const owningContextName = this.getLexicalContextName(context);
@@ -152,10 +190,13 @@ export class ThinaiExternalScope {
             this.addScopeCandidate(candidates, description, description.name);
             const belongsToContext = owningContextName && description.name.startsWith(`${owningContextName}.`);
             const belongsToSharedKernel = description.node !== undefined && isInSharedKernel(description.node);
-            if (belongsToContext || belongsToSharedKernel) {
+            if (belongsToContext || belongsToSharedKernel || journeyReference) {
                 for (const name of this.getUnaliasedNames(description.name).slice(1)) {
                     this.addScopeCandidate(candidates, description, name);
                 }
+            }
+            for (const name of getComponentAliasNames(description.name, aliases)) {
+                this.addScopeCandidate(candidates, description, name);
             }
         }
         const result = this.getUniqueScopeCandidates(candidates);
@@ -173,10 +214,6 @@ export class ThinaiExternalScope {
     private isWithinComponent(name: string, component: ImportableComponent): boolean {
         const componentName = getExportedName(component as AstNode & { name: string });
         return name === componentName || name.startsWith(`${componentName}.`);
-    }
-
-    private getComponentAliasNames(name: string, componentName: string, alias: string): string[] {
-        return name === componentName ? [alias] : [`${alias}.${name.slice(componentName.length + 1)}`];
     }
 
     private addScopeCandidates(

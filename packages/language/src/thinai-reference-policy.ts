@@ -52,8 +52,9 @@ import {
     getJourneyStepsFor,
     type JourneySpecificationKind
 } from './thinai-journey-timeline.js';
-import { getOwningAggregate, getOwningContextName, getOwningModule, isExposedByModule, resolveImportUri } from './thinai-scope-utils.js';
+import { getOwningAggregate, getOwningContextName, getOwningModule, isExposedByModule, resolveAstNodeDescription, resolveImportUri } from './thinai-scope-utils.js';
 import { getTypeReferences } from './thinai-type-utils.js';
+import { isJourneyCommand } from './thinai-operation-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
 export class ThinaiReferencePolicy {
@@ -137,33 +138,44 @@ export class ThinaiReferencePolicy {
     }
 
     /**
-     * Journey visibility is intentionally not module visibility. A journey is a
-     * model-level command timeline, not another module or bounded context.
-     * Command contract types are visible even when they live in nested modules;
-     * unrelated aggregate internals and private DomainEvents remain hidden.
+     * Journey visibility is command-contract and public-API based. Journeys are
+     * model-level command timelines, not module clients; command targets and
+     * their contract closure do not require module exposure. Other declarations
+     * must be public (context-level or exposed by their module), while aggregate
+     * internals, event handlers, query repositories, and domain events remain
+     * hidden. Context-map authorization is intentionally not applied here; it
+     * governs actual event/query consumption.
      */
     isJourneyVisibleTarget(
         referenceStep: JourneyStep,
         target: AstNode,
         kind: JourneySpecificationKind
     ): boolean {
-        if (isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target)) {
+        if (isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target) ||
+            isApplicationService(target) || isQueryService(target)) {
             return true;
         }
-        if (isApplicationService(target) || isQueryService(target) || isQueryRepository(target)) {
-            return true;
+        if (isQueryRepository(target)) {
+            return false;
         }
         if (isMethod(target)) {
-            if (!isApplicationService(target.$container) && !isQueryService(target.$container)) {
-                return false;
+            const owner = target.$container;
+            if (isApplicationService(owner)) {
+                if (!isJourneyCommand(target)) {
+                    return false;
+                }
+                const commandSteps = getJourneyStepsFor(referenceStep)
+                    .filter(step => getJourneyStepCommand(step) === target);
+                if (commandSteps.length === 0) {
+                    return true;
+                }
+                const referenceIndex = getJourneyStepIndex(referenceStep);
+                return commandSteps.some(step => getJourneyStepIndex(step) <= referenceIndex);
             }
-            const commandSteps = getJourneyStepsFor(referenceStep)
-                .filter(step => getJourneyStepCommand(step) === target);
-            if (commandSteps.length === 0) {
-                return true;
+            if (isQueryService(owner)) {
+                return this.isJourneyQueryOperationVisible(target);
             }
-            const referenceIndex = getJourneyStepIndex(referenceStep);
-            return commandSteps.some(step => getJourneyStepIndex(step) <= referenceIndex);
+            return false;
         }
 
         const contractSteps = getJourneyContractTargetSteps(referenceStep, target);
@@ -179,16 +191,35 @@ export class ThinaiReferencePolicy {
             if (isIntegrationEvent(owner)) {
                 return this.isIntegrationEventExposed(owner);
             }
+            if (this.isJourneyQueryResultTarget(referenceStep, target)) {
+                return true;
+            }
             if (isValueObject(owner) || isDataObject(owner) || isReadModel(owner)) {
-                return getOwningAggregate(owner) === undefined;
+                if (getOwningAggregate(owner) !== undefined) {
+                    return false;
+                }
+                return this.isContextLevelOrExposed(owner);
             }
             return false;
         }
         if (isEnumValue(target)) {
-            return getOwningAggregate(target.$container) === undefined;
+            const enumType = target.$container;
+            if (this.isJourneyQueryResultTarget(referenceStep, enumType)) {
+                return true;
+            }
+            if (getOwningAggregate(enumType) !== undefined) {
+                return false;
+            }
+            return this.isContextLevelOrExposed(enumType);
         }
         if (isValueObject(target) || isDataObject(target) || isReadModel(target) || isEnumType(target)) {
-            return getOwningAggregate(target) === undefined;
+            if (this.isJourneyQueryResultTarget(referenceStep, target)) {
+                return true;
+            }
+            if (getOwningAggregate(target) !== undefined) {
+                return false;
+            }
+            return this.isContextLevelOrExposed(target);
         }
         if (isIntegrationEvent(target)) {
             return this.isIntegrationEventExposed(target);
@@ -198,6 +229,88 @@ export class ThinaiReferencePolicy {
             return false;
         }
         return false;
+    }
+
+    private isContextLevelOrExposed(target: AstNode): boolean {
+        const module = getOwningModule(target);
+        return module === undefined || isExposedByModule(module, target);
+    }
+
+    /** Containers are valid journey path segments, but not meaningful terminal links. */
+    isJourneyPathOnlyTarget(target: AstNode): boolean {
+        return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target) ||
+            isApplicationService(target) || isQueryService(target);
+    }
+
+    private isJourneyQueryOperationVisible(method: Method): boolean {
+        const service = method.$container;
+        if (!isQueryService(service)) {
+            return false;
+        }
+        const module = getOwningModule(service);
+        return module === undefined || isExposedByModule(module, service);
+    }
+
+    private isJourneyQueryResultTarget(referenceStep: JourneyStep, target: AstNode): boolean {
+        const sourceDocument = AstUtils.getDocument(referenceStep);
+        const model = sourceDocument.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        const contractTarget = isEnumValue(target) ? target.$container : target;
+        for (const description of this.services.shared.workspace.IndexManager.allElements('Method')) {
+            const method = description.node ?? resolveAstNodeDescription(description, this.services);
+            if (!isMethod(method) || !isQueryService(method.$container) ||
+                !this.isJourneyQueryOperationVisible(method)) {
+                continue;
+            }
+            const methodDocument = AstUtils.getDocument(method);
+            if (!UriUtils.equals(sourceDocument.uri, methodDocument.uri) &&
+                !this.importsDocument(model, sourceDocument, methodDocument.uri)) {
+                continue;
+            }
+            if (this.getQueryResultTargets(method).has(contractTarget)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Computes the recursively reachable result shape of a query operation.
+     * Result shapes are contract data, so entities and events are excluded just
+     * like command contracts.
+     */
+    private getQueryResultTargets(method: Method): Set<AstNode> {
+        const targets = new Set<AstNode>();
+        const visited = new Set<AstNode>();
+        const visit = (type: AstNode | undefined): void => {
+            if (!type || visited.has(type) || isEntity(type) || isDomainEvent(type) ||
+                isIntegrationEvent(type)) {
+                return;
+            }
+            if (!isDataObject(type) && !isValueObject(type) && !isReadModel(type) && !isEnumType(type)) {
+                return;
+            }
+            visited.add(type);
+            targets.add(type);
+            if (isEnumType(type)) {
+                for (const value of type.values) {
+                    targets.add(value);
+                }
+                return;
+            }
+            for (const field of type.fields) {
+                targets.add(field);
+                for (const reference of getTypeReferences(field.type, field.collection)) {
+                    visit(reference.ref);
+                }
+            }
+        };
+        for (const reference of getTypeReferences(method.returnType, method.returnCollection)) {
+            visit(reference.ref);
+        }
+        return targets;
     }
 
     isQueryServiceExposed(service: QueryService): boolean {

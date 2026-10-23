@@ -237,6 +237,14 @@ When a file declares multiple components, select them explicitly:
 import { Ordering as Orders, Shipping } from "./contexts.tni"
 ```
 
+An alias applies to every visible declaration of the selected component,
+including members contributed from other imported files. For example, if
+`Ordering` is aliased as `Orders`, contributed declarations are available as
+`Orders.Member` as well as under their canonical path. Aliases do not import
+files on their own: import the contribution file that declares the members you
+use. Declarations in the current document can also be referenced through a
+local context alias.
+
 Shared value objects belong in an explicit `shared kernel`. Context maps record
 which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
@@ -244,9 +252,18 @@ declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
 Only the terminal declaration in a qualified path must be exposed; structural
 containers such as an aggregate, entity, or service used as path segments do not
-need separate exposures. Exposing a query service publishes its query API;
-direct module-to-module method references still require the method itself to be
-exposed. Published query DataObjects expose their nested DataObject, value
+need separate exposures. Exposing a nested module re-exports that module's
+public API through the enclosing module, recursively through explicit exposure
+edges. A client that depends on the outer module can use the nested module's
+exposed declarations without a separate dependency. `depends on` is not a
+re-export. Direct dependencies on nested modules remain valid. A module may use
+its own exposed nested module's public API without a redundant dependency; use
+`depends on` when it needs non-public internal members. A module may expose only
+its direct child modules and declarations, so deep re-export requires each level
+to expose the next; terminal declarations must still be exposed by their owning
+module. Exposing a query service publishes its query
+API; direct module-to-module method references still require the method itself
+to be exposed. Published query DataObjects expose their nested DataObject, value
 object, and enum shape, including enum values; aggregate-owned contract types
 produce a warning. Journeys are model-level timelines and do not require either
 form of module exposure merely to invoke an application-service command.
@@ -262,9 +279,10 @@ values, read models, events, and fields. A dotted reference such as
 qualified path may also continue through a field's declared type, for example
 `[[Shop.Dto.address.city]]`. Links are descriptive references, not expressions
 or executable calls. A specification
-inside an entity or value object may refer to that enclosing object's fields by
-their bare names; fields on other objects should use an owner-qualified path, such
-as `[[Order.Order.customerId]]`. Operation inputs and results use their named
+inside an entity or value object may refer to that enclosing object's fields and
+methods by their bare names; fields or methods on other objects require an
+owner-qualified path, such as `[[Order.Order.customerId]]` or
+`[[Order.Order.ensureOwner]]`. Operation inputs and results use their named
 roots, such as `[[input.orderId]]` and `[[result.status]]`. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
@@ -308,11 +326,22 @@ types; use public or shared contract types if that is not intended. Journey pros
 cross-context by design and does not require a context-map authorization;
 context maps remain relevant to actual event and query consumption.
 
-Journey prose may also link visible read models, query results, data objects,
-value objects, enums, public integration events, and user-facing operations from
-imported contexts. `with` describes the inputs of the step; `when` describes the
-conditions under which the command is invoked. Both are descriptive prose, not
-executable expressions.
+Application-service event handlers, query repositories, repositories, domain
+services, projectors, factories, entity fields, and DomainEvents are not
+journey-visible. Query services are visible when they are context-level or
+exposed by their module; the result shape of a visible query operation is
+visible as part of that operation's contract. Read models, data objects, value
+objects, and enums are visible when they are context-level or exposed by their
+module; aggregate-owned declarations remain visible only through command or
+query contract closure. Shared-kernel declarations do not require a context-map
+relationship in journey prose, but module-nested shared-kernel declarations
+still require module exposure. Integration events follow their usual rule:
+context-level events are public, and module-nested events require exposure.
+Journey prose may also link visible read models, query results, data
+objects, value objects, enums, public integration events, and user-facing
+operations from imported contexts. `with` describes the inputs of the step;
+`when` describes the conditions under which the command is invoked. Both are
+descriptive prose, not executable expressions.
 
 Thinai supports modules, aggregates, root and child entities, identifiers and
 mirrored value objects, data objects, read models, projectors, query services and repositories,

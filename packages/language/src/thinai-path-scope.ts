@@ -259,12 +259,20 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 return [this.descriptions.createDescription(target, context.reference.$refText, AstUtils.getDocument(target))];
             }
         }
-        return this.callbacks.filterCompletionCandidates(context, this.getPathSegmentCompletions(
+        const prefix = references.slice(0, index).map(reference => reference.$refText);
+        const completions = this.callbacks.filterCompletionCandidates(context, this.getPathSegmentCompletions(
             context,
             referenceType,
-            references.slice(0, index).map(reference => reference.$refText),
+            prefix,
             allowedTargets
         )).toArray();
+        if (isJourneyStep(context.container) && prefix.length === 0) {
+            // Guide authors toward a service- or context-qualified command path.
+            return completions.filter(description =>
+                !(isMethod(description.node) && description.name === description.node.name)
+            );
+        }
+        return completions;
     }
 
     private getDeclaredReferenceType(context: ReferenceInfo): string | undefined {
