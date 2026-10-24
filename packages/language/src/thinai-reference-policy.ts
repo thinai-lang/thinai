@@ -58,6 +58,7 @@ import {
     getOwningAggregate,
     getOwningContextName,
     getOwningModule,
+    getOwningSharedKernel,
     isExposedByModule,
     isInSharedKernel,
     isModuleAccessibleFrom,
@@ -235,6 +236,19 @@ export class ThinaiReferencePolicy {
             }
             return isModuleAccessibleFrom(source, getOwningModule(target));
         }
+        const journeyStep = AstUtils.getContainerOfType(source, isJourneyStep);
+        if (journeyStep) {
+            // Aggregates and entities are structural containers in canonical
+            // contract paths. Every other non-terminal segment must be visible
+            // in its own right; otherwise private entity/DomainEvent fields and
+            // aggregate internals could be used as stepping stones to public
+            // declarations.
+            if (isAggregate(target) || isEntity(target)) {
+                return true;
+            }
+            const kind = getJourneySpecificationKind(source) ?? 'when';
+            return this.isJourneyVisibleTarget(journeyStep, target, kind);
+        }
         return true;
     }
 
@@ -291,6 +305,15 @@ export class ThinaiReferencePolicy {
     isVisibleSpecificationModulePrefix(source: AstNode, module: AstNode, candidate: AstNode | undefined): boolean {
         if (!isModule(module)) {
             return true;
+        }
+        const journeyStep = AstUtils.getContainerOfType(source, isJourneyStep);
+        if (!journeyStep) {
+            const sharedKernel = getOwningSharedKernel(module);
+            const sourceSharedKernel = getOwningSharedKernel(source);
+            if (sharedKernel !== undefined && sourceSharedKernel !== sharedKernel &&
+                !this.hasSharedKernelRelationship(source, sharedKernel)) {
+                return false;
+            }
         }
         return isModuleAccessibleFrom(source, module) ||
             (candidate !== undefined && this.isAuthorizedSpecificationContractTarget(source, candidate));
@@ -425,7 +448,7 @@ export class ThinaiReferencePolicy {
     /** Containers are valid journey path segments, but not meaningful terminal links. */
     isJourneyPathOnlyTarget(target: AstNode): boolean {
         return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target) ||
-            isApplicationService(target) || isQueryService(target);
+            isApplicationService(target) || isQueryService(target) || isAggregate(target) || isEntity(target);
     }
 
     private isJourneyQueryOperationVisible(method: Method): boolean {

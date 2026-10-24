@@ -276,6 +276,13 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 }
                 const segmentPath = [...prefix, description.name].join('.');
                 return allowedPaths.some(path => path.startsWith(`${segmentPath}.`));
+            })
+            .map(description => {
+                if (!isMethod(description.node)) {
+                    (description as AstNodeDescription & { thinaiPathContinuation?: boolean })
+                        .thinaiPathContinuation = true;
+                }
+                return description;
             });
         if (isJourneyStep(container) && prefix.length === 0) {
             // A journey step must name at least a service or context segment;
@@ -527,6 +534,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     }
                 }
                 const segmentDescription = this.descriptions.createDescription(target, segment, AstUtils.getDocument(target));
+                if (!segmentIsTerminal) {
+                    (segmentDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
+                        .thinaiPathContinuation = true;
+                }
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
             }
         }
@@ -558,8 +569,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (!target) {
             return [];
         }
-        if (isMethod(target) &&
-            !this.callbacks.isSupportedSpecificationPathSegment(context, target, false)) {
+        if (!this.callbacks.isSupportedSpecificationPathSegment(context, target, false)) {
             return [];
         }
         const members = new Set<AstNode>();

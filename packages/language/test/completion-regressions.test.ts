@@ -1156,4 +1156,196 @@ journey J2 {
 }`);
         expect(canonicalFirst.completion?.items.map(item => item.label)).toContain('result');
     });
+
+    test('completes integrationPatterns inside a context-map endpoint only once', async () => {
+        for (const prefix of ['', 'int', 'integrationP']) {
+            const endpoint = await build(`bounded context A
+bounded context B
+context map M {
+    customer A {
+        ${prefix}${marker}
+    } -> supplier B
+}`);
+            expect(endpoint.completion?.items.map(item => item.label), prefix).toContain('integrationPatterns');
+        }
+
+        const afterPatterns = await build(`bounded context A
+bounded context B
+context map M {
+    customer A {
+        integrationPatterns: ["Conformist"]
+        ${marker}
+    } -> supplier B
+}`);
+        expect(afterPatterns.completion?.items.map(item => item.label)).not.toContain('integrationPatterns');
+    });
+
+    test('does not complete fields through private journey path segments', async () => {
+        const privatePrefix = await build(`bounded context C
+in bounded context C {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            internal: Details
+        }
+        value object OrderId { raw: string }
+        value object Details { publicField: string }
+    }
+    application service App { method run() }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke C.App.run when "[[C.Order.Order.internal.${marker}]]"
+    }
+}`);
+        expect(privatePrefix.completion?.items ?? []).toEqual([]);
+    });
+
+    test('applies recursive type-shape rules to completion candidates', async () => {
+        const applicationParameter = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+    }
+    value object Wrapper { item: A.E }
+    application service App {
+        method run(input: ${marker})
+    }
+}`);
+        expect(applicationParameter.completion?.items.map(item => item.label)).not.toContain('Wrapper');
+
+        const domainEventPayload = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+    }
+    value object Wrapper { item: A.E }
+    event E1 { payload: ${marker} }
+}`);
+        expect(domainEventPayload.completion?.items.map(item => item.label)).not.toContain('Wrapper');
+
+        const integrationEventPayload = await build(`bounded context C
+in bounded context C {
+    module Internal {
+        value object Payload { raw: string }
+    }
+    integration event E1 { payload: ${marker} }
+}`);
+        expect(integrationEventPayload.completion?.items.map(item => item.label)).not.toContain('Payload');
+    });
+
+    test('appends a dot when the selected read-source segment is not a valid terminal', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/path-dot-contexts.tni'),
+            'bounded context P bounded context C'
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/path-dot-catalog.tni'),
+            `import "./path-dot-contexts.tni"
+in bounded context P {
+    module Api {
+        exposes Queries, Info
+        data object Info { ok: boolean }
+        query service Queries { method find() returns Info }
+    }
+}`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/path-dot-map.tni'),
+            `import "./path-dot-contexts.tni"
+context map M { customer C -> supplier P }`
+        );
+        const consumerText = `import "./path-dot-contexts.tni"
+import "./path-dot-catalog.tni"
+import { M } from "./path-dot-map.tni"
+in bounded context C {
+    application service App {
+        method run() {
+            reads from P.Api.${marker}
+        }
+    }
+}`;
+        const offset = consumerText.indexOf(marker);
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/path-dot-consumer.tni'), consumerText.replace(marker, '')
+        );
+        documents.push(contexts, catalog, contextMap, consumer);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        const queryService = completion?.items.find(item => item.label === 'Queries');
+        expect(queryService?.textEdit?.newText).toBe('Queries.');
+    });
+
+    test('requires a shared-kernel relationship for non-journey shared-kernel prefixes', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-prefix-common.tni'),
+            `shared kernel Common {
+    module Private {
+        exposes Code
+        value object Code { raw: string }
+    }
+}`
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-prefix-contexts.tni'),
+            'bounded context A bounded context B'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-prefix-map.tni'),
+            `import "./shared-prefix-common.tni"
+import "./shared-prefix-contexts.tni"
+context map M { sharedKernel Common { participants: [A, B] } }`
+        );
+        const text = `import "./shared-prefix-contexts.tni"
+import { Common } from "./shared-prefix-common.tni"
+import { M } from "./shared-prefix-map.tni"
+in bounded context A {
+    application service App {
+        method run() {
+            behavior "Use [[Common.${marker}]]."
+        }
+    }
+}`;
+        const offset = text.indexOf(marker);
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-prefix-consumer.tni'), text.replace(marker, '')
+        );
+        documents.push(common, contexts, contextMap, consumer);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.map(item => item.label)).toContain('Private');
+
+        const unrelatedText = `import "./shared-prefix-contexts.tni"
+import { Common } from "./shared-prefix-common.tni"
+in bounded context B {
+    application service App {
+        method run() {
+            behavior "Use [[Common.${marker}]]."
+        }
+    }
+}`;
+        const unrelatedOffset = unrelatedText.indexOf(marker);
+        const unrelated = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-prefix-unrelated.tni'), unrelatedText.replace(marker, '')
+        );
+        documents.push(unrelated);
+        await services.shared.workspace.DocumentBuilder.build([unrelated], { validation: false });
+
+        const withoutRelationship = await services.Thinai.lsp.CompletionProvider?.getCompletion(unrelated, {
+            textDocument: { uri: unrelated.uri.toString() },
+            position: unrelated.textDocument.positionAt(unrelatedOffset)
+        });
+        expect(withoutRelationship?.items.map(item => item.label)).not.toContain('Private');
+    });
 });

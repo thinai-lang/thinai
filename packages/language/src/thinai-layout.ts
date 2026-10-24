@@ -127,6 +127,7 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
         statement: { bareNameBoundary: true, requiredReferences: ['left', 'right'] }
     },
     ContextMapEndpoint: {
+        completionKeywords: ['integrationPatterns'],
         statement: { blockContainer: true, firstStatementKeyword: 'integrationPatterns' }
     },
     EventEmission: {

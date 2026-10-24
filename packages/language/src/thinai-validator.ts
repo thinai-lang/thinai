@@ -1779,7 +1779,11 @@ export class ThinaiValidator {
                 }
                 for (const repository of AstUtils.streamAst(root).filter(isRepository)) {
                     const rootReference = repository.root?.ref;
-                    const aggregate = rootReference ? getOwningAggregate(rootReference) : undefined;
+                    if (!isEntity(rootReference) || !rootReference.root ||
+                        getOwningContextName(repository) !== getOwningContextName(rootReference)) {
+                        continue;
+                    }
+                    const aggregate = getOwningAggregate(rootReference);
                     if (!aggregate) {
                         continue;
                     }

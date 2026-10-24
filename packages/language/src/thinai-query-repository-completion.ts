@@ -173,7 +173,7 @@ export function isQueryRepositoryReadCompletionPosition(document: LangiumDocumen
     const repository = findQueryRepositoryAtOffset(document, offset);
     const servedReference = repository?.readModel;
     const referenceEnd = servedReference?.$refNode?.end;
-    return repository !== undefined && servedReference !== undefined && hasReferenceTarget(servedReference) &&
+    return repository !== undefined && servedReference !== undefined &&
         typeof servedReference.$refText === 'string' && servedReference.$refText.length > 0 &&
         referenceEnd !== undefined && offset >= referenceEnd &&
         repository.sources.length === 0 && /^[\t \r\n]*$/u.test(text.slice(referenceEnd, offset));

@@ -23,6 +23,7 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    isAggregate,
     isApplicationService,
     isBoundedContext,
     isContextMap,
@@ -217,11 +218,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             group.push(description);
             groups.set(key, group);
         }
+        const preservePathContinuation = (selected: AstNodeDescription, group: AstNodeDescription[]): AstNodeDescription => {
+            if (!group.some(candidate =>
+                (candidate as AstNodeDescription & { thinaiPathContinuation?: boolean }).thinaiPathContinuation
+            )) {
+                return selected;
+            }
+            return {
+                ...selected,
+                thinaiPathContinuation: true
+            } as AstNodeDescription;
+        };
         const preferred: AstNodeDescription[] = [];
         if (this.isQualifiedReference(refInfo)) {
             for (const group of groups.values()) {
                 const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
-                preferred.push(group.find(candidate => candidate.name === name) ?? group[0]!);
+                preferred.push(preservePathContinuation(
+                    group.find(candidate => candidate.name === name) ?? group[0]!,
+                    group
+                ));
             }
             return stream([...preferred, ...synthetic]);
         }
@@ -251,12 +266,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const resolving = group.filter(candidate => resolvesTo(candidate.name, target));
             if (resolving.length > 0) {
                 const name = this.chooseCompletionDescriptionName(resolving, journeyReference, typedPrefix);
-                preferred.push(resolving.find(candidate => candidate.name === name) ?? resolving[0]!);
+                preferred.push(preservePathContinuation(
+                    resolving.find(candidate => candidate.name === name) ?? resolving[0]!,
+                    resolving
+                ));
             } else if (!scopeTargets.has(target)) {
                 // Synthetic shape/result descriptions are generated on demand and
                 // are not necessarily present in the visible scope.
                 const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
-                preferred.push(group.find(candidate => candidate.name === name) ?? first);
+                preferred.push(preservePathContinuation(
+                    group.find(candidate => candidate.name === name) ?? first,
+                    group
+                ));
             }
         }
         return stream([...preferred, ...synthetic]);
@@ -323,7 +344,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
         let insertText = formatQualifiedName(nodeDescription.name);
         const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
-        if (target && this.isJourneyPathContinuation(refInfo, target, context)) {
+        const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
+            .thinaiPathContinuation === true;
+        if (target && (
+            this.isJourneyPathContinuation(refInfo, target, context) ||
+            pathContinuation && this.shouldAppendPathDot(refInfo, context)
+        )) {
             insertText = `${insertText}.`;
         }
         if (insertText !== nodeDescription.name) {
@@ -345,6 +371,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             !this.isJourneyPathOnlyTarget(target)) {
             return false;
         }
+        return this.shouldAppendPathDot(refInfo, context);
+    }
+
+    private shouldAppendPathDot(refInfo: ReferenceInfo, context: CompletionContext): boolean {
         const document = AstUtils.getDocument(refInfo.container);
         const following = document.textDocument.getText().slice(context.offset);
         return !/^\s*\./u.test(following);
@@ -352,7 +382,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private isJourneyPathOnlyTarget(target: AstNode): boolean {
         return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) ||
-            isModule(target) || isApplicationService(target) || isQueryService(target);
+            isModule(target) || isApplicationService(target) || isQueryService(target) ||
+            isAggregate(target) || isEntity(target);
     }
 
     override async getCompletion(
@@ -1212,10 +1243,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     ): AstNode | undefined {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
+        const activeOpenBlock = this.getInnermostOpenBlockAtOffset(model, offset);
+        const activeOpenBlockAncestors = new Set<AstNode>();
+        for (let ancestor = activeOpenBlock?.$container; ancestor; ancestor = ancestor.$container) {
+            activeOpenBlockAncestors.add(ancestor);
+        }
         const lastByContainer = new Map<AstNode, AstNode>();
         for (const node of AstUtils.streamAst(model)) {
             const cstNode = node.$cstNode;
             if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset) {
+                continue;
+            }
+            if (activeOpenBlockAncestors.has(node)) {
+                // An enclosing relationship/declaration is not the statement
+                // being typed merely because its child block is still open.
                 continue;
             }
             if (this.isPartialSiblingKeywordNode(node, document, position)) {
@@ -1245,6 +1286,30 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         return undefined;
+    }
+
+    private getInnermostOpenBlockAtOffset(model: AstNode, offset: number): AstNode | undefined {
+        let innermost: AstNode | undefined;
+        let innermostBraceOffset = -1;
+        for (const node of AstUtils.streamAst(model)) {
+            if (!isBlockNodeType(node.$type) || !node.$cstNode) {
+                continue;
+            }
+            const openingBrace = GrammarUtils.findNodeForKeyword(node.$cstNode, '{');
+            if (!openingBrace || openingBrace.offset >= offset) {
+                continue;
+            }
+            const closingBrace = [...CstUtils.flattenCst(node.$cstNode)].reverse()
+                .find(leaf => leaf.text === '}');
+            if (closingBrace && closingBrace.offset < offset) {
+                continue;
+            }
+            if (openingBrace.offset > innermostBraceOffset) {
+                innermost = node;
+                innermostBraceOffset = openingBrace.offset;
+            }
+        }
+        return innermost;
     }
 
     private isOpenBlockContainerAtCursor(node: AstNode, source: string): boolean {

@@ -38,11 +38,16 @@ function registerThinaiSelectionRanges(
                 document.getText(),
                 URI.parse(document.uri.toString())
             );
-            const ranges = positions.map(position => createThinaiSelectionRange(langiumDocument, position));
-            if (ranges.some(range => !range)) {
-                return undefined;
-            }
-            return ranges.map(range => toVscodeSelectionRange(range!));
+            return positions.map(position => {
+                const range = createThinaiSelectionRange(langiumDocument, position);
+                if (range) {
+                    return toVscodeSelectionRange(range);
+                }
+                // Whitespace positions have no CST leaf. Return the line so one
+                // such position does not disable selection ranges for the whole
+                // request.
+                return new vscode.SelectionRange(document.lineAt(position.line).range);
+            });
         }
     }));
 }

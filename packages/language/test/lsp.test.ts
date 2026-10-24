@@ -199,6 +199,8 @@ in bounded context Ordering {
             .toEqual({ tabSize: 4, insertSpaces: false });
         expect(inferIndentationOptions('root { child { leaf } }'))
             .toEqual({ tabSize: 2, insertSpaces: true });
+        expect(inferIndentationOptions('root {\n    child {\n      aligned\n    }\n}'))
+            .toEqual({ tabSize: 4, insertSpaces: true });
         const crlfCompletionItems = [{
             label: 'method',
             data: { thinaiIndentationDepth: 2, thinaiClosingIndentationDepth: 1 },
@@ -4036,5 +4038,39 @@ context map M {
             position: document.textDocument.positionAt(source.indexOf(marker))
         });
         expect(completion?.items.map(item => item.label)).toContain('city');
+    });
+
+    test('recognizes the query-repository read position before linking', () => {
+        const marker = '__CURSOR__';
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    read model OrderSummary { status: string }
+    query repository SummaryQuery {
+        serves OrderSummary
+        ${marker}
+    }
+}`;
+        const offset = source.indexOf(marker);
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unbuilt-query-repository-read.tni'), source.replace(marker, '')
+        );
+        documents.push(document);
+
+        expect(isQueryRepositoryReadCompletionPosition(document, offset)).toBe(true);
+    });
+
+    test('falls back to the line range for whitespace-only selection positions', async () => {
+        const source = 'bounded context Ordering\n   \nbounded context Shipping';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/whitespace-selection-range.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const selection = createThinaiSelectionRange(document, { line: 1, character: 1 });
+        expect(selection?.range).toEqual({
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: 3 }
+        });
     });
 });

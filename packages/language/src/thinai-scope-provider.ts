@@ -106,6 +106,7 @@ import {
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { ThinaiExternalScope } from './thinai-external-scope.js';
+import { getTypeReferences } from './thinai-type-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 import {
     getJourneyStepCommand,
@@ -118,6 +119,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     private readonly externalScope: ThinaiExternalScope;
     private readonly referencePolicy: ThinaiReferencePolicy;
     private readonly pathScope: ThinaiPathScope;
+    private eventPayloadUsageCache = new WeakMap<AstNode, 'domain' | 'integration' | null>();
 
     constructor(services: LangiumCoreServices) {
         super(services);
@@ -128,10 +130,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             this.descriptions,
             this.indexManager
         );
-        services.shared.workspace.DocumentBuilder.onUpdate(() => this.externalScope.clearCache());
-        services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.IndexedContent, () =>
-            this.externalScope.clearCache()
-        );
+        const clearCaches = () => {
+            this.externalScope.clearCache();
+            this.eventPayloadUsageCache = new WeakMap();
+        };
+        services.shared.workspace.DocumentBuilder.onUpdate(clearCaches);
+        services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.IndexedContent, clearCaches);
         this.referencePolicy = new ThinaiReferencePolicy(services);
         this.pathScope = new ThinaiPathScope(services, {
             createScope: elements => this.createScope(elements),
@@ -980,6 +984,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private isValidTypeCandidate(context: ReferenceInfo, target: AstNode): boolean {
+        const terminalType = ['type', 'returnType', 'elementType', 'valueType'].includes(context.property);
+        if (terminalType && !this.isAllowedTypeShape(context, target)) {
+            return false;
+        }
         const typeContext = this.getTypeContextNode(context.container);
         const field = isField(typeContext) ? typeContext : undefined;
         const parameter = isParameter(typeContext) ? typeContext : undefined;
@@ -1117,6 +1125,291 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return true;
     }
 
+    private isAllowedTypeShape(context: ReferenceInfo, target: AstNode): boolean {
+        if (!isValueObject(target) && !isDataObject(target) && !isReadModel(target) &&
+            !isEnumType(target) && !isEntity(target)) {
+            return true;
+        }
+        if (!this.isWellFormedValueShape(target)) {
+            return false;
+        }
+
+        // A value object that participates in an event payload inherits that
+        // event's payload restrictions, even when the type is edited inside its
+        // own declaration.
+        const eventUsage = this.getEventPayloadUsage(context.container);
+        if (eventUsage === 'integration' && !this.isPublicIntegrationPayloadShape(target, new Set())) {
+            return false;
+        }
+        if (eventUsage === 'domain' && !this.isDomainEventPayloadShape(target, new Set())) {
+            return false;
+        }
+
+        const typeContext = this.getTypeContextNode(context.container);
+        if (!typeContext) {
+            return true;
+        }
+        if (isField(typeContext)) {
+            const owner = typeContext.$container;
+            if (isIntegrationEvent(owner)) {
+                return this.isPublicIntegrationPayloadShape(target, new Set());
+            }
+            if (isDomainEvent(owner)) {
+                return this.isDomainEventPayloadShape(target, new Set());
+            }
+            if (isDataObject(owner)) {
+                return !this.shapeContainsEntity(target) && !this.shapeContainsReadModel(target);
+            }
+            if (isReadModel(owner)) {
+                return !this.shapeContainsEntity(target);
+            }
+            if (isEntity(owner) || isValueObject(owner)) {
+                return !this.shapeContainsForeignEntity(target, getOwningAggregate(typeContext));
+            }
+            return true;
+        }
+
+        if (isParameter(typeContext)) {
+            const parent = typeContext.$container;
+            const owner = parent.$container;
+            if (isApplicationService(owner) || isQueryService(owner) || isFactory(owner)) {
+                return !this.shapeContainsEntity(target);
+            }
+            if (isConstructor(parent)) {
+                return !this.shapeContainsForeignEntity(target, getOwningAggregate(typeContext));
+            }
+            if (isEntity(owner) || isValueObject(owner)) {
+                return !this.shapeContainsForeignEntity(target, getOwningAggregate(typeContext));
+            }
+            // Domain-service and projector parameters have their own direct
+            // signature rules; domain services may intentionally accept entities.
+            return true;
+        }
+
+        if (isMethod(typeContext)) {
+            const owner = typeContext.$container;
+            if (isApplicationService(owner) || isQueryService(owner) || isDomainService(owner)) {
+                return !this.shapeContainsEntity(target);
+            }
+            if (isEntity(owner) || isValueObject(owner)) {
+                return !this.shapeContainsForeignEntity(target, getOwningAggregate(typeContext));
+            }
+            return true;
+        }
+
+        return true;
+    }
+
+    private getEventPayloadUsage(node: AstNode): 'domain' | 'integration' | undefined {
+        const valueObject = AstUtils.getContainerOfType(node, isValueObject);
+        if (!valueObject) {
+            return undefined;
+        }
+        if (this.eventPayloadUsageCache.has(valueObject)) {
+            return this.eventPayloadUsageCache.get(valueObject) ?? undefined;
+        }
+        let usage: 'domain' | 'integration' | undefined;
+        for (const eventType of ['DomainEvent', 'IntegrationEvent'] as const) {
+            for (const description of this.indexManager.allElements(eventType)) {
+                const event = this.getDescriptionNode(description);
+                if (!isDomainEvent(event) && !isIntegrationEvent(event)) {
+                    continue;
+                }
+                if (eventType === 'DomainEvent' && !isDomainEvent(event)) {
+                    continue;
+                }
+                if (eventType === 'IntegrationEvent' && !isIntegrationEvent(event)) {
+                    continue;
+                }
+                if (this.eventReferencesType(event, valueObject, new Set())) {
+                    if (eventType === 'IntegrationEvent') {
+                        usage = 'integration';
+                        break;
+                    }
+                    usage = usage ?? 'domain';
+                }
+            }
+            if (usage === 'integration') {
+                break;
+            }
+        }
+        this.eventPayloadUsageCache.set(valueObject, usage ?? null);
+        return usage;
+    }
+
+    private eventReferencesType(
+        event: DomainEvent | IntegrationEvent,
+        expected: AstNode,
+        visited: Set<AstNode>
+    ): boolean {
+        return event.fields.some(field =>
+            getTypeReferences(field.type, field.collection).some(reference =>
+                reference.ref !== undefined && this.shapeReferencesType(reference.ref, expected, visited)
+            )
+        );
+    }
+
+    private shapeReferencesType(type: AstNode | undefined, expected: AstNode, visited: Set<AstNode>): boolean {
+        if (!type || visited.has(type)) {
+            return false;
+        }
+        if (type === expected) {
+            return true;
+        }
+        if (!isValueObject(type) && !isDataObject(type) && !isReadModel(type)) {
+            return false;
+        }
+        visited.add(type);
+        return type.fields.some(field =>
+            getTypeReferences(field.type, field.collection).some(reference =>
+                reference.ref !== undefined && this.shapeReferencesType(reference.ref, expected, visited)
+            )
+        );
+    }
+
+    private isWellFormedValueShape(type: AstNode | undefined, visited = new Set<AstNode>()): boolean {
+        if (!type || visited.has(type)) {
+            return true;
+        }
+        if (isEntity(type) || isEnumType(type)) {
+            return true;
+        }
+        const shape = type as ValueObject | DataObject | ReadModel;
+        const nested = (allowDataObjects: boolean, allowReadModels: boolean): boolean =>
+            shape.fields.every(field =>
+                getTypeReferences(field.type, field.collection).every(reference => {
+                    const target = reference.ref;
+                    if (!target) {
+                        return true;
+                    }
+                    if (isDataObject(target) && !allowDataObjects) {
+                        return false;
+                    }
+                    if (isReadModel(target) && !allowReadModels) {
+                        return false;
+                    }
+                    if (isEntity(target)) {
+                        return true;
+                    }
+                    return this.isWellFormedValueShape(target, visited);
+                })
+            );
+        if (isValueObject(type)) {
+            visited.add(type);
+            return nested(false, false);
+        }
+        if (isDataObject(type)) {
+            visited.add(type);
+            return nested(true, false);
+        }
+        if (isReadModel(type)) {
+            visited.add(type);
+            return nested(false, true);
+        }
+        return true;
+    }
+
+    private shapeContainsEntity(type: AstNode | undefined, visited = new Set<AstNode>()): boolean {
+        if (!type || visited.has(type)) {
+            return false;
+        }
+        if (isEntity(type)) {
+            return true;
+        }
+        if (!isValueObject(type) && !isDataObject(type) && !isReadModel(type)) {
+            return false;
+        }
+        visited.add(type);
+        return type.fields.some(field =>
+            getTypeReferences(field.type, field.collection).some(reference =>
+                this.shapeContainsEntity(reference.ref, visited)
+            )
+        );
+    }
+
+    private shapeContainsReadModel(type: AstNode | undefined, visited = new Set<AstNode>()): boolean {
+        if (!type || visited.has(type)) {
+            return false;
+        }
+        if (isReadModel(type)) {
+            return true;
+        }
+        if (!isValueObject(type) && !isDataObject(type)) {
+            return false;
+        }
+        visited.add(type);
+        return type.fields.some(field =>
+            getTypeReferences(field.type, field.collection).some(reference =>
+                this.shapeContainsReadModel(reference.ref, visited)
+            )
+        );
+    }
+
+    private shapeContainsForeignEntity(
+        type: AstNode | undefined,
+        sourceAggregate: AstNode | undefined,
+        visited = new Set<AstNode>()
+    ): boolean {
+        if (!type || visited.has(type)) {
+            return false;
+        }
+        if (isEntity(type)) {
+            return getOwningAggregate(type) !== sourceAggregate;
+        }
+        if (!isValueObject(type) && !isDataObject(type) && !isReadModel(type)) {
+            return false;
+        }
+        visited.add(type);
+        return type.fields.some(field =>
+            getTypeReferences(field.type, field.collection).some(reference =>
+                this.shapeContainsForeignEntity(reference.ref, sourceAggregate, visited)
+            )
+        );
+    }
+
+    private isPublicIntegrationPayloadShape(type: AstNode | undefined, visited: Set<AstNode>): boolean {
+        if (!type || visited.has(type)) {
+            return true;
+        }
+        if (isEntity(type) || isDataObject(type) || isReadModel(type)) {
+            return false;
+        }
+        if (getOwningAggregate(type) !== undefined) {
+            return false;
+        }
+        const module = getOwningModule(type);
+        if (module !== undefined && !isPublicApiDeclaration(type)) {
+            return false;
+        }
+        if (isValueObject(type)) {
+            visited.add(type);
+            return type.fields.every(field =>
+                getTypeReferences(field.type, field.collection).every(reference =>
+                    this.isPublicIntegrationPayloadShape(reference.ref, visited)
+                )
+            );
+        }
+        return true;
+    }
+
+    private isDomainEventPayloadShape(type: AstNode | undefined, visited: Set<AstNode>): boolean {
+        if (!type || visited.has(type)) {
+            return true;
+        }
+        if (isEntity(type) || isDataObject(type) || isReadModel(type)) {
+            return false;
+        }
+        if (isValueObject(type)) {
+            visited.add(type);
+            return type.fields.every(field =>
+                getTypeReferences(field.type, field.collection).every(reference =>
+                    this.isDomainEventPayloadShape(reference.ref, visited)
+                )
+            );
+        }
+        return true;
+    }
+
     private isValidRepositoryRootPathCandidate(repository: Repository, target: AstNode): boolean {
         const contextName = getOwningContextName(repository);
         if (!contextName) {
@@ -1151,9 +1444,23 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             isApplicationService(target) || isQueryService(target) || isDomainService(target);
     }
 
+    private isSpecificationPathContainerVisible(context: ReferenceInfo, target: AstNode): boolean {
+        const journeyStep = AstUtils.getContainerOfType(context.container, isJourneyStep);
+        if (journeyStep) {
+            return true;
+        }
+        const targetSharedKernel = getOwningSharedKernel(target);
+        if (targetSharedKernel === undefined) {
+            return true;
+        }
+        const sourceSharedKernel = getOwningSharedKernel(context.container);
+        return sourceSharedKernel === targetSharedKernel ||
+            this.referencePolicy.hasSharedKernelRelationship(context.container, targetSharedKernel);
+    }
+
     private isSupportedSpecificationCandidate(context: ReferenceInfo, target: AstNode): boolean {
         if (this.isSpecificationPathContainer(target)) {
-            return true;
+            return this.isSpecificationPathContainerVisible(context, target);
         }
         if (isField(target) && !(
             isEntity(target.$container) || isValueObject(target.$container) || isDomainEvent(target.$container) ||
@@ -1334,7 +1641,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (!(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
             return false;
         }
-        return this.hasPublishedQueryMethodDescendant(target, method);
+        return isMethod(target) && isQueryService(target.$container) &&
+            this.hasPublishedQueryMethodDescendant(target, method);
     }
 
     private hasPublishedQueryMethodDescendant(candidate: AstNode, source: Method): boolean {

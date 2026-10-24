@@ -4269,6 +4269,98 @@ in bounded context Ordering {
         )).toEqual([]);
     });
 
+    test('rejects private entity fields used as non-terminal journey path segments', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        internal: Details
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    value object Details {
+                        publicField: string
+                    }
+                }
+                application service App {
+                    method run()
+                }
+            }
+            actor Customer
+            journey J {
+                by Customer {
+                    invoke C.App.run
+                        when "[[C.Order.Order.internal.publicField]]"
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+        )).toBe(true);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Could not resolve reference to SpecificationTarget named \'publicField\'.'
+        )).toBe(true);
+    });
+
+    test('does not count invalid repositories as duplicate write repositories', async () => {
+        const document = await parse(`
+            bounded context A
+            in bounded context A {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                    value object Details {
+                        note: string
+                    }
+                }
+                repository Invalid {
+                    manages Details
+                }
+                repository Valid {
+                    manages Order
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain('A repository must manage an aggregate-root entity.');
+        expect(messages.some(message => message.includes('already has write repository'))).toBe(false);
+    });
+
+    test('still rejects a second valid write repository for the same aggregate', async () => {
+        const document = await parse(`
+            bounded context A
+            in bounded context A {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                repository First {
+                    manages Order
+                }
+                repository Second {
+                    manages Order
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes("Aggregate 'Order' already has write repository")
+        )).toBe(true);
+    });
+
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

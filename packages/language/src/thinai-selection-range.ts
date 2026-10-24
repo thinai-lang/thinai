@@ -12,13 +12,13 @@ export function createThinaiSelectionRange(
 ): SelectionRange | undefined {
     const root = document.parseResult.value.$cstNode;
     if (!root) {
-        return undefined;
+        return createLineSelectionRange(document, position);
     }
 
     const offset = document.textDocument.offsetAt(position);
     const leaf = CstUtils.findLeafNodeAtOffset(root, offset);
     if (!leaf) {
-        return undefined;
+        return createLineSelectionRange(document, position);
     }
 
     const specification = AstUtils.getContainerOfType(leaf.astNode, isSpecificationText);
@@ -43,6 +43,25 @@ export function createThinaiSelectionRange(
         (parent, range) => SelectionRange.create(range, parent),
         undefined
     );
+}
+
+/**
+ * Whitespace-only positions have no CST leaf. Returning the enclosing line
+ * keeps selection ranges available instead of failing the whole request.
+ */
+function createLineSelectionRange(document: LangiumDocument, position: Position): SelectionRange {
+    const text = document.textDocument.getText();
+    const lineStart = document.textDocument.offsetAt({ line: position.line, character: 0 });
+    const lineEnd = text.indexOf('\n', lineStart);
+    let lineLength = (lineEnd === -1 ? text.length : lineEnd) - lineStart;
+    if (lineLength > 0 && text[lineStart + lineLength - 1] === '\r') {
+        lineLength -= 1;
+    }
+    const lineRange = Range.create(
+        { line: position.line, character: 0 },
+        { line: position.line, character: lineLength }
+    );
+    return SelectionRange.create(lineRange);
 }
 
 function findProjectClause(method: ReturnType<typeof getMethod>, offset: number) {

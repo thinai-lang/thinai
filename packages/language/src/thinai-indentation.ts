@@ -20,9 +20,10 @@ export function inferIndentationOptions(text: string): ThinaiIndentationOptions 
     if (widths.length === 0) {
         return { tabSize: 2, insertSpaces: true };
     }
-    const greatestCommonDivisor = (left: number, right: number): number =>
-        right === 0 ? left : greatestCommonDivisor(right, left % right);
-    const tabSize = widths.reduce((current, width) => greatestCommonDivisor(current, width), widths[0]!);
+    // Continuation clauses can be aligned at arbitrary columns. The smallest
+    // structural indentation is the best fallback for the document's unit;
+    // using the GCD of all widths turns such alignment into a one-space unit.
+    const tabSize = Math.min(...widths);
     return {
         tabSize: tabSize >= 1 && tabSize <= 8 ? tabSize : 2,
         insertSpaces: true
