@@ -3708,6 +3708,176 @@ in bounded context Ordering {
         ]);
     });
 
+    test('rejects entities hidden inside value objects at entity and value-object boundaries', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate B {
+                    root entity B {
+                        identifier id: IdB
+                    }
+                    value object IdB {
+                        raw: string
+                    }
+                    value object Snapshot {
+                        member: B
+                    }
+                }
+                aggregate A {
+                    root entity A {
+                        identifier id: IdA
+                        snapshot: Snapshot
+                        constructor(snapshot: Snapshot) {
+                            invariant "The snapshot is required."
+                        }
+                        method inspect(snapshot: Snapshot) returns Snapshot {
+                            behavior "Inspect the snapshot."
+                        }
+                    }
+                    value object IdA {
+                        raw: string
+                    }
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages.filter(message =>
+            message === 'An aggregate must reference another aggregate through its identifier, not an entity nested in a value object.'
+        )).toHaveLength(1);
+        expect(messages.filter(message =>
+            message === 'Reference another aggregate by its identifier, not by passing its entity instance.'
+        )).toHaveLength(2);
+        expect(messages.filter(message =>
+            message === 'A constructor must reference another aggregate through its identifier, not an entity nested in a value object.'
+        )).toHaveLength(1);
+    });
+
+    test('allows same-aggregate entities nested in aggregate-owned value objects', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate A {
+                    root entity A {
+                        identifier id: IdA
+                        snapshot: Snapshot
+                    }
+                    value object IdA {
+                        raw: string
+                    }
+                    value object Snapshot {
+                        member: A
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+    });
+
+    test('rejects entities hidden inside value objects returned by domain services', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate A {
+                    root entity A {
+                        identifier id: IdA
+                    }
+                    value object IdA {
+                        raw: string
+                    }
+                    value object Snapshot {
+                        member: A
+                    }
+                }
+                domain service Inspector {
+                    method inspect() returns Snapshot
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'Domain-service methods must return domain values, not aggregate entities.'
+        )).toBe(true);
+    });
+
+    test('rejects application-service invocation of context-level value-object methods', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                value object Money {
+                    amount: number
+                    method plus(other: Money) returns Money
+                }
+                application service App {
+                    method run(money: Money) returns Money {
+                        invokes Money.plus
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'An application service may not invoke a value-object method directly; invoke aggregate-root, factory, or domain-service behavior.'
+        )).toBe(true);
+    });
+
+    test('allows module-exposed query services to publish context-level DataObjects', async () => {
+        const document = await parse(`
+            bounded context Api
+            bounded context Consumer
+            in bounded context Api {
+                data object Result {
+                    amount: string
+                }
+                module Services {
+                    exposes Queries
+                    query service Queries {
+                        method find() returns Result
+                    }
+                }
+            }
+            in bounded context Consumer {
+                application service App {
+                    method use() {
+                        reads from Api.Services.Queries.find
+                        behavior "Use [[Api.Result.amount]]."
+                    }
+                }
+            }
+            context map M {
+                customer Consumer -> supplier Api
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+    });
+
+    test('rejects qualified context, subdomain, and shared-kernel paths', async () => {
+        const document = await parse(`
+            subdomain Marketing
+            shared kernel Common {
+                value object V { raw: string }
+            }
+
+            bounded context Ordering
+            bounded context Shipping
+
+            bounded context Billing realizes Ordering.Marketing
+
+            in bounded context Ordering.Shipping {
+                event OrderPlaced
+            }
+
+            context map Paths {
+                customer Ordering.Shipping -> supplier Shipping
+                separateWays Ordering.Shipping -x- Shipping
+                sharedKernel Ordering.Common {
+                    participants: [Ordering.Shipping, Shipping]
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
+        expect(messages.filter(message => message.includes('bounded contexts are top-level declarations'))).toHaveLength(1);
+        expect(messages.filter(message => message.includes('subdomains are top-level declarations'))).toHaveLength(1);
+        expect(messages.filter(message => message.includes('endpoints cannot qualify')).length).toBeGreaterThanOrEqual(4);
+    });
+
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

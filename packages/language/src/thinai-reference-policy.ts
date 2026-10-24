@@ -337,7 +337,10 @@ export class ThinaiReferencePolicy {
                 return false;
             }
             const module = getOwningModule(type);
-            return module !== undefined && isExposedByModule(module, type);
+            // Context-level DataObjects are public by default, just like
+            // context-level integration events and their payload types. Only
+            // module-nested result types need an explicit exposure.
+            return module === undefined || isExposedByModule(module, type);
         });
     }
 

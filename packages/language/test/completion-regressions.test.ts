@@ -777,4 +777,160 @@ in bounded context Ordering {
         const quote = AstUtils.streamAst(document.parseResult.value).filter(isField).find(field => field.name === 'collection');
         expect(getTypeReferences(quote?.type, quote?.collection).map(reference => reference.$refText)).toEqual(['Money']);
     });
+    test('keeps comma lists incomplete instead of offering sibling declarations', async () => {
+        const emissions = await build(`bounded context C
+in bounded context C {
+    event A
+    event B
+    aggregate X {
+        root entity X {
+            method run() {
+                emits A,
+                ${marker}
+            }
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+}`);
+        const emissionLabels = emissions.completion?.items.map(item => item.label) ?? [];
+        expect(emissionLabels).toContain('B');
+        expect(emissionLabels).not.toContain('invariant');
+        expect(emissionLabels).not.toContain('behavior');
+        expect(emissionLabels).not.toContain('emits');
+
+        const transition = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E {
+            method run() {
+                transition status from Draft to
+                ${marker}
+            }
+            identifier id: Id
+            status: S
+        }
+        value object Id { raw: string }
+        enum S { Draft, Placed }
+    }
+}`);
+        const transitionLabels = transition.completion?.items.map(item => item.label) ?? [];
+        expect(transitionLabels).toContain('Placed');
+        expect(transitionLabels).not.toContain('invariant');
+        expect(transitionLabels).not.toContain('emits');
+
+        const reads = await build(`bounded context C
+in bounded context C {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    aggregate B { root entity E { identifier id: Id } value object Id { raw: string } }
+    repository R1 { manages A.E }
+    repository R2 { manages B.E }
+    application service S {
+        method run() {
+            reads from R1,
+            ${marker}
+        }
+    }
+}`);
+        const readLabels = reads.completion?.items.map(item => item.label) ?? [];
+        expect(readLabels).toContain('R2');
+        expect(readLabels).not.toContain('R1');
+        expect(readLabels).not.toContain('behavior');
+
+        const projects = await build(`bounded context C
+in bounded context C {
+    read model M { x: string }
+    read model N { y: string }
+    event A
+    projector P {
+        method on(source: A) {
+            projects M,
+            ${marker}
+        }
+    }
+}`);
+        const projectLabels = projects.completion?.items.map(item => item.label) ?? [];
+        expect(projectLabels).toContain('N');
+        expect(projectLabels).not.toContain('method');
+
+        const realizes = await build(`subdomain A
+subdomain B
+bounded context C realizes A,
+${marker}
+`);
+        const realizeLabels = realizes.completion?.items.map(item => item.label) ?? [];
+        expect(realizeLabels).toContain('B');
+        expect(realizeLabels).not.toContain('bounded context');
+
+        const dependencies = await build(`bounded context C
+in bounded context C {
+    module A { value object X { raw: string } }
+    module B { value object Y { raw: string } }
+    module D depends on A,
+    ${marker}
+    { value object Z { raw: string } }
+}`);
+        const dependencyLabels = dependencies.completion?.items.map(item => item.label) ?? [];
+        expect(dependencyLabels).toContain('B');
+        expect(dependencyLabels).not.toContain('value object');
+    });
+
+    test('keeps completed guard-bearing clauses and their siblings available', async () => {
+        const emissions = await build(`bounded context C
+in bounded context C {
+    event A
+    aggregate X {
+        root entity X {
+            method run() {
+                emits A
+                ${marker}
+            }
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+}`);
+        const emissionLabels = emissions.completion?.items.map(item => item.label) ?? [];
+        expect(emissionLabels).toEqual(expect.arrayContaining(['when', 'invariant', 'behavior', 'invokes']));
+
+        const reads = await build(`bounded context C
+in bounded context C {
+    aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
+    repository R { manages A.E }
+    application service S {
+        method run() {
+            reads from R
+            ${marker}
+        }
+    }
+}`);
+        const readLabels = reads.completion?.items.map(item => item.label) ?? [];
+        expect(readLabels).toEqual(expect.arrayContaining(['when', 'behavior', 'invokes', 'reads from']));
+    });
+
+    test('completes journey path containers as path prefixes, not terminals', async () => {
+        const journey = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Contracts {
+        exposes Result
+        data object Result { status: string }
+    }
+    application service App { method place() returns Contracts.Result }
+    read model Summary { total: number }
+    query service Queries { method find() returns Summary }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke Ordering.App.place with "[[${marker}]]"
+    }
+}`);
+        const items = journey.completion?.items ?? [];
+        const context = items.find(item => item.label === 'Ordering');
+        const service = items.find(item => item.label === 'App');
+        const readModel = items.find(item => item.label === 'Summary');
+        expect(context?.textEdit?.newText).toBe('Ordering.');
+        expect(service?.textEdit?.newText).toBe('App.');
+        expect(readModel?.textEdit?.newText).toBe('Summary');
+    });
 });

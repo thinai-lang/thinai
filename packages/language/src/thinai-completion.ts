@@ -23,6 +23,9 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    isApplicationService,
+    isBoundedContext,
+    isContextMap,
     isContextMapEndpoint,
     isEnumType,
     isEntity,
@@ -37,8 +40,11 @@ import {
     isParameter,
     isProjector,
     isQueryRepository,
+    isQueryService,
+    isReadDependency,
     isReadSourceReference,
     isRepository,
+    isSharedKernel,
     isSharedKernelRelationship,
     isSpecificationTextPart
 } from './generated/ast.js';
@@ -315,11 +321,38 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     ): CompletionValueItem {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
         item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
-        const insertText = formatQualifiedName(nodeDescription.name);
+        let insertText = formatQualifiedName(nodeDescription.name);
+        const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
+        if (target && this.isJourneyPathContinuation(refInfo, target, context)) {
+            insertText = `${insertText}.`;
+        }
         if (insertText !== nodeDescription.name) {
             item.insertText = insertText;
         }
+        if (item.textEdit) {
+            item.textEdit = { ...item.textEdit, newText: insertText };
+        }
         return item;
+    }
+
+    private isJourneyPathContinuation(
+        refInfo: ReferenceInfo,
+        target: AstNode,
+        context: CompletionContext
+    ): boolean {
+        if (!isSpecificationTextPart(refInfo.container) ||
+            !AstUtils.getContainerOfType(refInfo.container, isJourneyStep) ||
+            !this.isJourneyPathOnlyTarget(target)) {
+            return false;
+        }
+        const document = AstUtils.getDocument(refInfo.container);
+        const following = document.textDocument.getText().slice(context.offset);
+        return !/^\s*\./u.test(following);
+    }
+
+    private isJourneyPathOnlyTarget(target: AstNode): boolean {
+        return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) ||
+            isModule(target) || isApplicationService(target) || isQueryService(target);
     }
 
     override async getCompletion(
@@ -388,24 +421,23 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 ? { ...defaultCompletion, items: defaultCompletion.items.filter(item => item.kind !== CompletionItemKind.Keyword) }
                 : defaultCompletion;
         }
-        const optionalClauseCompletions = this.optionalClauseCompletion.getCompletions(document, params.position);
-        if (optionalClauseCompletions.length > 0) {
-            const optionalLabels = new Set(optionalClauseCompletions.map(item => item.label));
-            const items = (defaultCompletion?.items ?? []).filter(item =>
-                typeof item.label !== 'string' || !optionalLabels.has(item.label)
-            );
-            items.push(...optionalClauseCompletions);
-            const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, {
-                isIncomplete: defaultCompletion?.isIncomplete ?? false,
-                items
-            }, optionalClauseCompletions.map(item => item.label));
-            return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
+        const readSourceContinuation = this.getReadSourceContinuationCompletions(document, params.position);
+        if (readSourceContinuation.active) {
+            return { isIncomplete: false, items: readSourceContinuation.items };
         }
+        const incompleteSibling = document.parseResult.value
+            ? this.getLastIncompleteSiblingBeforeOffset(document.parseResult.value, document, params.position)
+            : undefined;
+        const incompleteStatement = incompleteSibling !== undefined ||
+            this.isInsideUnopenedRequiredBlockHeader(document, params.position);
+        const optionalClauseCompletions = this.optionalClauseCompletion.getCompletions(document, params.position);
+        const optionalClauseLabels = new Set(optionalClauseCompletions.map(item => item.label));
         const relationshipContinuations = this.contextMapCompletion.getRelationshipContinuations(document, params.position);
         const hasBoundedContextCandidates = defaultCompletion?.items.some(item =>
             item.detail?.startsWith('BoundedContext ')
         ) === true;
         const constrainedValueCompletions = [
+            ...optionalClauseCompletions,
             ...this.getPartialInitialKeywordCompletions(document, params.position),
             ...this.getIntegrationPatternCompletions(document, params.position),
             ...relationshipContinuations,
@@ -422,14 +454,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 sourceStructure
             ),
             ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
-        ].filter(item => typeof item.label !== 'string' || !constrainedLabels.has(item.label));
-        const blockKeywords = this.blockCompletion.getEnclosingBlockKeywordCompletions(document, params.position);
-        const modelGapKeywords = this.blockCompletion.getModelGapKeywordCompletions(
-            document,
-            params.position,
-            defaultCompletion,
-            inProgressKeywordCompletions
-        );
+        ].filter(item => typeof item.label !== 'string' ||
+            !constrainedLabels.has(item.label) && !optionalClauseLabels.has(item.label));
+        const blockKeywords = incompleteStatement
+            ? []
+            : this.blockCompletion.getEnclosingBlockKeywordCompletions(document, params.position);
+        const modelGapKeywords = incompleteStatement
+            ? []
+            : this.blockCompletion.getModelGapKeywordCompletions(
+                document,
+                params.position,
+                defaultCompletion,
+                inProgressKeywordCompletions
+            );
         const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
         const completionWithBlockKeywords = this.contextMapCompletion.filterKeywords(
             document,
@@ -720,6 +757,77 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return { isIncomplete: completion?.isIncomplete ?? false, items: [...items, ...fallbacks] };
     }
 
+    private getReadSourceContinuationCompletions(
+        document: LangiumDocument,
+        position: Position
+    ): { active: boolean; items: CompletionItem[] } {
+        const root = document.parseResult.value;
+        if (!root) {
+            return { active: false, items: [] };
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const read = AstUtils.streamAst(root)
+            .filter(isReadDependency)
+            .filter(node => this.endsWithTrailingComma(node, text, offset))
+            .toArray()
+            .sort((left, right) => right.$cstNode!.end - left.$cstNode!.end)[0];
+        if (!read) {
+            return { active: false, items: [] };
+        }
+        const lastSource = read.sources.at(-1);
+        const lastTarget = lastSource?.target?.ref;
+        if (!lastSource?.$cstNode || !lastTarget) {
+            // The list is still incomplete even when the last item cannot be
+            // resolved; suppress sibling completions rather than suggesting
+            // unrelated declarations.
+            return { active: true, items: [] };
+        }
+        const context = {
+            container: lastSource,
+            property: 'target',
+            reference: { $refText: '' } as ReferenceInfo['reference']
+        } as ReferenceInfo;
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        const usedTargets = new Set<AstNode>();
+        for (const source of read.sources) {
+            const target = source.target?.ref;
+            if (target) {
+                usedTargets.add(target);
+            }
+        }
+        const descriptions = scopeProvider.filterCompletionCandidates(
+            context,
+            scopeProvider.getScope(context).getAllElements()
+        ).filter(description => {
+            const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+            return target !== undefined && !usedTargets.has(target);
+        }).toArray();
+        const completionContext = this.getLangiumCompletionContext(document, position);
+        return {
+            active: true,
+            items: this.dedupeCompletionCandidates(context, stream(descriptions)).map(description => {
+                const insertText = formatQualifiedName(description.name);
+                const item: CompletionValueItem = {
+                    nodeDescription: description,
+                    kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+                    detail: this.completionDetails.getCompletionDetail(description),
+                    sortText: '0',
+                    insertText
+                };
+                const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
+                return langiumItem ?? {
+                    ...item,
+                    label: description.name,
+                    textEdit: {
+                        range: { start: position, end: position },
+                        newText: insertText
+                    }
+                };
+            }).toArray()
+        };
+    }
+
     private getExposureDeclarationCompletions(
         document: LangiumDocument,
         position: Position,
@@ -923,6 +1031,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         })) {
             return null;
         }
+        if (this.getLastIncompleteSiblingBeforeOffset(model, document, position)) {
+            return null;
+        }
         const currentLine = position.line;
         const text = document.textDocument.getText();
         const lineStart = getLineStartOffset(document, offset);
@@ -1051,17 +1162,89 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private isAfterTrailingComma(model: AstNode, text: string, offset: number): boolean {
         return AstUtils.streamAst(model).some(node => {
-            const cstNode = node.$cstNode;
-            if (!cstNode || cstNode.end > offset || !isLineSeparatedSibling(node)) {
+            if (!isLineSeparatedSibling(node)) {
                 return false;
             }
-            const trailing = text.slice(cstNode.end, offset);
-            if (/[\r\n]/u.test(trailing)) {
-                return false;
-            }
-            const source = text.slice(cstNode.offset, cstNode.end);
-            return source.trimEnd().endsWith(',') && !this.hasUnterminatedStringLiteral(source);
+            return this.endsWithTrailingComma(node, text, offset);
         });
+    }
+
+    private endsWithTrailingComma(node: AstNode, text: string, offset: number): boolean {
+        const cstNode = node.$cstNode;
+        if (!cstNode || cstNode.end > offset) {
+            return false;
+        }
+        // The next list item may be on a later line. The comma still requires
+        // another item, so whitespace (including newlines) is a valid gap.
+        if (text.slice(cstNode.end, offset).trim().length > 0) {
+            return false;
+        }
+        const source = text.slice(cstNode.offset, cstNode.end).trimEnd();
+        return source.endsWith(',') && !this.hasUnterminatedStringLiteral(source);
+    }
+
+    private isInsideUnopenedRequiredBlockHeader(document: LangiumDocument, position: Position): boolean {
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        for (const node of AstUtils.streamAst(root)) {
+            const cstNode = node.$cstNode;
+            if (!cstNode || cstNode.offset > offset || cstNode.end < offset ||
+                getSiblingStatementPolicy(node.$type).block !== 'required') {
+                continue;
+            }
+            const openingBrace = GrammarUtils.findNodeForKeyword(cstNode, '{');
+            if ((!openingBrace || openingBrace.offset > offset) &&
+                text.slice(cstNode.offset, offset).trim().length > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private getLastIncompleteSiblingBeforeOffset(
+        model: AstNode,
+        document: LangiumDocument,
+        position: Position
+    ): AstNode | undefined {
+        const offset = document.textDocument.offsetAt(position);
+        const text = document.textDocument.getText();
+        const lastByContainer = new Map<AstNode, AstNode>();
+        for (const node of AstUtils.streamAst(model)) {
+            const cstNode = node.$cstNode;
+            if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset) {
+                continue;
+            }
+            if (this.isPartialSiblingKeywordNode(node, document, position)) {
+                lastByContainer.delete(node.$container!);
+                continue;
+            }
+            const openingBrace = GrammarUtils.findNodeForKeyword(cstNode, '{');
+            const closingBrace = [...CstUtils.flattenCst(cstNode)].reverse()
+                .find(leaf => leaf.text === '}');
+            const insideUnclosedBlock = isBlockNodeType(node.$type) &&
+                openingBrace !== undefined && openingBrace.offset < offset &&
+                (closingBrace === undefined || closingBrace.offset >= offset);
+            if (insideUnclosedBlock) {
+                // The cursor is already inside this block; only its direct
+                // children can be the current statement.
+                continue;
+            }
+            const previous = lastByContainer.get(node.$container!);
+            if (!previous || cstNode.end > previous.$cstNode!.end) {
+                lastByContainer.set(node.$container!, node);
+            }
+        }
+        for (const node of lastByContainer.values()) {
+            if (this.endsWithTrailingComma(node, text, offset) ||
+                !this.isCompleteSameLineSibling(node, document, position)) {
+                return node;
+            }
+        }
+        return undefined;
     }
 
     private isOpenBlockContainerAtCursor(node: AstNode, source: string): boolean {

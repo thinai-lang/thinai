@@ -49,6 +49,12 @@ export class ThinaiModelValidator {
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {
         const targetContext = part.context?.ref;
+        if (part.contextPath.length > 0) {
+            accept('error', 'A bounded-context contribution cannot qualify its context; bounded contexts are top-level declarations.', {
+                node: part,
+                property: 'contextPath'
+            });
+        }
         if (!targetContext) {
             return;
         }
@@ -287,6 +293,7 @@ export class ThinaiModelValidator {
         if (!isSyntacticallyComplete(relationship)) {
             return;
         }
+        this.checkContextPathQualification(relationship, accept);
         const endpoints = this.getContextMapEndpoints(relationship);
         const sharedKernelRelationship = isSharedKernelRelationship(relationship);
         const contexts = sharedKernelRelationship
@@ -424,6 +431,46 @@ export class ThinaiModelValidator {
         return importDeclaration
             ? { node: importDeclaration, property: 'path' }
             : { node: model };
+    }
+
+    private checkContextPathQualification(relationship: ContextRelationship, accept: ValidationAcceptor): void {
+        const checkPath = (paths: readonly unknown[], property: string): void => {
+            if (paths.length > 0) {
+                accept('error', 'Context-map endpoints cannot qualify contexts, subdomains, or shared kernels; these declarations are top-level.', {
+                    node: relationship,
+                    property
+                });
+            }
+        };
+        if (isCustomerSupplierRelationship(relationship)) {
+            const endpoints: Array<[string, typeof relationship.customer]> = [
+                ['customer', relationship.customer],
+                ['supplier', relationship.supplier]
+            ];
+            for (const [property, endpoint] of endpoints) {
+                if (endpoint) {
+                    checkPath(endpoint.contextPath, property);
+                }
+            }
+        } else if (isPartnershipRelationship(relationship)) {
+            const endpoints: Array<[string, typeof relationship.left]> = [
+                ['left', relationship.left],
+                ['right', relationship.right]
+            ];
+            for (const [property, endpoint] of endpoints) {
+                if (endpoint) {
+                    checkPath(endpoint.contextPath, property);
+                }
+            }
+        } else if (isSeparateWaysRelationship(relationship)) {
+            checkPath(relationship.leftPath, 'leftPath');
+            checkPath(relationship.rightPath, 'rightPath');
+        } else if (isSharedKernelRelationship(relationship)) {
+            checkPath(relationship.sharedKernelPath, 'sharedKernelPath');
+            for (const participant of relationship.participants) {
+                checkPath(participant.path, 'participants');
+            }
+        }
     }
 
     private getContextMapEndpoints(relationship: ContextRelationship): ContextMapEndpoint[] {

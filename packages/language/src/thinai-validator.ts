@@ -172,6 +172,12 @@ export class ThinaiValidator {
         this.modelValidator.checkBoundedContext(context, accept);
         const seen = new Set<AstNode>();
         for (const reference of context.subdomains) {
+            if (reference.path.length > 0) {
+                accept('error', 'A realized subdomain cannot be qualified; subdomains are top-level declarations.', {
+                    node: reference,
+                    property: 'path'
+                });
+            }
             const target = reference.target.ref;
             if (!target) {
                 continue;
@@ -328,6 +334,16 @@ export class ThinaiValidator {
                 const targetAggregate = target && isEntity(target) ? getOwningAggregate(target) : undefined;
                 if (targetAggregate && targetAggregate !== sourceAggregate) {
                     accept('error', 'An aggregate must reference another aggregate through its identifier, not its entity.', {
+                        node: field,
+                        property: 'type'
+                    });
+                    break;
+                }
+                const nestedEntity = this.findNestedEntity(target);
+                if (nestedEntity && getOwningAggregate(nestedEntity) !== sourceAggregate) {
+                    accept('error', sourceAggregate
+                        ? 'An aggregate must reference another aggregate through its identifier, not an entity nested in a value object.'
+                        : 'A value object must not reference entity instances, including entities nested in another value object.', {
                         node: field,
                         property: 'type'
                     });
@@ -609,6 +625,18 @@ export class ThinaiValidator {
             } else if (isEntity(method.$container) || isValueObject(method.$container)) {
                 this.checkEntityBoundaryUse(method, returnTypes, accept, 'returnType',
                     getOwningAggregate(method) ? 'aggregate' : 'value-object');
+                const sourceAggregate = getOwningAggregate(method);
+                const nestedEntity = returnTypes
+                    .map(reference => this.findNestedEntity(reference.ref))
+                    .find((target): target is Entity => target !== undefined);
+                if (nestedEntity && getOwningAggregate(nestedEntity) !== sourceAggregate) {
+                    accept('error', sourceAggregate
+                        ? 'Reference another aggregate by its identifier, not by passing its entity instance.'
+                        : 'Value-object signatures must use identifiers or domain values, not entity instances.', {
+                        node: method,
+                        property: 'returnType'
+                    });
+                }
             }
             this.checkReadModelTypeUse(method, returnTypes, accept, 'returnType', queryService !== undefined);
             if (isDomainService(method.$container)) {
@@ -620,6 +648,15 @@ export class ThinaiValidator {
                     'Domain-service methods must return domain values, not DataObjects.'
                 );
                 if (returnTypes.some(reference => isEntity(reference.ref))) {
+                    accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
+                        node: method,
+                        property: 'returnType'
+                    });
+                }
+                const nestedEntity = returnTypes
+                    .map(reference => this.findNestedEntity(reference.ref))
+                    .find((target): target is Entity => target !== undefined);
+                if (nestedEntity) {
                     accept('error', 'Domain-service methods must return domain values, not aggregate entities.', {
                         node: method,
                         property: 'returnType'
@@ -968,6 +1005,15 @@ export class ThinaiValidator {
                     property: 'type'
                 });
             }
+            const nestedEntity = typeReferences
+                .map(reference => this.findNestedEntity(reference.ref))
+                .find((target): target is Entity => target !== undefined);
+            if (nestedEntity && getOwningAggregate(nestedEntity) !== sourceAggregate) {
+                accept('error', 'A constructor must reference another aggregate through its identifier, not an entity nested in a value object.', {
+                    node: parameter,
+                    property: 'type'
+                });
+            }
         }
     }
 
@@ -1054,6 +1100,18 @@ export class ThinaiValidator {
                         ? 'Entity method signatures must use domain values, not DataObjects.'
                         : 'Value-object signatures must use domain values, not DataObjects.'
                 );
+                const sourceAggregate = getOwningAggregate(owner);
+                const nestedEntity = typeReferences
+                    .map(reference => this.findNestedEntity(reference.ref))
+                    .find((target): target is Entity => target !== undefined);
+                if (nestedEntity && getOwningAggregate(nestedEntity) !== sourceAggregate) {
+                    accept('error', sourceAggregate
+                        ? 'Reference another aggregate by its identifier, not by passing its entity instance.'
+                        : 'Value-object signatures must use identifiers or domain values, not entity instances.', {
+                        node: parameter,
+                        property: 'type'
+                    });
+                }
             }
             // Domain services deliberately allow entity/aggregate parameters (DDD domain services).
             // Projector parameters are constrained to a single event by checkMethod.
@@ -1135,6 +1193,31 @@ export class ThinaiValidator {
                 property
             });
         }
+    }
+
+    /**
+     * Finds an entity nested inside a value-object shape. The root type itself
+     * is not reported; direct entity references are handled separately so the
+     * more specific boundary diagnostic wins.
+     */
+    private findNestedEntity(type: AstNode | undefined, visited = new Set<AstNode>()): Entity | undefined {
+        if (!type || visited.has(type) || !isValueObject(type)) {
+            return undefined;
+        }
+        visited.add(type);
+        for (const field of type.fields) {
+            for (const reference of getTypeReferences(field.type, field.collection)) {
+                const target = reference.ref;
+                if (isEntity(target)) {
+                    return target;
+                }
+                const nested = this.findNestedEntity(target, visited);
+                if (nested) {
+                    return nested;
+                }
+            }
+        }
+        return undefined;
     }
 
     /**

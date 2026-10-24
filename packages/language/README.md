@@ -106,13 +106,15 @@ entity; domain services, repositories, and factories are bounded-context or
 module peers of aggregates. Application services orchestrate use cases and may coordinate
 multiple aggregates; methods with an event-typed parameter are event-triggered.
 Bounded-context-scoped query services model read-only operations. Application
-service methods may link to aggregate-root or factory methods with `invokes`.
+service methods may link to aggregate-root, factory, or domain-service methods with `invokes`; they must not invoke value-object methods directly.
 Repository loading/saving and transaction mechanics are implementation details.
 Factories and context-level value objects use identifiers and domain values
-rather than entity instances. A factory that needs another aggregate uses its
+rather than entity instances. Entity references are rejected recursively,
+including entities nested inside value-object shapes, unless both belong to the
+same aggregate. A factory that needs another aggregate uses its
 identifier or a value-object snapshot; if its input comes from a DataObject, an
 application service maps that DataObject into domain values first. Domain
-services may accept aggregate or entity parameters because they model domain
+services may accept aggregate-root or entity parameters because they model domain
 operations, but their signatures use domain values rather than DataObjects.
 Method and constructor signatures follow this table:
 
@@ -125,7 +127,7 @@ Method and constructor signatures follow this table:
 | Aggregate-owned value-object method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
 | Context-level value-object method | Domain values; no entities, DataObjects, events, or read models | Domain values |
 | Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | Its own aggregate root only |
-| Domain-service method | Entity/aggregate parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
+| Domain-service method | Entity or aggregate-root entity parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
 | Application-service method | Domain values and DataObjects; no entities or read models; event handlers have exactly one event parameter and no other parameters | Domain values and DataObjects; no entities or read models |
 | Query-service method | Domain values and DataObjects; no entities, read models, or events | Domain values, DataObjects, and read models; no entities |
 | Projector method | Exactly one domain or integration event | No return; only `projects` targets |
@@ -140,6 +142,8 @@ domain event. Payload mapping is described in `behavior` text, not expressions.
 Application-service methods may invoke other methods in the same application
 service; the invoked method must itself obey the aggregate-boundary rules. Only
 an event handler may dispatch to a command in a different application service.
+Application services must not invoke value-object methods directly; model a
+calculation as domain-service behavior or aggregate behavior instead.
 
 An aggregate may declare at most one write repository; repository declarations
 are optional and use blocks:
@@ -176,12 +180,16 @@ still describe query-repository output. A read model remains a query-result shap
 not necessarily a materialized projection or separate database.
 Local query methods may return primitives, data objects, read models, domain
 values such as value objects and enums, or collections of those results.
-Published cross-context query APIs expose primitives or explicitly exposed
-data-object contracts. In non-journey method prose, link the published result
+Published cross-context query APIs expose primitives or public data-object
+contracts (context-level DataObjects or DataObjects exposed by their module).
+In non-journey method prose, link the published result
 type or field rather than the query operation itself; journeys may link
 visible application and query operations as timeline entries. Data objects are
 identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.
+Read-model fields may use primitives, value objects, enums, or other read
+models, but not DataObjects. Read models are projection shapes rather than
+application-service boundary shapes.
 Use value objects or identifiers inside entity, value-object, factory, and
 domain-service methods and constructors; DataObjects belong at application and
 query boundaries.
@@ -200,7 +208,7 @@ in bounded context Shipping {
       invokes Shipment.Shipment.start
     }
 
-    method onOrderPlaced(source: Ordering.OrderPlacedV1) {
+    method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {
       invokes createShipment
       behavior "Map the incoming event to the local command input."
     }
@@ -267,13 +275,14 @@ edges. A client that depends on the outer module can use the nested module's
 exposed declarations without a separate dependency. `depends on` is not a
 re-export. Direct dependencies on nested modules remain valid. A module may use
 its own exposed nested module's public API without a redundant dependency; use
-`depends on` when it needs non-public internal members. A module may expose only
+`depends on` when the nested module itself is not exposed by its parent, while
+still exposing every declaration you reference. A module may expose only
 its direct child modules and declarations, so deep re-export requires each level
 to expose the next; terminal declarations must still be exposed by their owning
 module. Exposing a query service publishes the operations whose result is a
-primitive or an explicitly exposed DataObject; operations returning read models,
-value objects, enums, or unexposed data objects remain local. Cross-context
-consumers require a module-exposed query service with a primitive or exposed
+primitive or a public DataObject (context-level or exposed by its module); operations returning read models,
+value objects, enums, or unexposed module-nested data objects remain local. Cross-context
+consumers require a module-exposed query service with a primitive or public
 DataObject result; a context-level query service is local and journey-visible
 only. Direct module-to-module method references still require the method itself
 to be exposed. Published query DataObjects expose their nested DataObject, value

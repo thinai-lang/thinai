@@ -1,6 +1,6 @@
 import type { AstNode } from 'langium';
 import type { Aggregate, ApplicationService, Method, Parameter, QueryService, SharedKernel } from './generated/ast.js';
-import { isApplicationService, isDomainService, isEntity, isFactory, isProjector, isQueryService } from './generated/ast.js';
+import { isApplicationService, isDomainService, isEntity, isFactory, isProjector, isQueryService, isValueObject } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
 import { getOwningModule, isExposedByModule } from './thinai-scope-utils.js';
 
@@ -50,6 +50,10 @@ export function getMethodInvocationViolations(
     }
     const targetAggregate = context.getOwningAggregate(target);
     const targetIsAggregateRoot = targetAggregate !== undefined && context.isAggregateRootMethod(target, targetAggregate);
+    if (applicationService && isValueObject(target.$container) &&
+        !context.isCrossContextOwned(method, target)) {
+        return ['An application service may not invoke a value-object method directly; invoke aggregate-root, factory, or domain-service behavior.'];
+    }
     const sourceAggregate = context.getOwningAggregate(method);
     if (isDomainService(method.$container) && (targetAggregate !== undefined || reachable.some(candidate =>
         context.getOwningAggregate(candidate) !== undefined
