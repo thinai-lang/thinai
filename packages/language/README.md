@@ -137,6 +137,9 @@ existing allowance for same-aggregate entity references.
 Integration-event declarations define public schemas;
 the application-service method can `emits` a contract in response to a local
 domain event. Payload mapping is described in `behavior` text, not expressions.
+Application-service methods may invoke other methods in the same application
+service; the invoked method must itself obey the aggregate-boundary rules. Only
+an event handler may dispatch to a command in a different application service.
 
 An aggregate may declare at most one write repository; repository declarations
 are optional and use blocks:
@@ -174,7 +177,10 @@ not necessarily a materialized projection or separate database.
 Local query methods may return primitives, data objects, read models, domain
 values such as value objects and enums, or collections of those results.
 Published cross-context query APIs expose primitives or explicitly exposed
-data-object contracts. Data objects are identity-free input/output shapes; they may nest value objects,
+data-object contracts. In non-journey method prose, link the published result
+type or field rather than the query operation itself; journeys may link
+visible application and query operations as timeline entries. Data objects are
+identity-free input/output shapes; they may nest value objects,
 enums, collections, and other data objects, but not entities or read models.
 Use value objects or identifiers inside entity, value-object, factory, and
 domain-service methods and constructors; DataObjects belong at application and
@@ -252,7 +258,10 @@ declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
 Only the terminal declaration in a qualified path must be exposed; structural
 containers such as an aggregate, entity, or service used as path segments do not
-need separate exposures. Exposing a nested module re-exports that module's
+need separate exposures. An identifier value object referenced by a `mirrors`
+declaration is an explicit exception: the mirror may name an identifier that is
+private to its module, because the local mirror is the sanctioned cross-context
+use. Exposing a nested module re-exports that module's
 public API through the enclosing module, recursively through explicit exposure
 edges. A client that depends on the outer module can use the nested module's
 exposed declarations without a separate dependency. `depends on` is not a
@@ -261,8 +270,12 @@ its own exposed nested module's public API without a redundant dependency; use
 `depends on` when it needs non-public internal members. A module may expose only
 its direct child modules and declarations, so deep re-export requires each level
 to expose the next; terminal declarations must still be exposed by their owning
-module. Exposing a query service publishes its query
-API; direct module-to-module method references still require the method itself
+module. Exposing a query service publishes the operations whose result is a
+primitive or an explicitly exposed DataObject; operations returning read models,
+value objects, enums, or unexposed data objects remain local. Cross-context
+consumers require a module-exposed query service with a primitive or exposed
+DataObject result; a context-level query service is local and journey-visible
+only. Direct module-to-module method references still require the method itself
 to be exposed. Published query DataObjects expose their nested DataObject, value
 object, and enum shape, including enum values; aggregate-owned contract types
 produce a warning. Journeys are model-level timelines and do not require either
@@ -283,8 +296,13 @@ inside an entity or value object may refer to that enclosing object's fields and
 methods by their bare names; fields or methods on other objects require an
 owner-qualified path, such as `[[Order.Order.customerId]]` or
 `[[Order.Order.ensureOwner]]`. Operation inputs and results use their named
-roots, such as `[[input.orderId]]` and `[[result.status]]`. The name `result` is
-reserved for the operation result and cannot be used for a parameter. Factory
+roots, such as `[[input.orderId]]` and `[[result.status]]`; the canonical form is
+required for the current result binding. Where a method's result shape is
+visible, a method path may also continue through it directly, such as
+`[[Command.status]]`, as a compatibility convenience. The name `result` is reserved for the operation result on methods
+that declare a result or are application-service commands; it cannot be used as
+a parameter there, but remains available on constructors and on other
+non-returning methods. Factory
 creation methods are ordinary methods that return their aggregate root. A
 method may emit multiple events; their declaration order is significant.
 Use triple double quotes for multiline specifications; keep single or double
@@ -297,7 +315,8 @@ remain accepted for compatibility.
 
 Journeys are top-level, actor-led timelines of user-invoked application-service
 commands that may cross bounded contexts. Declare each `actor` once at model
-scope, then reference it in a `by Actor { ... }` block. A journey does not
+scope, then reference it in a `by Actor { ... }` block. Each actor may have at
+most one `by` block per journey. A journey does not
 represent background event handoffs, a synchronous remote call, or a shared
 transaction; event-triggered reactions remain in their contexts. Steps may
 include optional descriptive `with "..."` input text and `when "..."` guard
@@ -306,7 +325,9 @@ text with linked references; commands enforce their own invariants.
 A journey is a model-level command timeline, not a module or a bounded context.
 Steps are ordered in source order across actor blocks. A later step's `with` or
 `when` prose may refer to inputs or results of earlier command invocations.
-The current command's result becomes visible only to later steps. References to
+The current command's result becomes visible only to later steps. A command
+operation invoked later in the same journey is not visible from an earlier step;
+public operations not scheduled later remain linkable. References to
 a command result name the nearest earlier invocation of that command; a journey
 that invokes the same command more than once produces a warning because those
 references are inherently ambiguous. The language deliberately has no step
@@ -340,7 +361,9 @@ still require module exposure. Integration events follow their usual rule:
 context-level events are public, and module-nested events require exposure.
 Journey prose may also link visible read models, query results, data
 objects, value objects, enums, public integration events, and user-facing
-operations from imported contexts. `with` describes the inputs of the step;
+operations from imported contexts. Links follow the journey timeline: a command
+operation invoked later in the same journey is not visible from an earlier
+step. `with` describes the inputs of the step;
 `when` describes the conditions under which the command is invoked. Both are
 descriptive prose, not executable expressions.
 

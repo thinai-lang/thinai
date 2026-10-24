@@ -70,7 +70,7 @@ export function getMethodInvocationViolations(
     if (applicationService && !isApplicationService(target.$container) &&
         (reachable.some(candidate => isApplicationService(candidate.$container)) ||
             (!targetIsAggregateRoot && reachable.some(candidate => context.getOwningAggregate(candidate) !== undefined)))) {
-        violations.push('Application services must invoke aggregate-root behavior directly, not through another method call chain.');
+        violations.push('Application services must reach aggregate-root behavior directly, not through a non-application-service method chain.');
     }
     if (isFactory(target.$container) && !applicationService && !isDomainService(method.$container)) {
         violations.push('Only an application service may invoke a factory method.');

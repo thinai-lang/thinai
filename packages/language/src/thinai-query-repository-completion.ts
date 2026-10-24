@@ -15,7 +15,7 @@ import {
 } from './generated/ast.js';
 import { getBlockNestingDepth } from './thinai-layout.js';
 import { scanThinaiSource, type ThinaiSourceStructure } from './thinai-source-scanner.js';
-import { hasReferenceText } from './thinai-ast-utils.js';
+import { hasReferenceTarget } from './thinai-ast-utils.js';
 import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
 
 export function findQueryRepositoryAtOffset(
@@ -68,7 +68,7 @@ export class ThinaiQueryRepositoryCompletion {
         const repository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
         const servedReference = repository?.readModel;
         const referenceEnd = servedReference?.$refNode?.end;
-        if (!repository || !hasReferenceText(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
+        if (!repository || !hasReferenceTarget(servedReference) || referenceEnd === undefined || offset < referenceEnd) {
             return [];
         }
         const betweenServeAndCursor = text.slice(referenceEnd, offset);
@@ -173,7 +173,8 @@ export function isQueryRepositoryReadCompletionPosition(document: LangiumDocumen
     const repository = findQueryRepositoryAtOffset(document, offset);
     const servedReference = repository?.readModel;
     const referenceEnd = servedReference?.$refNode?.end;
-    return repository !== undefined && typeof servedReference?.$refText === 'string' &&
-        servedReference.$refText.length > 0 && referenceEnd !== undefined && offset >= referenceEnd &&
+    return repository !== undefined && servedReference !== undefined && hasReferenceTarget(servedReference) &&
+        typeof servedReference.$refText === 'string' && servedReference.$refText.length > 0 &&
+        referenceEnd !== undefined && offset >= referenceEnd &&
         repository.sources.length === 0 && /^[\t \r\n]*$/u.test(text.slice(referenceEnd, offset));
 }

@@ -28,6 +28,34 @@ export function areRelationshipPairDefinitionsCompatible(
     return left.signature === right.signature;
 }
 
+export function createRelationshipPairSemantics(
+    kind: Exclude<ContextRelationshipPairKind, 'sharedKernel'>,
+    left: BoundedContext,
+    right: BoundedContext
+): ContextRelationshipPairSemantics | undefined {
+    if (left === right) {
+        return undefined;
+    }
+    const contexts = [left.name, right.name].sort();
+    const key = JSON.stringify(contexts);
+    let identity: unknown[];
+    let signature: unknown[];
+    if (kind === 'customerSupplier') {
+        identity = ['customerSupplier', left.name, right.name];
+        signature = ['customerSupplier', left.name, right.name];
+    } else {
+        identity = [kind, ...contexts];
+        signature = [kind, ...contexts];
+    }
+    return {
+        key,
+        identity: JSON.stringify(identity),
+        signature: JSON.stringify(signature),
+        kind,
+        name: contexts.map(name => `'${name}'`).join(' and ')
+    };
+}
+
 export function getRelationshipPairSemantics(relationship: ContextRelationship): ContextRelationshipPairSemantics[] {
     const createPair = (
         left: BoundedContext,

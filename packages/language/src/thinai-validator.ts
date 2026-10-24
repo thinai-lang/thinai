@@ -1318,7 +1318,7 @@ export class ThinaiValidator {
                     });
                 } else if (isTerminalSpecificationSegment &&
                     !this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind)) {
-                    accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.', {
+                    accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.', {
                         node: referenceInfo.container as AstNode,
                         property: referenceInfo.property
                     });
@@ -1367,9 +1367,14 @@ export class ThinaiValidator {
                     return;
                 }
             }
-            if (isSpecificationTextPart(referenceInfo.container) && target.$type === 'Method' &&
+            if (isSpecificationTextPart(referenceInfo.container) && isMethod(target) &&
                 crossesContext && !isInSharedKernel(target)) {
-                accept('error', 'Specification text cannot reference a private method from another bounded context.', {
+                const publishedQuery = isQueryService(target.$container) &&
+                    this.referencePolicy.isQueryServiceExposed(target.$container) &&
+                    this.referencePolicy.isExposedQueryResult(target);
+                accept('error', publishedQuery
+                    ? 'Specification text cannot link a cross-context query operation directly; link its published result type or field instead.'
+                    : 'Specification text cannot reference a private method from another bounded context.', {
                     node: referenceInfo.container as AstNode,
                     property: referenceInfo.property
                 });

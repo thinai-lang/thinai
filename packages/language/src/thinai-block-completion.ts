@@ -240,7 +240,7 @@ export class ThinaiBlockCompletion {
         }
         const siblingStart = sibling.$cstNode?.offset;
         const siblingSource = text.slice(siblingStart ?? end, end).trimEnd();
-        const endsWithIdentifier = /[\p{L}\p{N}_]$/u.test(siblingSource);
+        const endsWithIdentifier = /[\p{L}\p{N}_`-]$/u.test(siblingSource);
         if (gap.length === 0 && getSiblingStatementPolicy(sibling.$type).bareNameBoundary && endsWithIdentifier) {
             return [];
         }

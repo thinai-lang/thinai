@@ -39,3 +39,8 @@ export function hasReferenceText(reference: unknown): boolean {
     return typeof reference === 'object' && reference !== null &&
         '$refText' in reference && typeof reference.$refText === 'string' && reference.$refText.length > 0;
 }
+
+export function hasReferenceTarget(reference: unknown): boolean {
+    return typeof reference === 'object' && reference !== null &&
+        'ref' in reference && (reference as { ref?: unknown }).ref !== undefined;
+}

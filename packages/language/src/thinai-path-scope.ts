@@ -37,6 +37,7 @@ import {
     type ValueObject
 } from './generated/ast.js';
 import { getTypeReferences } from './thinai-type-utils.js';
+import { unquoteIdentifier } from './thinai-identifiers.js';
 
 type FieldShape = DataObject | DomainEvent | Entity | IntegrationEvent | ReadModel | ValueObject;
 
@@ -300,7 +301,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (withoutKeyword.length === 0) {
             return [];
         }
-        const segments = withoutKeyword.split('.').map(segment => segment.trim());
+        const segments = withoutKeyword.split('.').map(segment => unquoteIdentifier(segment));
         if (!withoutKeyword.endsWith('.')) {
             segments.pop();
         }

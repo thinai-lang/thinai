@@ -31,6 +31,7 @@ import {
     type Transition,
     type TransitionChange,
     type ValueObject,
+    type BoundedContext,
     isAggregate,
     isConstructor,
     isBoundedContext,
@@ -42,6 +43,8 @@ import {
     isFactory,
     isField,
     isEnumValue,
+    isJourney,
+    isJourneyActor,
     isJourneyStep,
     isIntegrationEvent,
     isEventReference,
@@ -73,10 +76,17 @@ import {
     isSpecificationTextPart,
     isQueryService,
     isParameter,
+    isSubdomainReference,
     isValueObject
 } from './generated/ast.js';
 import { getMethodInvocationViolations } from './thinai-method-invocation-policy.js';
 import { isJourneyCommand } from './thinai-operation-utils.js';
+import {
+    areRelationshipPairDefinitionsCompatible,
+    createRelationshipPairSemantics,
+    getRelationshipPairSemantics,
+    type ContextRelationshipPairKind
+} from './thinai-context-map-utils.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiPathScope } from './thinai-path-scope.js';
 import {
@@ -698,6 +708,20 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
 
+        if (isJourneyActor(context.container) && context.property === 'actor') {
+            const journey = context.container.$container;
+            return !isJourney(journey) || !journey.actors.some(actorBlock =>
+                actorBlock !== context.container && actorBlock.actor?.ref === target
+            );
+        }
+
+        if (isSubdomainReference(context.container) && context.property === 'target') {
+            const boundedContext = context.container.$container;
+            return !isBoundedContext(boundedContext) || !boundedContext.subdomains.some(reference =>
+                reference !== context.container && reference.target?.ref === target
+            );
+        }
+
         const exposure = AstUtils.getContainerOfType(context.container, isExposure);
         const declarationReference = exposure
             ? undefined
@@ -786,8 +810,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isAggregateReference(context.container)) {
-            return isAggregate(target) && isQueryRepository(context.container.$container) &&
-                getOwningContextName(target) === getOwningContextName(context.container);
+            const repository = context.container.$container;
+            return isAggregate(target) && isQueryRepository(repository) &&
+                getOwningContextName(target) === getOwningContextName(context.container) &&
+                !repository.sources.some(source =>
+                    source !== context.container && source.target?.ref === target
+                );
         }
 
         if (isReadModelReference(context.container)) {
@@ -866,25 +894,50 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return true;
         }
         const container = context.container;
+        let kind: Exclude<ContextRelationshipPairKind, 'sharedKernel'> | undefined;
+        let otherContext: BoundedContext | undefined;
+        let relationship: AstNode | undefined;
         if (container.$type === 'ContextMapEndpoint' && context.property === 'context') {
-            const relationship = container.$container;
-            if (isCustomerSupplierRelationship(relationship)) {
-                const otherEndpoint = relationship.customer === container ? relationship.supplier : relationship.customer;
-                return otherEndpoint.context?.ref !== target;
+            const parent = container.$container;
+            if (isCustomerSupplierRelationship(parent)) {
+                const otherEndpoint = parent.customer === container ? parent.supplier : parent.customer;
+                kind = 'customerSupplier';
+                otherContext = otherEndpoint.context?.ref;
+                relationship = parent;
+            } else if (isPartnershipRelationship(parent)) {
+                const otherEndpoint = parent.left === container ? parent.right : parent.left;
+                kind = 'partnership';
+                otherContext = otherEndpoint.context?.ref;
+                relationship = parent;
             }
-            if (isPartnershipRelationship(relationship)) {
-                const otherEndpoint = relationship.left === container ? relationship.right : relationship.left;
-                return otherEndpoint.context?.ref !== target;
-            }
+        } else if (isSeparateWaysRelationship(container) && (context.property === 'left' || context.property === 'right')) {
+            kind = 'separateWays';
+            otherContext = context.property === 'left' ? container.right?.ref : container.left?.ref;
+            relationship = container;
         }
-        if (isSeparateWaysRelationship(container) && (context.property === 'left' || context.property === 'right')) {
-            const otherContext = context.property === 'left' ? container.right?.ref : container.left?.ref;
-            return otherContext !== target;
+        if (kind !== undefined) {
+            if (otherContext === target) {
+                return false;
+            }
+            const contextMap = relationship ? AstUtils.getContainerOfType(relationship, isContextMap) : undefined;
+            if (contextMap && otherContext) {
+                const prospective = createRelationshipPairSemantics(kind, otherContext, target);
+                if (!prospective) {
+                    return false;
+                }
+                const existing = contextMap.relationships.flatMap(relationship => getRelationshipPairSemantics(relationship));
+                if (existing.some(pair => pair.key === prospective.key &&
+                    (pair.identity === prospective.identity ||
+                        !areRelationshipPairDefinitionsCompatible(pair, prospective)))) {
+                    return false;
+                }
+            }
+            return true;
         }
         if (container.$type === 'BoundedContextReference' && context.property === 'target' &&
             isSharedKernelRelationship(container.$container)) {
-            const relationship = container.$container;
-            return !relationship.participants.some(participant =>
+            const parent = container.$container;
+            return !parent.participants.some(participant =>
                 participant !== container && participant.target?.ref === target
             );
         }
@@ -926,8 +979,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 }
                 if (!isInSharedKernel(target)) {
                     const targetModule = getOwningModule(target);
-                    if (!targetModule || (!isValueObject(target) && !isEnumType(target)) ||
-                        !isExposedByModule(targetModule, target)) {
+                    if (targetModule !== undefined &&
+                        ((!isValueObject(target) && !isEnumType(target)) ||
+                            !isExposedByModule(targetModule, target))) {
                         return false;
                     }
                 }

@@ -21,7 +21,11 @@ import { canDeclareProjects, canDeclareTransition, getEventEmissionMode } from '
 import { getSiblingCompletionKeywords } from './thinai-layout.js';
 import { isInSharedKernel } from './thinai-scope-utils.js';
 import { hasReferenceText } from './thinai-ast-utils.js';
+import { THINAI_IDENTIFIER_SOURCE, THINAI_QUALIFIED_IDENTIFIER_SOURCE } from './thinai-identifiers.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
+
+const identifierSource = THINAI_IDENTIFIER_SOURCE;
+const qualifiedIdentifierSource = THINAI_QUALIFIED_IDENTIFIER_SOURCE;
 
 interface KeywordContinuationCallbacks {
     createKeywordCompletionItem(
@@ -58,15 +62,15 @@ export class ThinaiKeywordContinuations {
             [/\bintegration\s+([\p{L}_]*)$/iu, ['event']],
             [/\bdepends\s+([\p{L}_]*)$/iu, ['on']],
             [/\bcontext\s+([\p{L}_]*)$/iu, ['map']],
-            [/\bsubdomain\s+[_a-zA-Z][\w_]*\s+kind\s+([\p{L}_]*)$/iu, ['core', 'supporting', 'generic']],
+            [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'), ['core', 'supporting', 'generic']],
             [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from']],
-            [/\bquery\s+repository\s+[_a-zA-Z][\w_]*\s*\{\s*([\p{L}_]*)$/iu, ['serves']],
-            [/\brepository\s+[_a-zA-Z][\w_]*\s*\{\s*([\p{L}_]*)$/iu, ['manages']],
-            [/\breads\s+from\s+[_a-zA-Z][\w.]*(?:\s*,\s*[_a-zA-Z][\w.]*)*\s+([\p{L}_]*)$/iu, ['when']],
-            [/\bsharedKernel\s+[_a-zA-Z][\w_.]*\s+\{\s*([\p{L}_]*)$/iu, ['participants']],
+            [new RegExp(`\\bquery\\s+repository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['serves']],
+            [new RegExp(`\\brepository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['manages']],
+            [new RegExp(`\\breads\\s+from\\s+${qualifiedIdentifierSource}(?:\\s*,\\s*${qualifiedIdentifierSource})*\\s+([\\p{L}_]*)$`, 'iu'), ['when']],
+            [new RegExp(`\\bsharedKernel\\s+${qualifiedIdentifierSource}\\s+\\{\\s*([\\p{L}_]*)$`, 'iu'), ['participants']],
             [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
             [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner']],
-            [/\b(?:customer|supplier|partner)\s+[_a-zA-Z][\w.]*\s*\{\s*([\p{L}_]*)$/iu, ['integrationPatterns']]
+            [new RegExp(`\\b(?:customer|supplier|partner)\\s+${qualifiedIdentifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['integrationPatterns']]
         ];
 
         const match = this.getTransitionRequiredKeywordMatch(prefix) ?? continuations
@@ -171,13 +175,13 @@ export class ThinaiKeywordContinuations {
             const typedPrefix = match[1]!;
             const headerSource = source.replace(/\s+[\p{L}_]+$/u, '').trim();
             const continuations = new Set(this.getSameLineContinuationKeywords(node, document, position));
-            if (isBoundedContext(node) && /^bounded\s+context\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+            if (isBoundedContext(node) && new RegExp(`^bounded\\s+context\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('realizes');
-            } else if (isSubdomain(node) && /^subdomain\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+            } else if (isSubdomain(node) && new RegExp(`^subdomain\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('kind');
-            } else if (isModule(node) && /^module\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+            } else if (isModule(node) && new RegExp(`^module\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('depends');
-            } else if (isValueObject(node) && /^value\s+object\s+[_a-zA-Z][\w_]*$/iu.test(headerSource)) {
+            } else if (isValueObject(node) && new RegExp(`^value\\s+object\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('mirrors');
             }
             for (const keyword of [...continuations].filter(candidate =>
@@ -237,11 +241,11 @@ export class ThinaiKeywordContinuations {
         }
         const transitionSource = prefix.slice(transitionMatch.index + transitionMatch[0].length);
         const currentChange = transitionSource.slice(transitionSource.lastIndexOf(',') + 1).trimStart();
-        const toMatch = /^[_a-zA-Z][\w_]*\s+from\s+[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/iu.exec(currentChange);
+        const toMatch = new RegExp(`^${identifierSource}\\s+from\\s+${identifierSource}\\s+([\\p{L}_]*)$`, 'iu').exec(currentChange);
         if (toMatch) {
             return { match: toMatch, keywords: ['to'] };
         }
-        const fromMatch = /^[_a-zA-Z][\w_]*\s+([\p{L}_]*)$/u.exec(currentChange);
+        const fromMatch = new RegExp(`^${identifierSource}\\s+([\\p{L}_]*)$`, 'u').exec(currentChange);
         return fromMatch ? { match: fromMatch, keywords: ['from'] } : undefined;
     }
 

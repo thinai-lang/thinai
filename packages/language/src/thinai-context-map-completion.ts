@@ -8,23 +8,43 @@ import {
 } from 'vscode-languageserver';
 import type { AstNodeDescription } from 'langium';
 import type { ContextMap } from './generated/ast.js';
+import { isBoundedContext } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getSiblingCompletionKeywords } from './thinai-layout.js';
 import { formatQualifiedName } from './thinai-scope-utils.js';
+import { normalizeIdentifierText, THINAI_QUALIFIED_IDENTIFIER_SOURCE, unquoteQualifiedName } from './thinai-identifiers.js';
+import {
+    areRelationshipPairDefinitionsCompatible,
+    createRelationshipPairSemantics,
+    getRelationshipPairSemantics,
+    type ContextRelationshipPairKind
+} from './thinai-context-map-utils.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
 
-const contextEndpointPattern = String.raw`[_a-zA-Z][\w_]*(?:\.[_a-zA-Z][\w_]*)*`;
+const contextEndpointPattern = THINAI_QUALIFIED_IDENTIFIER_SOURCE;
 const integrationPatternsClause = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
 const relationshipContinuationPatterns: ReadonlyArray<readonly [RegExp, string]> = [
     [new RegExp(String.raw`^\s*customer\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '-> supplier'],
     [new RegExp(String.raw`^\s*partner\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '<-> partner'],
     [new RegExp(String.raw`^\s*separateWays\s+${contextEndpointPattern}\s+$`), '-x-']
 ];
-const rightContextPatterns = [
-    new RegExp(String.raw`^\s*customer\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*->\s*supplier\s*([\w.]*)$`, 'i'),
-    new RegExp(String.raw`^\s*partner\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*<->\s*partner\s*([\w.]*)$`, 'i'),
-    new RegExp(String.raw`^\s*separateWays\s+(${contextEndpointPattern})\s+-x-\s*([\w.]*)$`, 'i')
+const rightContextPatterns: ReadonlyArray<{
+    pattern: RegExp;
+    kind: Exclude<ContextRelationshipPairKind, 'sharedKernel'>;
+}> = [
+    {
+        pattern: new RegExp(String.raw`^\s*customer\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*->\s*supplier\s*(.*)$`, 'i'),
+        kind: 'customerSupplier'
+    },
+    {
+        pattern: new RegExp(String.raw`^\s*partner\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*<->\s*partner\s*(.*)$`, 'i'),
+        kind: 'partnership'
+    },
+    {
+        pattern: new RegExp(String.raw`^\s*separateWays\s+(${contextEndpointPattern})\s+-x-\s*(.*)$`, 'i'),
+        kind: 'separateWays'
+    }
 ];
 
 interface ContextMapCompletionCallbacks {
@@ -151,23 +171,44 @@ export class ThinaiContextMapCompletion {
             .map(cstNode => text.slice(cstNode.offset, offset));
         prefixes.push(text.slice(lineStart, offset));
         const match = prefixes.flatMap(prefix =>
-            rightContextPatterns.map(pattern => pattern.exec(prefix)).filter((result): result is RegExpExecArray => result !== null)
+            rightContextPatterns.map(({ pattern, kind }) => {
+                const result = pattern.exec(prefix);
+                return result ? { result, kind } : undefined;
+            }).filter((candidate): candidate is { result: RegExpExecArray; kind: Exclude<ContextRelationshipPairKind, 'sharedKernel'> } =>
+                candidate !== undefined
+            )
         )[0];
         if (!match) {
             return [];
         }
 
-        const leftContextName = match[1] ?? '';
-        const typedPrefix = match[2] ?? '';
-        const prefixStart = offset - typedPrefix.length;
+        const leftContextName = unquoteQualifiedName(match.result[1] ?? '');
+        const typedRaw = match.result[2] ?? '';
+        const typedPrefix = normalizeIdentifierText(typedRaw.trim());
+        const prefixStart = offset - typedRaw.length;
         const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
         const scopeProvider = this.services.references.ScopeProvider as ThinaiScopeProvider;
         const completionContext = this.callbacks.getCompletionContext(document, position);
         const contextCandidates = scopeProvider.getContextMapBoundedContextCandidates(contextMap);
         const leftContext = contextCandidates.find(description => description.name === leftContextName)?.node;
+        const existingPairs = contextMap.relationships.flatMap(relationship =>
+            getRelationshipPairSemantics(relationship)
+        );
         return contextCandidates
             .filter(description => !leftContext || description.node !== leftContext)
             .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .filter(description => {
+                if (!isBoundedContext(leftContext) || !isBoundedContext(description.node)) {
+                    return true;
+                }
+                const prospective = createRelationshipPairSemantics(match.kind, leftContext, description.node);
+                if (!prospective) {
+                    return false;
+                }
+                return !existingPairs.some(pair => pair.key === prospective.key &&
+                    (pair.identity === prospective.identity ||
+                        !areRelationshipPairDefinitionsCompatible(pair, prospective)));
+            })
             .map(description => {
                 const insertText = `${needsLeadingSpace ? ' ' : ''}${formatQualifiedName(description.name)}`;
                 const item: CompletionValueItem = {

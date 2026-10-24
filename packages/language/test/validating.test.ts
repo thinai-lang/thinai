@@ -2913,7 +2913,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).filter(diagnostic =>
-            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.'
+            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.'
         )).toHaveLength(2);
     });
 
@@ -3026,7 +3026,7 @@ in bounded context Ordering {
             }
         `);
         expect(semanticDiagnostics(document).some(diagnostic =>
-            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.'
+            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.'
         )).toBe(true);
     });
 
@@ -3062,7 +3062,7 @@ in bounded context Ordering {
         const messages = semanticDiagnostics(document)
             .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
             .map(diagnostic => diagnostic.message);
-        expect(messages).toContain('Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command results, or private domain events.');
+        expect(messages).toContain('Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.');
     });
 
     test('rejects private services and modules in cross-context specification text', async () => {

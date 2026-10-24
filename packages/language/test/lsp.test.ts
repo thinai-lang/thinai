@@ -2128,7 +2128,7 @@ in bounded context Ordering {
                 body: `query repository OrderSummaryRepository {
                     serves OrderSumm${marker}
                 }`,
-                expected: 'reads from'
+                expected: 'OrderSummary'
             },
             {
                 name: 'query repository reads continuation',

@@ -23,6 +23,7 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    isContextMapEndpoint,
     isEnumType,
     isEntity,
     isFactory,
@@ -35,7 +36,10 @@ import {
     isModule,
     isParameter,
     isProjector,
+    isQueryRepository,
     isReadSourceReference,
+    isRepository,
+    isSharedKernelRelationship,
     isSpecificationTextPart
 } from './generated/ast.js';
 import {
@@ -70,11 +74,33 @@ import {
 import { getSpecificationCompletionContext } from './thinai-specification-completion-context.js';
 import { applyConfiguredIndentationToCompletions } from './thinai-indentation.js';
 import { hasReferenceText } from './thinai-ast-utils.js';
+import {
+    normalizeIdentifierText,
+    THINAI_IDENTIFIER_SOURCE,
+    THINAI_QUALIFIED_IDENTIFIER_SOURCE
+} from './thinai-identifiers.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
 
 export { isQueryRepositoryReadCompletionPosition };
 
 const siblingKeywordPrefixes = getSiblingKeywordPrefixes();
+
+const incompleteFieldTypePattern = new RegExp(
+    `(?:^|\\s)(?:identifier\\s+)?${THINAI_IDENTIFIER_SOURCE}\\??\\s*:\\s*(?:${THINAI_QUALIFIED_IDENTIFIER_SOURCE})?$`,
+    'u'
+);
+const incompleteReturnTypePattern = new RegExp(
+    `\\)\\s+returns\\s*(?:${THINAI_QUALIFIED_IDENTIFIER_SOURCE})?$`,
+    'u'
+);
+const identifierTypePattern = new RegExp(
+    `(?:^|\\s)identifier\\s+${THINAI_IDENTIFIER_SOURCE}\\??\\s*:\\s*(?:${THINAI_QUALIFIED_IDENTIFIER_SOURCE})?$`,
+    'u'
+);
+const initialFieldTypePattern = new RegExp(
+    `:\\s*${THINAI_QUALIFIED_IDENTIFIER_SOURCE}\\s+([\\p{L}_]*)$`,
+    'u'
+);
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
@@ -186,12 +212,68 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             groups.set(key, group);
         }
         const preferred: AstNodeDescription[] = [];
+        if (this.isQualifiedReference(refInfo)) {
+            for (const group of groups.values()) {
+                const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
+                preferred.push(group.find(candidate => candidate.name === name) ?? group[0]!);
+            }
+            return stream([...preferred, ...synthetic]);
+        }
+        const scope = (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider).getScope(refInfo);
+        const scopeTargets = new Set<AstNode>();
+        for (const description of scope.getAllElements()) {
+            const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+            if (target) {
+                scopeTargets.add(target);
+            }
+        }
+        const resolvesTo = (name: string, target: AstNode): boolean => {
+            const description = scope.getElement(name);
+            if (!description) {
+                return false;
+            }
+            const resolved = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+            return resolved === target;
+        };
         for (const group of groups.values()) {
-            const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
-            const selected = group.find(candidate => candidate.name === name) ?? group[0]!;
-            preferred.push(selected);
+            const first = group[0]!;
+            const target = first.node ?? resolveAstNodeDescription(first, this.thinaiServices);
+            if (!target) {
+                preferred.push(first);
+                continue;
+            }
+            const resolving = group.filter(candidate => resolvesTo(candidate.name, target));
+            if (resolving.length > 0) {
+                const name = this.chooseCompletionDescriptionName(resolving, journeyReference, typedPrefix);
+                preferred.push(resolving.find(candidate => candidate.name === name) ?? resolving[0]!);
+            } else if (!scopeTargets.has(target)) {
+                // Synthetic shape/result descriptions are generated on demand and
+                // are not necessarily present in the visible scope.
+                const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
+                preferred.push(group.find(candidate => candidate.name === name) ?? first);
+            }
         }
         return stream([...preferred, ...synthetic]);
+    }
+
+    private isQualifiedReference(refInfo: ReferenceInfo): boolean {
+        const { container, property } = refInfo;
+        if (property === 'path' || property.endsWith('Path')) {
+            return true;
+        }
+        const values = container as unknown as Record<string, unknown>;
+        const pathProperties = [
+            'mirrorsPath', 'rootPath', 'typePath', 'returnTypePath',
+            'elementTypePath', 'valueTypePath', 'readModelPath', 'contextPath', 'leftPath', 'rightPath'
+        ];
+        if (Array.isArray(values.path) && values.path.length > 0) {
+            return true;
+        }
+        if (pathProperties.some(name => Array.isArray(values[name]) && (values[name] as unknown[]).length > 0)) {
+            return true;
+        }
+        return isSpecificationTextPart(container) &&
+            (container.target !== undefined || container.targets.length > 0);
     }
 
     private chooseCompletionDescriptionName(
@@ -469,6 +551,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset)
             )[0];
         const activeQueryRepository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
+        const terminalBlock = activeQueryRepository ?? innermostBlock;
+        const terminalKeywords = this.getTerminalBlockKeywords(terminalBlock);
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
         const transitionContinuationAllowed = this.keywordContinuations.isTransitionContinuationPosition(document, offset);
         const entityDeclarationsAllowed = innermostBlock?.$type === 'Aggregate' || braceOwners.at(-1) === 'aggregate';
@@ -484,7 +568,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             this.isTypeKeywordCompletionPosition(document, position)
         ) || (
             isEntity(innermostBlock) &&
-            /(?:^|\s)identifier\s+[^\s:]+\s*\??\s*:\s*[\w.]*$/u.test(linePrefix)
+            identifierTypePattern.test(linePrefix)
         );
         const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
         const validInitialCompletion = this.isValidInitialCompletion(offset, activeField, innermostBlock);
@@ -517,16 +601,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     !allowedMethodClauses.has('reads from')) {
                     return false;
                 }
-                if (activeQueryRepository) {
-                    const servedReferenceEnd = activeQueryRepository.readModel?.$refNode?.end;
-                    const queryRepositoryKeywords = !hasReferenceText(activeQueryRepository.readModel)
-                        ? ['serves']
-                        : servedReferenceEnd !== undefined && offset >= servedReferenceEnd && activeQueryRepository.sources.length === 0
-                            ? ['reads from']
-                            : [];
-                    if (!queryRepositoryKeywords.includes(item.label)) {
-                        return false;
-                    }
+                if (terminalKeywords !== undefined && !terminalKeywords.includes(item.label)) {
+                    return false;
                 }
                 if ((item.label === 'entity' || item.label === 'root entity') && !entityDeclarationsAllowed) {
                     return false;
@@ -545,6 +621,40 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 return true;
             })
         };
+    }
+
+    private getTerminalBlockKeywords(block: AstNode | undefined): readonly string[] | undefined {
+        if (!block) {
+            return undefined;
+        }
+        if (block.$type === 'EnumType') {
+            return [];
+        }
+        if (isRepository(block)) {
+            if (block.root?.ref !== undefined) {
+                return [];
+            }
+            const typed = this.getReferenceText(block.root);
+            return typed.length === 0 || 'manages'.startsWith(typed) ? ['manages'] : [];
+        }
+        if (isQueryRepository(block)) {
+            if (block.readModel?.ref !== undefined) {
+                return block.sources.length === 0 ? ['reads from'] : [];
+            }
+            const typed = this.getReferenceText(block.readModel);
+            return typed.length === 0 || 'serves'.startsWith(typed) ? ['serves'] : [];
+        }
+        if (isContextMapEndpoint(block)) {
+            return block.integrationPatterns.length === 0 ? ['integrationPatterns'] : [];
+        }
+        if (isSharedKernelRelationship(block)) {
+            return block.participants.length === 0 ? ['participants'] : [];
+        }
+        return undefined;
+    }
+
+    private getReferenceText(reference: { $refText?: string } | undefined): string {
+        return (reference?.$refText ?? '').trim();
     }
 
     private withCompoundKeywordCompletions(
@@ -632,12 +742,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
 
         const source = text.slice(exposure.$cstNode.offset, offset).trimStart();
-        const match = /^exposes\s+(?:(?:[_a-zA-Z][\w.]*)\s*,\s*)*([\w.]*)$/iu.exec(source);
-        if (!match) {
+        const exposesMatch = /^exposes\b/u.exec(source);
+        if (!exposesMatch) {
             return [];
         }
-        const typedPrefix = match[1] ?? '';
-        const prefixStart = offset - typedPrefix.length;
+        const listSource = source.slice(exposesMatch[0].length);
+        const typedRaw = listSource.split(',').at(-1)?.trim() ?? '';
+        const typedPrefix = normalizeIdentifierText(typedRaw);
+        const prefixStart = offset - typedRaw.length;
         const existingItems = defaultCompletion?.items ?? [];
         const completionContext = this.getLangiumCompletionContext(document, position);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
@@ -1137,7 +1249,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
                 document.textDocument.offsetAt(position)
             );
-            return /(?:^|\s)(?:identifier\s+)?[_a-zA-Z][\w_]*\??\s*:\s*(?:[_a-zA-Z][\w.]*)?$/u.test(source);
+            return incompleteFieldTypePattern.test(source);
         }
 
         if (node.returnCollection) {
@@ -1150,7 +1262,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
             document.textDocument.offsetAt(position)
         );
-        return /\)\s+returns\s*(?:[_a-zA-Z][\w.]*)?$/u.test(source);
+        return incompleteReturnTypePattern.test(source);
     }
 
     private isIncompleteCollectionType(collection: CollectionType): boolean {
@@ -1191,7 +1303,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 /[\r\n]/u.test(gapAfterField) && !/^[\s\p{L}_]*$/u.test(gapAfterField)) {
                 continue;
             }
-            const match = /:\s*[_a-zA-Z][\w.]*(?:\.[_a-zA-Z][\w_]*)?\s+([\p{L}_]*)$/u.exec(source);
+            const match = initialFieldTypePattern.exec(source);
             const typedPrefix = match?.[1];
             if (typedPrefix === undefined || typedPrefix.length >= 'initial'.length ||
                 !'initial'.startsWith(typedPrefix.toLowerCase())) {
