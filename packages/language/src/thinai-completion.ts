@@ -291,7 +291,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const values = container as unknown as Record<string, unknown>;
         const pathProperties = [
             'mirrorsPath', 'rootPath', 'typePath', 'returnTypePath',
-            'elementTypePath', 'valueTypePath', 'readModelPath', 'contextPath', 'leftPath', 'rightPath'
+            'elementTypePath', 'valueTypePath', 'readModelPath'
         ];
         if (Array.isArray(values.path) && values.path.length > 0) {
             return true;

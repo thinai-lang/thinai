@@ -1,6 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI, UriUtils } from 'langium';
 import { expandToString as s } from 'langium/generate';
+import { NodeFileSystem } from 'langium/node';
 import { clearDocuments } from 'langium/test';
 import type { Diagnostic } from 'vscode-languageserver-types';
 import type { Model } from 'thinai-language';
@@ -64,6 +68,114 @@ describe('Linking tests', () => {
         expect(builder.shouldRelinkDocument(brokenDocument, new Set([
             URI.file('/workspace/unrelated.tni').toString()
         ]))).toBe(true);
+    });
+
+    test('keeps imported contributions and their consumers linked after incremental updates', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-incremental-'));
+        const catalogUri = URI.file(path.join(directory, 'catalog.tni'));
+        const contributionUri = URI.file(path.join(directory, 'contribution.tni'));
+        const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
+        const files = {
+            [catalogUri.fsPath]: `bounded context Ordering
+in bounded context Ordering {
+    value object OrderId {
+        raw: string
+    }
+}
+`,
+            [contributionUri.fsPath]: `import { Ordering } from "./catalog.tni"
+in bounded context Ordering {
+    value object Status {
+        raw: string
+    }
+}
+`,
+            [consumerUri.fsPath]: `import { Ordering } from "./catalog.tni"
+import "./contribution.tni"
+in bounded context Ordering {
+    data object D {
+        status: Status
+    }
+}
+`
+        };
+        for (const [file, text] of Object.entries(files)) {
+            fs.writeFileSync(file, text);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all([catalogUri, contributionUri, consumerUri].map(uri =>
+            localDocuments.getOrCreateDocument(uri)
+        ));
+        const [catalog, contribution, consumer] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+        const indexNames = (type: string) => localServices.shared.workspace.IndexManager.allElements(type)
+            .toArray()
+            .map(description => description.name)
+            .sort();
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(catalog)).toEqual([]);
+            expect(errors(contribution)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+            expect(indexNames('ValueObject')).toEqual([
+                'Ordering.OrderId',
+                'Ordering.Status'
+            ]);
+
+            const rename = (text: string) => text
+                .replace('import { Ordering }', 'import { Orders }')
+                .replace('in bounded context Ordering', 'in bounded context Orders');
+            const catalogText = fs.readFileSync(catalogUri.fsPath, 'utf8')
+                .replace(/bounded context Ordering/g, 'bounded context Orders');
+            const contributionText = rename(fs.readFileSync(contributionUri.fsPath, 'utf8'));
+            const consumerText = rename(fs.readFileSync(consumerUri.fsPath, 'utf8'));
+            fs.writeFileSync(catalogUri.fsPath, catalogText);
+            fs.writeFileSync(contributionUri.fsPath, contributionText);
+            fs.writeFileSync(consumerUri.fsPath, consumerText);
+
+            await localServices.shared.workspace.DocumentBuilder.update(
+                [catalogUri, contributionUri, consumerUri],
+                []
+            );
+            expect(errors(catalog)).toEqual([]);
+            expect(errors(contribution)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+            expect(indexNames('ValueObject')).toEqual([
+                'Orders.OrderId',
+                'Orders.Status'
+            ]);
+
+            // The contribution changes without an edit to its consumer. The
+            // document builder must relink the consumer so the removed name is
+            // reported, and reindex the contribution under its new name.
+            fs.writeFileSync(
+                contributionUri.fsPath,
+                fs.readFileSync(contributionUri.fsPath, 'utf8').replace(/Status/g, 'State')
+            );
+            await localServices.shared.workspace.DocumentBuilder.update([contributionUri], []);
+            expect(indexNames('ValueObject')).toEqual([
+                'Orders.OrderId',
+                'Orders.State'
+            ]);
+            expect(errors(consumer)).toEqual([
+                "Could not resolve reference to TypeDeclaration named 'Status'."
+            ]);
+
+            fs.writeFileSync(
+                consumerUri.fsPath,
+                fs.readFileSync(consumerUri.fsPath, 'utf8').replace('status: Status', 'status: State')
+            );
+            await localServices.shared.workspace.DocumentBuilder.update([consumerUri], []);
+            expect(errors(consumer)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
     });
 
     test('does not report an import cycle on a document outside that cycle', async () => {

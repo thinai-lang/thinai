@@ -1348,4 +1348,66 @@ in bounded context B {
         });
         expect(withoutRelationship?.items.map(item => item.label)).not.toContain('Private');
     });
+
+    test('does not continue into qualified top-level declaration paths', async () => {
+        const cases = [
+            `subdomain Marketing
+bounded context Ordering
+bounded context Shipping
+in bounded context Ordering.${marker}`,
+            `subdomain Marketing
+bounded context Ordering
+bounded context Billing realizes Ordering.${marker}`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { customer Ordering.${marker} }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { customer Ordering.${marker} -> supplier Shipping }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { customer Ordering -> supplier Shipping.${marker} }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { partner Ordering.${marker} }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { separateWays Ordering.${marker} -x- Shipping }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { separateWays Ordering -x- Shipping.${marker} }`,
+            `shared kernel Common
+bounded context Ordering
+context map M { sharedKernel Common.${marker} { participants: [Ordering] } }`,
+            `bounded context Ordering
+bounded context Shipping
+context map M { sharedKernel Common { participants: [Ordering.${marker}, Shipping] } }`
+        ];
+        for (const [index, source] of cases.entries()) {
+            const completion = await build(source);
+            expect(completion.completion?.items ?? [], `case ${index}`).toEqual([]);
+        }
+    });
+
+    test('keeps terminal completion for top-level declarations and participants', async () => {
+        const realizes = await build(`subdomain Marketing
+bounded context Billing realizes ${marker}`);
+        expect(realizes.completion?.items.map(item => item.label)).toContain('Marketing');
+
+        const customer = await build(`bounded context Ordering
+bounded context Shipping
+context map M { customer ${marker} -> supplier Shipping }`);
+        expect(customer.completion?.items.map(item => item.label)).toContain('Ordering');
+
+        const sharedKernel = await build(`shared kernel Common
+bounded context Ordering
+context map M { sharedKernel ${marker} { participants: [Ordering] } }`);
+        expect(sharedKernel.completion?.items.map(item => item.label)).toContain('Common');
+
+        const participant = await build(`bounded context Ordering
+bounded context Shipping
+shared kernel Common
+context map M { sharedKernel Common { participants: [${marker}, Shipping] } }`);
+        expect(participant.completion?.items.map(item => item.label)).toContain('Ordering');
+    });
 });

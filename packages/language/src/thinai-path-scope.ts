@@ -100,6 +100,12 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (!Array.isArray(pathValues)) {
             return undefined;
         }
+        if (this.hasForbiddenPathPrefix(container, pathProperty, pathValues)) {
+            // These declarations are top-level. Their grammar rules still
+            // accept a qualified form so validation can report a targeted
+            // error, but completion must not continue into that dead path.
+            return [];
+        }
         const completingPathProperty = property === pathProperty;
         const terminalProperty = completingPathProperty
             ? pathProperty === 'path' ? 'target' : pathProperty.slice(0, -'Path'.length)
@@ -174,6 +180,30 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             return 'path';
         }
         return `${property}Path`;
+    }
+
+    private hasForbiddenPathPrefix(
+        container: AstNode,
+        pathProperty: string,
+        pathValues: unknown[]
+    ): boolean {
+        if (pathValues.length === 0) {
+            return false;
+        }
+        switch (container.$type) {
+            case 'BoundedContextPart':
+            case 'ContextMapEndpoint':
+                return pathProperty === 'contextPath';
+            case 'SeparateWaysRelationship':
+                return pathProperty === 'leftPath' || pathProperty === 'rightPath';
+            case 'SharedKernelRelationship':
+                return pathProperty === 'sharedKernelPath';
+            case 'SubdomainReference':
+            case 'BoundedContextReference':
+                return pathProperty === 'path';
+            default:
+                return false;
+        }
     }
 
     private hasTrailingDot(

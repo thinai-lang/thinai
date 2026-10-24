@@ -941,12 +941,12 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (isCustomerSupplierRelationship(parent)) {
                 const otherEndpoint = parent.customer === container ? parent.supplier : parent.customer;
                 kind = 'customerSupplier';
-                otherContext = otherEndpoint.context?.ref;
+                otherContext = otherEndpoint?.context?.ref;
                 relationship = parent;
             } else if (isPartnershipRelationship(parent)) {
                 const otherEndpoint = parent.left === container ? parent.right : parent.left;
                 kind = 'partnership';
-                otherContext = otherEndpoint.context?.ref;
+                otherContext = otherEndpoint?.context?.ref;
                 relationship = parent;
             }
         } else if (isSeparateWaysRelationship(container) && (context.property === 'left' || context.property === 'right')) {
