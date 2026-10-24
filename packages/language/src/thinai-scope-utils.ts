@@ -19,6 +19,7 @@ import {
     isEntity,
     isField,
     isIntegrationEvent,
+    isMethod,
     isReadModel,
     isValueObject,
     isEnumValue,
@@ -188,6 +189,35 @@ export function isCrossContextOwned(source: AstNode, target: AstNode): boolean {
     const sourceContext = getOwningContextName(source);
     const targetContext = getOwningContextName(target);
     return sourceContext !== undefined && targetContext !== undefined && sourceContext !== targetContext;
+}
+
+/**
+ * True when a field or method belongs directly to the enclosing entity or
+ * value object. Specification prose may use such members by their bare names;
+ * members of other objects must be owner-qualified.
+ */
+export function isOwnedSpecificationMember(source: AstNode, target: AstNode): boolean {
+    const owner = AstUtils.getContainerOfType(source,
+        (node): node is AstNode => isEntity(node) || isValueObject(node));
+    return owner !== undefined && target.$container === owner;
+}
+
+/**
+ * Bare field and method references are only valid on the first path segment
+ * and only when the member belongs to the enclosing entity or value object.
+ * Later segments are interpreted relative to the preceding segment and may be
+ * unqualified.
+ */
+export function isBareSpecificationMemberAllowed(
+    source: AstNode,
+    target: AstNode,
+    isBare: boolean,
+    isFirstSegment: boolean
+): boolean {
+    if (!isFirstSegment || !isBare || (!isField(target) && !isMethod(target))) {
+        return true;
+    }
+    return isOwnedSpecificationMember(source, target);
 }
 
 export function isExposedByModule(module: Module, target: AstNode): boolean {

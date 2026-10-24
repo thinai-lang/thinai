@@ -583,6 +583,24 @@ in bounded context O {
         expect(domainServiceParameterLabels).toContain('E');
         expect(domainServiceParameterLabels.filter(label => label === 'E' || label === 'A.E')).toEqual(['E']);
 
+        const domainServiceCollection = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+    }
+    value object Holder { item: A.E }
+    value object Money { amount: number }
+    domain service D {
+        method use(items: List<${marker}>) returns string
+    }
+}`);
+        const domainServiceCollectionLabels = domainServiceCollection.completion?.items.map(item => item.label) ?? [];
+        expect(domainServiceCollectionLabels).not.toContain('E');
+        expect(domainServiceCollectionLabels).not.toContain('A.E');
+        expect(domainServiceCollectionLabels).not.toContain('Holder');
+        expect(domainServiceCollectionLabels).toContain('Money');
+
         const domainServiceReturn = await build(`bounded context O
 in bounded context O {
     aggregate A { root entity E { identifier id: Id } value object Id { raw: string } }
@@ -1409,5 +1427,135 @@ bounded context Shipping
 shared kernel Common
 context map M { sharedKernel Common { participants: [${marker}, Shipping] } }`);
         expect(participant.completion?.items.map(item => item.label)).toContain('Ordering');
+    });
+
+    test('completes transition from and to on a new line', async () => {
+        const from = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E {
+            method run() {
+                transition status from Draft to Placed,
+                    status fr${marker}
+            }
+            identifier id: Id
+            status: S
+        }
+        value object Id { raw: string }
+        enum S { Draft, Placed }
+    }
+}`);
+        const fromLabels = from.completion?.items.map(item => item.label) ?? [];
+        expect(fromLabels).toContain('from');
+        expect(fromLabels).not.toContain('invariant');
+        expect(fromLabels).not.toContain('emits');
+
+        const to = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E {
+            method run() {
+                transition status from Draft to Placed,
+                    status from Draft ${marker}
+            }
+            identifier id: Id
+            status: S
+        }
+        value object Id { raw: string }
+        enum S { Draft, Placed }
+    }
+}`);
+        const toLabels = to.completion?.items.map(item => item.label) ?? [];
+        expect(toLabels).toContain('to');
+        expect(toLabels).not.toContain('invariant');
+        expect(toLabels).not.toContain('emits');
+    });
+
+    test('treats a quoted transition-named field as a field, not the clause keyword', async () => {
+        const from = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            \`transition\`: S
+            method run() {
+                transition \`transition\` ${marker}
+            }
+        }
+        value object Id { raw: string }
+        enum S { Open, Closed }
+    }
+}`);
+        expect(from.completion?.items.map(item => item.label)).toContain('from');
+
+        const to = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            \`transition\`: S
+            method run() {
+                transition \`transition\` from Open ${marker}
+            }
+        }
+        value object Id { raw: string }
+        enum S { Open, Closed }
+    }
+}`);
+        expect(to.completion?.items.map(item => item.label)).toContain('to');
+    });
+
+    test('does not continue a header with an unrelated declaration keyword', async () => {
+        const cases: Array<[source: string, forbidden: string]> = [
+            [`bounded context A\nactor Rea${marker}`, 'realizes'],
+            [`subdomain A\nactor Kin${marker}`, 'kind'],
+            [`module Api\nactor Dep${marker}`, 'depends'],
+            [`value object V\nactor Mir${marker}`, 'mirrors']
+        ];
+        for (const [source, forbidden] of cases) {
+            const completion = await build(source);
+            expect(completion.completion?.items.map(item => item.label), source).not.toContain(forbidden);
+        }
+
+        const moduleContinuation = await build(`bounded context O
+in bounded context O {
+    module Api
+    dep${marker}
+    { value object V { raw: string } }
+}`);
+        expect(moduleContinuation.completion?.items.map(item => item.label)).toContain('depends');
+    });
+
+    test('ignores incomplete statements in an unrelated block', async () => {
+        const completion = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity A {
+            identifier id: IdA
+            broken:
+        }
+        value object IdA { raw: string }
+    }
+    aggregate B {
+        root entity B {
+            identifier id: IdB
+            ${marker}
+        }
+        value object IdB { raw: string }
+    }
+}`);
+        expect(completion.completion?.items.map(item => item.label)).toContain('method');
+    });
+
+    test('keeps context as a bounded-context continuation across a line break', async () => {
+        for (const source of [
+            `bounded\ncon${marker}`,
+            `bounded context A\nin bounded\ncon${marker}`
+        ]) {
+            const completion = await build(source);
+            const labels = completion.completion?.items.map(item => item.label) ?? [];
+            expect(labels, source).toContain('context');
+            expect(labels, source).not.toContain('context map');
+        }
     });
 });

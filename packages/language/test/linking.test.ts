@@ -178,6 +178,81 @@ in bounded context Ordering {
         }
     });
 
+    test('relinks event payload references after an imported payload type changes', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-payload-cache-'));
+        const typesUri = URI.file(path.join(directory, 'types.tni'));
+        const catalogUri = URI.file(path.join(directory, 'catalog.tni'));
+        const mapUri = URI.file(path.join(directory, 'map.tni'));
+        const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
+        const typesText = `bounded context A
+in bounded context A {
+    value object Info {
+        a: string
+    }
+}
+`;
+        const catalogText = `import "./types.tni"
+in bounded context A {
+    module M {
+        exposes E
+        integration event E {
+            info: Info
+        }
+    }
+}
+`;
+        const mapText = `import "./types.tni"
+bounded context B
+context map Fulfillment {
+    customer B -> supplier A
+}
+`;
+        const consumerText = `import "./types.tni"
+import "./catalog.tni"
+import "./map.tni"
+in bounded context B {
+    application service App {
+        method handle(source: A.M.E) {
+            behavior "[[A.M.E.info.a]]"
+        }
+    }
+}
+`;
+        const files = [typesUri, catalogUri, mapUri, consumerUri];
+        const texts = [typesText, catalogText, mapText, consumerText];
+        for (let index = 0; index < files.length; index++) {
+            fs.writeFileSync(files[index]!.fsPath, texts[index]!);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all(files.map(uri => localDocuments.getOrCreateDocument(uri)));
+        const [types, , , consumer] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(consumer)).toEqual([]);
+
+            // The payload document is reparsed, but the event declaration in
+            // catalog.tni is not. The cached event contract must still see the
+            // new payload shape.
+            fs.writeFileSync(typesUri.fsPath, typesText.replace('    a: string\n', '    a: string\n    b: string\n'));
+            await localServices.shared.workspace.DocumentBuilder.update([typesUri], []);
+            expect(errors(types)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+
+            fs.writeFileSync(consumerUri.fsPath, consumerText.replace('info.a]]', 'info.b]]'));
+            await localServices.shared.workspace.DocumentBuilder.update([consumerUri], []);
+            expect(errors(consumer)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
     test('does not report an import cycle on a document outside that cycle', async () => {
         const first = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/cycle-importer.tni'),

@@ -4193,6 +4193,86 @@ in bounded context Ordering {
         )).toEqual([]);
     });
 
+    test('requires the first segment of a multi-segment bare specification path to be owned', async () => {
+        const invalid = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate A {
+                    root entity A {
+                        method run() { behavior "Use [[bField.raw]]." }
+                        identifier id: AId
+                    }
+                    value object AId { raw: string }
+                }
+                aggregate B {
+                    root entity B {
+                        identifier id: BId
+                        bField: BV
+                    }
+                    value object BId { raw: string }
+                    value object BV { raw: string }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(invalid).some(diagnostic =>
+            String(diagnostic.message).includes("Could not resolve reference to SpecificationTarget named 'bField'")
+        )).toBe(true);
+
+        const valid = await parse(`
+            bounded context D
+            in bounded context D {
+                aggregate A {
+                    root entity A {
+                        method run() { behavior "Use [[address.street]]." }
+                        identifier id: AId
+                        address: Address
+                    }
+                    value object AId { raw: string }
+                    value object Address { street: string }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('rejects entities nested in domain-service parameter shapes and collections', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                aggregate A {
+                    root entity A { identifier id: Id }
+                    value object Id { raw: string }
+                    value object Holder { a: A }
+                }
+                domain service S {
+                    method byValue(holder: Holder) { behavior "By value." }
+                    method byCollection(items: List<A>) { behavior "By collection." }
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain('Domain-service methods must use domain values or direct entity parameters, not value objects containing entity instances.');
+        expect(messages).toContain('Domain-service methods must use direct entity parameters, not collections of entities.');
+
+        const valid = await parse(`
+            bounded context D
+            in bounded context D {
+                aggregate A {
+                    root entity A { identifier id: Id }
+                    value object Id { raw: string }
+                }
+                domain service S {
+                    method byDirect(a: A) { behavior "By direct entity." }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
     test('rejects query operations in non-journey prose but allows their own result binding', async () => {
         const invalid = await parse(`
             bounded context C

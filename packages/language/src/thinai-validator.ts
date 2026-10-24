@@ -81,6 +81,7 @@ import {
     isInSharedKernel,
     isCrossContextOwned,
     isExposedByModule,
+    isBareSpecificationMemberAllowed,
     isIdentifierValueObject,
     isPublicApiDeclaration,
     moduleDependsTransitivelyOn,
@@ -164,6 +165,7 @@ export class ThinaiValidator {
         const clearWorkspaceCaches = () => {
             this.duplicateNameCounts = undefined;
             this.writeRepositoriesByAggregate = undefined;
+            this.referencePolicy.clearCache();
         };
         services.shared.workspace.DocumentBuilder.onUpdate(clearWorkspaceCaches);
         services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.Validated, clearWorkspaceCaches);
@@ -1095,6 +1097,21 @@ export class ThinaiValidator {
                     'type',
                     'Domain-service methods must accept domain values or entity/aggregate parameters, not DataObjects.'
                 );
+                if (parameter.collection && typeReferences.some(reference => isEntity(reference.ref))) {
+                    accept('error', 'Domain-service methods must use direct entity parameters, not collections of entities.', {
+                        node: parameter,
+                        property: 'collection'
+                    });
+                }
+                const hasForbiddenBoundaryType = typeReferences.some(reference =>
+                    isDataObject(reference.ref) || isReadModel(reference.ref)
+                );
+                if (!hasForbiddenBoundaryType && this.hasNestedEntityInReferences(typeReferences)) {
+                    accept('error', 'Domain-service methods must use domain values or direct entity parameters, not value objects containing entity instances.', {
+                        node: parameter,
+                        property: 'type'
+                    });
+                }
             } else if (isEntity(owner) || isValueObject(owner)) {
                 this.checkEntityBoundaryUse(parameter, typeReferences, accept, 'type',
                     getOwningAggregate(owner) ? 'aggregate' : 'value-object');
@@ -1363,12 +1380,6 @@ export class ThinaiValidator {
         this.modelValidator.checkSharedKernel(sharedKernel, accept);
     }
 
-    private isOwnedSpecificationMember(container: AstNode, target: AstNode): boolean {
-        const owner = AstUtils.getContainerOfType(container,
-            (node): node is AstNode => isEntity(node) || isValueObject(node));
-        return owner !== undefined && target.$container === owner;
-    }
-
     private isNonTerminalPathReference(referenceInfo: ReferenceInfo): boolean {
         const { container, property } = referenceInfo;
         if (property.endsWith('Path') || property === 'path') {
@@ -1414,11 +1425,14 @@ export class ThinaiValidator {
                     : referenceInfo.property === 'targets' &&
                         terminalReferenceIndex === referenceInfo.container.targets.length - 1
             );
-            if (isSpecificationTextPart(referenceInfo.container) && isTerminalSpecificationSegment &&
-                referenceInfo.property === 'target' && referenceInfo.container.targets.length === 0 &&
-                (isField(target) || isMethod(target)) &&
-                referenceInfo.reference.$refText === target.name &&
-                !this.isOwnedSpecificationMember(referenceInfo.container, target)) {
+            const targetName = 'name' in target && typeof target.name === 'string' ? target.name : undefined;
+            if (isSpecificationTextPart(referenceInfo.container) && referenceInfo.property === 'target' &&
+                !isBareSpecificationMemberAllowed(
+                    referenceInfo.container,
+                    target,
+                    targetName !== undefined && referenceInfo.reference.$refText === targetName,
+                    true
+                )) {
                 accept('error', 'Bare field and method references are limited to the enclosing entity or value object; use an owner-qualified path.', {
                     node: referenceInfo.container as AstNode,
                     property: referenceInfo.property

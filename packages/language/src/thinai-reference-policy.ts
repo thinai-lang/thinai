@@ -59,6 +59,7 @@ import {
     getOwningContextName,
     getOwningModule,
     getOwningSharedKernel,
+    isBareSpecificationMemberAllowed,
     isExposedByModule,
     isInSharedKernel,
     isModuleAccessibleFrom,
@@ -72,9 +73,19 @@ import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
 export class ThinaiReferencePolicy {
-    private readonly eventContractTargetsCache = new WeakMap<AstNode, Set<AstNode>>();
+    private eventContractTargetsCache = new WeakMap<AstNode, Set<AstNode>>();
 
     constructor(private readonly services: LangiumCoreServices) {}
+
+    /**
+     * Event contract targets are computed from payload value-object shapes in
+     * other documents. Those documents can be reparsed without reparsing the
+     * event declaration, so both the scope provider and the validator must
+     * invalidate this cache whenever the workspace changes.
+     */
+    clearCache(): void {
+        this.eventContractTargetsCache = new WeakMap();
+    }
 
     isIntegrationEventExposed(event: IntegrationEvent): boolean {
         return isPublicApiDeclaration(event);
@@ -209,6 +220,14 @@ export class ThinaiReferencePolicy {
      * structural containers and are checked through the terminal declaration.
      */
     isVisibleSpecificationPathSegment(source: AstNode, target: AstNode, terminal: boolean): boolean {
+        if (isSpecificationTextPart(source)) {
+            const targetName = 'name' in target && typeof target.name === 'string' ? target.name : undefined;
+            const isFirstSegment = source.target?.ref === target;
+            const isBare = isFirstSegment && targetName !== undefined && source.target?.$refText === targetName;
+            if (!isBareSpecificationMemberAllowed(source, target, isBare, isFirstSegment)) {
+                return false;
+            }
+        }
         if (terminal) {
             return true;
         }

@@ -505,7 +505,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
-        const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(completionWithModelGapKeywords, inProgressKeywordCompletions);
+        const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(
+            completionWithModelGapKeywords,
+            inProgressKeywordCompletions,
+            document,
+            params.position
+        );
         const offersCompoundReadsFrom = [...blockKeywords, ...inProgressKeywordCompletions]
             .some(item => item.label === 'reads from');
         const completionWithKeywords = offersCompoundReadsFrom && rawCompletionWithKeywords
@@ -727,7 +732,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private withCompoundKeywordCompletions(
         completion: CompletionList | undefined,
-        continuations: CompletionItem[]
+        continuations: CompletionItem[],
+        document: LangiumDocument,
+        position: Position
     ): CompletionList | undefined {
         if (!completion) {
             return continuations.length > 0 ? { isIncomplete: false, items: continuations } : undefined;
@@ -761,6 +768,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 !Object.prototype.hasOwnProperty.call(phrases, item.label)) {
                 return [item];
             }
+            if (item.label === 'context' && this.isBoundedContextKeywordContext(document, position)) {
+                // `context` is the second word of `bounded context`; it must
+                // not be rewritten to the unrelated top-level phrase
+                // `context map` when a bounded-context header is being typed
+                // across a line break.
+                return [item];
+            }
             return phrases[item.label].map(phrase => ({
                 ...item,
                 label: phrase,
@@ -771,6 +785,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const seen = new Set(items.map(item => item.label));
         items.push(...continuations.filter(item => !seen.has(item.label)));
         return { ...completion, items };
+    }
+
+    private isBoundedContextKeywordContext(document: LangiumDocument, position: Position): boolean {
+        const text = document.textDocument.getText();
+        const offset = document.textDocument.offsetAt(position);
+        const lineStart = getLineStartOffset(document, offset);
+        const currentLine = text.slice(lineStart, offset).trim().toLowerCase();
+        if (currentLine.length > 0 && !'context'.startsWith(currentLine)) {
+            return false;
+        }
+        const before = text.slice(0, lineStart).trimEnd();
+        const previousLine = before.slice(before.lastIndexOf('\n') + 1).trim();
+        return /\bbounded$/iu.test(previousLine) || /\bin\s+bounded$/iu.test(previousLine);
     }
 
     private addFallbackKeywords(
@@ -1244,6 +1271,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         const activeOpenBlock = this.getInnermostOpenBlockAtOffset(model, offset);
+        // Only direct children of the block containing the cursor (or the
+        // model at top level) can be the current/previous statement. An
+        // incomplete statement in an unrelated sibling block must not disable
+        // completion in the block being edited.
+        const activeContainer = activeOpenBlock ?? model;
         const activeOpenBlockAncestors = new Set<AstNode>();
         for (let ancestor = activeOpenBlock?.$container; ancestor; ancestor = ancestor.$container) {
             activeOpenBlockAncestors.add(ancestor);
@@ -1251,12 +1283,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const lastByContainer = new Map<AstNode, AstNode>();
         for (const node of AstUtils.streamAst(model)) {
             const cstNode = node.$cstNode;
-            if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset) {
+            if (!cstNode || !isLineSeparatedSibling(node) || cstNode.end > offset ||
+                node.$container !== activeContainer) {
                 continue;
             }
             if (activeOpenBlockAncestors.has(node)) {
                 // An enclosing relationship/declaration is not the statement
                 // being typed merely because its child block is still open.
+                continue;
+            }
+            if (cstNode.range.start.line < position.line && cstNode.range.end.line === position.line) {
+                // A statement that began on an earlier line and reaches the
+                // cursor line is the multi-line statement currently being
+                // edited, not an incomplete previous sibling.
                 continue;
             }
             if (this.isPartialSiblingKeywordNode(node, document, position)) {

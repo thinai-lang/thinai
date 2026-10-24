@@ -73,7 +73,9 @@ export class ThinaiKeywordContinuations {
             [new RegExp(`\\b(?:customer|supplier|partner)\\s+${qualifiedIdentifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['integrationPatterns']]
         ];
 
-        const match = this.getTransitionRequiredKeywordMatch(prefix) ?? continuations
+        const match = this.getTransitionRequiredKeywordMatch(prefix) ??
+            this.getTransitionContinuationMatch(document, position) ??
+            continuations
             .map(([pattern, keywords]) => ({ match: pattern.exec(prefix), keywords }))
             .find(candidate => candidate.match !== null);
         if (!match?.match) {
@@ -184,6 +186,21 @@ export class ThinaiKeywordContinuations {
             } else if (isValueObject(node) && new RegExp(`^value\\s+object\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('mirrors');
             }
+            if (continuations.size === 0) {
+                continue;
+            }
+            const gapToCursor = cstNode.end <= offset
+                ? text.slice(cstNode.end, offset).trim().toLowerCase().replace(/\s+/gu, ' ')
+                : '';
+            if (gapToCursor.length > 0 && ![...continuations].some(keyword =>
+                keyword.toLowerCase().startsWith(gapToCursor)
+            )) {
+                // A complete keyword on the current line (for example `actor`)
+                // starts a new declaration; only a partial continuation
+                // keyword may continue the earlier declaration across a
+                // newline.
+                continue;
+            }
             for (const keyword of [...continuations].filter(candidate =>
                 typedPrefix.length < candidate.length && candidate.toLowerCase().startsWith(typedPrefix.toLowerCase())
             )) {
@@ -235,11 +252,11 @@ export class ThinaiKeywordContinuations {
     }
 
     private getTransitionRequiredKeywordMatch(prefix: string): { match: RegExpExecArray; keywords: string[] } | undefined {
-        const transitionMatch = [...prefix.matchAll(/\btransition\b/giu)].at(-1);
-        if (!transitionMatch || transitionMatch.index === undefined) {
+        const transitionIndex = this.findLastKeywordOutsideQuotes(prefix, 'transition');
+        if (transitionIndex === undefined) {
             return undefined;
         }
-        const transitionSource = prefix.slice(transitionMatch.index + transitionMatch[0].length);
+        const transitionSource = prefix.slice(transitionIndex + 'transition'.length);
         const currentChange = transitionSource.slice(transitionSource.lastIndexOf(',') + 1).trimStart();
         const toMatch = new RegExp(`^${identifierSource}\\s+from\\s+${identifierSource}\\s+([\\p{L}_]*)$`, 'iu').exec(currentChange);
         if (toMatch) {
@@ -247,6 +264,72 @@ export class ThinaiKeywordContinuations {
         }
         const fromMatch = new RegExp(`^${identifierSource}\\s+([\\p{L}_]*)$`, 'u').exec(currentChange);
         return fromMatch ? { match: fromMatch, keywords: ['from'] } : undefined;
+    }
+
+    private getTransitionContinuationMatch(
+        document: LangiumDocument,
+        position: Position
+    ): { match: RegExpExecArray; keywords: string[] } | undefined {
+        const root = document.parseResult.value;
+        if (!root) {
+            return undefined;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        if (!this.isTransitionContinuationPosition(document, offset)) {
+            return undefined;
+        }
+        const text = document.textDocument.getText();
+        const lineStart = getLineStartOffset(document, offset);
+        const linePrefix = text.slice(lineStart, offset).trimStart();
+        const toMatch = new RegExp(`^${identifierSource}\\s+from\\s+${identifierSource}\\s+([\\p{L}_]*)$`, 'iu')
+            .exec(linePrefix);
+        if (toMatch) {
+            return { match: toMatch, keywords: ['to'] };
+        }
+        const fromMatch = new RegExp(`^${identifierSource}\\s+([\\p{L}_]*)$`, 'u')
+            .exec(linePrefix);
+        return fromMatch ? { match: fromMatch, keywords: ['from'] } : undefined;
+    }
+
+    /**
+     * Finds the last occurrence of a keyword outside quoted identifiers,
+     * strings, and line comments. A field named `transition` must not be
+     * mistaken for the transition clause keyword.
+     */
+    private findLastKeywordOutsideQuotes(source: string, keyword: string): number | undefined {
+        let last: number | undefined;
+        let quote: '"' | "'" | '`' | undefined;
+        let escaped = false;
+        for (let index = 0; index < source.length; index++) {
+            const character = source[index]!;
+            if (quote) {
+                if (escaped) {
+                    escaped = false;
+                } else if (character === '\\') {
+                    escaped = true;
+                } else if (character === quote) {
+                    quote = undefined;
+                }
+                continue;
+            }
+            if (character === '`' || character === '"' || character === "'") {
+                quote = character;
+                continue;
+            }
+            if (character === '/' && source[index + 1] === '/') {
+                break;
+            }
+            if (source.startsWith(keyword, index)) {
+                const before = source[index - 1];
+                const after = source[index + keyword.length];
+                if ((before === undefined || !/[\w]/u.test(before)) &&
+                    (after === undefined || !/[\w]/u.test(after))) {
+                    last = index;
+                    index += keyword.length - 1;
+                }
+            }
+        }
+        return last;
     }
 
     getSameLineContinuationKeywords(node: AstNode, document: LangiumDocument, position: Position): string[] {

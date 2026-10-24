@@ -27,7 +27,6 @@ import {
     type ReadSourceReference,
     type ReadModel,
     type Repository,
-    type SpecificationTextPart,
     type Transition,
     type TransitionChange,
     type ValueObject,
@@ -97,6 +96,7 @@ import {
     getOwningSharedKernel,
     isInSharedKernel,
     isCrossContextOwned,
+    isBareSpecificationMemberAllowed,
     isExposedByModule,
     isIdentifierValueObject,
     isPublicApiDeclaration,
@@ -133,6 +133,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const clearCaches = () => {
             this.externalScope.clearCache();
             this.eventPayloadUsageCache = new WeakMap();
+            this.referencePolicy.clearCache();
         };
         services.shared.workspace.DocumentBuilder.onUpdate(clearCaches);
         services.shared.workspace.DocumentBuilder.onBuildPhase(DocumentState.IndexedContent, clearCaches);
@@ -400,33 +401,16 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     private isAllowedUnqualifiedSpecificationTarget(context: ReferenceInfo, candidate: AstNodeDescription): boolean {
         const target = this.getDescriptionNode(candidate);
-        if (!isSpecificationTextPart(context.container) ||
-            (!isField(target) && !isMethod(target)) ||
-            candidate.name !== target.name) {
+        if (!target || !isSpecificationTextPart(context.container)) {
             return true;
         }
-        if (this.hasSpecificationPathPrefix(context.container, context)) {
-            return true;
-        }
-        const owner = AstUtils.getContainerOfType(context.container,
-            (node): node is AstNode => isEntity(node) || isValueObject(node)
+        const targetName = 'name' in target && typeof target.name === 'string' ? target.name : undefined;
+        return isBareSpecificationMemberAllowed(
+            context.container,
+            target,
+            targetName !== undefined && candidate.name === targetName,
+            context.property === 'target'
         );
-        return target.$container === owner;
-    }
-
-    private hasSpecificationPathPrefix(
-        part: SpecificationTextPart,
-        context: ReferenceInfo
-    ): boolean {
-        if (context.property === 'target') {
-            return part.targets.some(reference => reference.$refText.length > 0);
-        }
-        if (context.property === 'targets') {
-            const index = context.index ?? part.targets.length;
-            return part.target !== undefined && part.target.$refText.length > 0 ||
-                part.targets.slice(0, index).some(reference => reference.$refText.length > 0);
-        }
-        return false;
     }
 
     private getSpecificationSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
@@ -1181,8 +1165,17 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (isEntity(owner) || isValueObject(owner)) {
                 return !this.shapeContainsForeignEntity(target, getOwningAggregate(typeContext));
             }
-            // Domain-service and projector parameters have their own direct
-            // signature rules; domain services may intentionally accept entities.
+            if (isDomainService(owner)) {
+                if (typeContext.collection && (isEntity(target) || this.shapeContainsEntity(target))) {
+                    return false;
+                }
+                if (!isEntity(target) && this.shapeContainsEntity(target)) {
+                    return false;
+                }
+                return true;
+            }
+            // Projector parameters are constrained to a single event by
+            // isValidTypeCandidate/checkMethod.
             return true;
         }
 
