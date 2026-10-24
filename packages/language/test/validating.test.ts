@@ -669,12 +669,13 @@ in bounded context Ordering {
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('rejects unreachable states from the declared initial state', async () => {
+    test('rejects unreachable transition sources from the declared initial state', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order {
                         method place() { transition status from Draft to Placed }
+                        method reopen() { transition status from Cancelled to Draft }
                         identifier id: OrderId
                         status: OrderStatus initial Draft
                     }
@@ -687,6 +688,28 @@ in bounded context Ordering {
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
             "State 'Cancelled' is unreachable from initial state 'Draft'."
         ))).toBe(true);
+    });
+
+    test('allows state enum values that are not part of a field state graph', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                enum OrderStatus { Draft, Placed, Cancelled }
+                data object OrderDto { status: OrderStatus }
+                aggregate Order {
+                    root entity Order {
+                        method place() { transition status from Draft to Placed }
+                        identifier id: OrderId
+                        status: OrderStatus initial Draft
+                    }
+                    value object OrderId { raw: string }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error &&
+            String(diagnostic.message).includes('is unreachable from initial state')
+        )).toEqual([]);
     });
 
     test('rejects duplicate fields and enum values', async () => {
@@ -1563,14 +1586,20 @@ in bounded context Ordering {
         const domainServiceInvocationErrors = semanticDiagnostics(document).filter(diagnostic =>
             String(diagnostic.message) === 'A domain service may invoke only another domain service.'
         );
-        expect(domainServiceInvocationErrors).toHaveLength(2);
+        expect(domainServiceInvocationErrors).toHaveLength(1);
         const source = document.textDocument.getText();
         expect(domainServiceInvocationErrors.map(diagnostic =>
             document.textDocument.offsetAt(diagnostic.range.start)
         )).toEqual(expect.arrayContaining([
-            source.indexOf('Queries.find') + 'Queries.'.length,
-            source.indexOf('OrderFactory.create') + 'OrderFactory.'.length
+            source.indexOf('Queries.find') + 'Queries.'.length
         ]));
+        const factoryInvocationErrors = semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message) === 'Only an application service may invoke a factory method.'
+        );
+        expect(factoryInvocationErrors).toHaveLength(1);
+        expect(document.textDocument.offsetAt(factoryInvocationErrors[0]!.range.start)).toBe(
+            source.indexOf('OrderFactory.create') + 'OrderFactory.'.length
+        );
     });
 
     test('rejects more than one write repository for an aggregate', async () => {
@@ -1815,7 +1844,7 @@ in bounded context Ordering {
 
         const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
         expect(messages).toContain('An integration-event payload must not expose types owned by an aggregate.');
-        expect(messages).toContain('Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.');
+        expect(messages).toContain('Integration-event payload types must be public contract types exposed by their module and all enclosing modules; context-level types are public.');
     });
 
     test('rejects entities hidden in a nested integration-event payload value object', async () => {
@@ -2096,7 +2125,7 @@ in bounded context Ordering {
         `);
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'An integration event in a module must be explicitly exposed'
+            'An integration event in a module must be exposed by its module and every enclosing module'
         ))).toBe(true);
     });
 
@@ -2522,7 +2551,7 @@ in bounded context Ordering {
             }
         `);
         const visibilityErrors = document.diagnostics?.filter(diagnostic =>
-            String(diagnostic.message).includes('A declaration outside a module may reference a module declaration only when its module exposes it.')
+            String(diagnostic.message).includes('A declaration outside a module may reference a module declaration only when its module and all enclosing modules expose it.')
         ) ?? [];
         expect(visibilityErrors).toHaveLength(1);
     });
@@ -3876,6 +3905,368 @@ in bounded context Ordering {
         expect(messages.filter(message => message.includes('bounded contexts are top-level declarations'))).toHaveLength(1);
         expect(messages.filter(message => message.includes('subdomains are top-level declarations'))).toHaveLength(1);
         expect(messages.filter(message => message.includes('endpoints cannot qualify')).length).toBeGreaterThanOrEqual(4);
+    });
+
+    test('requires every enclosing module to expose nested declarations', async () => {
+        const hidden = await parse(`
+            bounded context C
+            in bounded context C {
+                module Outer {
+                    module Inner {
+                        exposes V
+                        value object V { raw: string }
+                    }
+                }
+                data object D {
+                    payload: C.Outer.Inner.V
+                }
+            }
+        `);
+        expect(semanticDiagnostics(hidden).some(diagnostic =>
+            String(diagnostic.message).includes('and all enclosing modules expose it')
+        )).toBe(true);
+
+        const exposed = await parse(`
+            bounded context C2
+            in bounded context C2 {
+                module Outer {
+                    exposes Inner
+                    module Inner {
+                        exposes V
+                        value object V { raw: string }
+                    }
+                }
+                data object D {
+                    payload: C2.Outer.Inner.V
+                }
+            }
+        `);
+        expect(semanticDiagnostics(exposed).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('requires the complete module chain to expose a cross-context integration event', async () => {
+        const hidden = await parse(`
+            bounded context P
+            in bounded context P {
+                module Outer {
+                    module Inner {
+                        exposes E
+                        integration event E { x: string }
+                    }
+                }
+            }
+            bounded context C
+            in bounded context C {
+                application service App {
+                    method onE(source: P.Outer.Inner.E)
+                }
+            }
+            context map M {
+                customer C -> supplier P
+            }
+        `);
+        expect(semanticDiagnostics(hidden).some(diagnostic =>
+            String(diagnostic.message).includes('every enclosing module')
+        )).toBe(true);
+
+        const exposed = await parse(`
+            bounded context P2
+            in bounded context P2 {
+                module Outer {
+                    exposes Inner
+                    module Inner {
+                        exposes E
+                        integration event E { x: string }
+                    }
+                }
+            }
+            bounded context C2
+            in bounded context C2 {
+                application service App {
+                    method onE(source: P2.Outer.Inner.E)
+                }
+            }
+            context map M2 {
+                customer C2 -> supplier P2
+            }
+        `);
+        expect(semanticDiagnostics(exposed).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('allows command contract types in nested private modules in journey prose', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                module Outer {
+                    module Inner {
+                        data object RunInput { orderId: string }
+                        data object RunResult { accepted: boolean }
+                        application service App {
+                            method run(input: RunInput) returns RunResult
+                        }
+                    }
+                }
+            }
+            actor Customer
+            journey J {
+                by Customer {
+                    invoke C.Outer.Inner.App.run
+                        with "Input [[C.Outer.Inner.RunInput.orderId]]"
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('rejects private query operations as journey path segments', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                data object Result { status: string }
+                module Internal {
+                    query service Hidden {
+                        method find() returns Result
+                    }
+                }
+                application service App {
+                    method run()
+                }
+            }
+            actor Customer
+            journey J {
+                by Customer {
+                    invoke C.App.run when "Use [[C.Internal.Hidden.find.result.status]]."
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes('This specification path segment is not visible')
+        )).toBe(true);
+    });
+
+    test('allows published aggregate-owned contract types through their canonical path', async () => {
+        const document = await parse(`
+            bounded context P
+            in bounded context P {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                data object OrderDto {
+                    orderId: OrderId
+                }
+                module Api {
+                    exposes Queries
+                    query service Queries {
+                        method find() returns OrderDto
+                    }
+                }
+            }
+            bounded context C
+            in bounded context C {
+                application service App {
+                    method run() {
+                        reads from P.Api.Queries.find
+                        behavior "Use [[P.Order.OrderId.raw]] and [[P.OrderDto.orderId.raw]]."
+                    }
+                }
+            }
+            context map M {
+                customer C -> supplier P
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('allows published contract types through private nested module paths', async () => {
+        const document = await parse(`
+            bounded context P
+            in bounded context P {
+                module Outer {
+                    module Inner {
+                        exposes Result
+                        data object Result { status: string }
+                    }
+                }
+                module Api depends on Inner {
+                    exposes Queries
+                    query service Queries { method find() returns Outer.Inner.Result }
+                }
+            }
+            bounded context C
+            in bounded context C {
+                application service App {
+                    method use() {
+                        reads from P.Api.Queries.find
+                        behavior "Use [[P.Outer.Inner.Result.status]]."
+                    }
+                }
+            }
+            context map M { customer C -> supplier P }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('resolves prior journey results under canonical, suffix, and alias spellings', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                data object Result { status: string }
+                application service App {
+                    method place() returns Result
+                    method pay()
+                }
+            }
+            actor Customer
+            journey J {
+                by Customer {
+                    invoke App.place
+                    invoke C.App.pay when "[[C.App.place.result.status]] and [[App.place.result.status]]"
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('allows result as an event-handler parameter when the handler has no result', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                event E
+                data object R { amount: string }
+                application service App {
+                    method onE(result: E)
+                    method onEResult(result: E) returns R
+                }
+            }
+        `);
+        const reserved = semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.code === 'reserved-result-name'
+        );
+        expect(reserved).toHaveLength(1);
+        expect(document.textDocument.offsetAt(reserved[0]!.range.start)).toBe(
+            document.textDocument.getText().indexOf('result: E', document.textDocument.getText().indexOf('result: E') + 1)
+        );
+    });
+
+    test('limits bare field and method references to the enclosing entity or value object', async () => {
+        const invalid = await parse(`
+            bounded context C
+            in bounded context C {
+                application service App {
+                    method run() { behavior "Use [[other]]." }
+                    method other()
+                }
+            }
+        `);
+        expect(semanticDiagnostics(invalid).some(diagnostic =>
+            String(diagnostic.message).includes('Bare field and method references are limited')
+        )).toBe(true);
+
+        const valid = await parse(`
+            bounded context D
+            in bounded context D {
+                aggregate A {
+                    root entity A {
+                        method run() { behavior "Use [[helper]]." }
+                        method helper()
+                        identifier id: AId
+                    }
+                    value object AId { raw: string }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('rejects query operations in non-journey prose but allows their own result binding', async () => {
+        const invalid = await parse(`
+            bounded context C
+            in bounded context C {
+                query service Queries { method find() returns string }
+                application service App {
+                    method run() { behavior "Use [[C.Queries.find]]." }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(invalid).some(diagnostic =>
+            String(diagnostic.message).includes('Non-journey prose must link a query result type or field')
+        )).toBe(true);
+
+        const valid = await parse(`
+            bounded context D
+            in bounded context D {
+                query service Queries {
+                    method find() returns string {
+                        behavior "Use [[result]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
+    test('rejects mirrored identifiers inside shared kernels', async () => {
+        const document = await parse(`
+            shared kernel Common {
+                value object MirroredId mirrors Ordering.Order.OrderId {
+                    raw: string
+                }
+            }
+            bounded context Ordering
+            in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes('A mirrored identifier must be declared in a bounded context, not a shared kernel.')
+        )).toBe(true);
+    });
+
+    test('allows authorized integration-event payload shapes outside event handlers', async () => {
+        const document = await parse(`
+            bounded context P
+            in bounded context P {
+                value object OrderId { raw: string }
+                integration event E {
+                    orderId: OrderId
+                    customerId: string
+                }
+            }
+            bounded context C
+            in bounded context C {
+                application service App {
+                    method use() {
+                        behavior "Use [[P.E.customerId]] and [[P.E.orderId.raw]]."
+                    }
+                }
+            }
+            context map M {
+                customer C -> supplier P
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
     });
 
 });

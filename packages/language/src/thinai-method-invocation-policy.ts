@@ -2,7 +2,7 @@ import type { AstNode } from 'langium';
 import type { Aggregate, ApplicationService, Method, Parameter, QueryService, SharedKernel } from './generated/ast.js';
 import { isApplicationService, isDomainService, isEntity, isFactory, isProjector, isQueryService, isValueObject } from './generated/ast.js';
 import { getReachableMethods, hasBehaviorSideEffects } from './thinai-operation-utils.js';
-import { getOwningModule, isExposedByModule } from './thinai-scope-utils.js';
+import { getOwningModule, isPublicApiDeclaration } from './thinai-scope-utils.js';
 
 export interface MethodInvocationValidationContext {
     isSyntacticallyComplete(node: AstNode): boolean;
@@ -30,7 +30,7 @@ export function getMethodInvocationViolations(
     const targetSharedKernel = context.getOwningSharedKernel(target);
     const targetSharedKernelModule = getOwningModule(target);
     const allowedSharedKernelService = targetSharedKernel !== undefined && isDomainService(target.$container) &&
-        (targetSharedKernelModule === undefined || isExposedByModule(targetSharedKernelModule, target)) &&
+        (targetSharedKernelModule === undefined || isPublicApiDeclaration(target)) &&
         (applicationService !== undefined || isDomainService(method.$container)) &&
         context.hasVisibleSharedKernel(method, targetSharedKernel) &&
         context.hasSharedKernelRelationship(method, targetSharedKernel);
@@ -61,7 +61,7 @@ export function getMethodInvocationViolations(
         violations.push('A domain service must not invoke aggregate-owned methods; application services should invoke aggregate roots directly.');
     }
     if (isDomainService(method.$container) && !isDomainService(target.$container) &&
-        !isApplicationService(target.$container) && targetAggregate === undefined &&
+        !isApplicationService(target.$container) && !isFactory(target.$container) && targetAggregate === undefined &&
         !reachable.some(candidate => context.getOwningAggregate(candidate) !== undefined) &&
         !target.parameters.some(context.isEventParameter)) {
         violations.push('A domain service may invoke only another domain service.');
@@ -76,7 +76,7 @@ export function getMethodInvocationViolations(
             (!targetIsAggregateRoot && reachable.some(candidate => context.getOwningAggregate(candidate) !== undefined)))) {
         violations.push('Application services must reach aggregate-root behavior directly, not through a non-application-service method chain.');
     }
-    if (isFactory(target.$container) && !applicationService && !isDomainService(method.$container)) {
+    if (isFactory(target.$container) && !applicationService) {
         violations.push('Only an application service may invoke a factory method.');
     }
     if (isQueryService(target.$container) && !queryService) {

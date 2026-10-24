@@ -229,7 +229,12 @@ journey J {
 
         const messages = errors(docs['journey.tni']!);
         expect(messages.length).toBeGreaterThan(0);
-        expect(messages.every(message => message.includes('Journey specifications may reference'))).toBe(true);
+        expect(messages.every(message =>
+            message.includes('Journey specifications may reference') ||
+            message.includes('This specification path segment is not visible') ||
+            message.includes('Could not resolve reference')
+        )).toBe(true);
+        expect(messages.some(message => message.includes('This specification path segment is not visible'))).toBe(true);
     });
 
     test('keeps context-level and exposed query results visible in journey prose', async () => {
@@ -449,5 +454,26 @@ in bounded context C {
         const items = await completion(docs['a.tni']!, offset);
         const labels = items?.items.map(item => item.label) ?? [];
         expect(labels.filter(label => label === 'A' || label === 'A.A' || label === 'C.A.A')).toHaveLength(1);
+    });
+
+    test('rejects import aliases that collide with local declarations', async () => {
+        const docs = await build({
+            'other.tni': `bounded context Other
+in bounded context Other {
+    value object V {
+        raw: string
+    }
+}`,
+            'consumer.tni': `import { Other as Local } from "./other.tni"
+bounded context Local
+in bounded context Local {
+    data object D {
+        payload: Local.V
+    }
+}`
+        });
+        expect(errors(docs['consumer.tni']!)).toContain(
+            "Import alias 'Local' conflicts with a declaration in this file."
+        );
     });
 });

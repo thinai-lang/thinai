@@ -13,10 +13,10 @@ export class ThinaiParserErrorMessageProvider extends LangiumParserErrorMessageP
         const isQuotedValue = options.actual.image === '"' || options.actual.image === "'"
             || options.actual.image === '"""';
         if (options.expected.name === 'ID' && isEnumValuePosition && isQuotedValue) {
-            return 'Enum values must be unquoted identifiers declared by the field\'s enum type.';
+            return 'Enum values must be identifiers (use backticks for reserved names), not quoted strings.';
         }
         if (options.expected.name === 'ID' && options.ruleName.startsWith('EventReference') && isQuotedValue) {
-            return 'Event names must be unquoted identifiers declared in the model.';
+            return 'Event names must be identifiers (use backticks for reserved names), not quoted strings.';
         }
         return super.buildMismatchTokenMessage(options);
     }

@@ -82,6 +82,7 @@ import {
     isCrossContextOwned,
     isExposedByModule,
     isIdentifierValueObject,
+    isPublicApiDeclaration,
     moduleDependsTransitivelyOn,
     isModulePubliclyVisible
 } from './thinai-scope-utils.js';
@@ -498,12 +499,16 @@ export class ThinaiValidator {
                     }
                 }
             }
-            const unreachable = stateType.values.find(value => !reachable.has(value.name));
-            if (unreachable) {
-                accept('error', `State '${unreachable.name}' is unreachable from initial state '${initialState.name}'.`, {
-                    node: field,
-                    property: 'initialState'
-                });
+            const unreachableSources = new Set<string>();
+            for (const { change } of edges) {
+                const from = change.from.ref!.name;
+                if (!reachable.has(from) && !unreachableSources.has(from)) {
+                    unreachableSources.add(from);
+                    accept('error', `State '${from}' is unreachable from initial state '${initialState.name}'.`, {
+                        node: change,
+                        property: 'from'
+                    });
+                }
             }
         }
     }
@@ -605,7 +610,7 @@ export class ThinaiValidator {
                 !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
                 accept('error', this.referencePolicy.isIntegrationEventExposed(event)
                     ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
-                    : 'An integration event in a module must be explicitly exposed before another bounded context can consume it.', {
+                    : 'An integration event in a module must be exposed by its module and every enclosing module before another bounded context can consume it.', {
                     node: eventParameters[0],
                     property: 'type'
                 });
@@ -751,7 +756,7 @@ export class ThinaiValidator {
 
     private checkExposedCommandContract(method: Method, accept: ValidationAcceptor): void {
         const module = getOwningModule(method);
-        if (!module || !isExposedByModule(module, method)) {
+        if (!module || !isPublicApiDeclaration(method)) {
             return;
         }
         const contracts = getCommandContractTypes(method);
@@ -773,7 +778,7 @@ export class ThinaiValidator {
                 return true;
             }
             const typeModule = getOwningModule(type);
-            return typeModule !== undefined && !isExposedByModule(typeModule, type);
+            return typeModule !== undefined && !isPublicApiDeclaration(type);
         });
         const names = [...new Set(privateTypes.map(type => (type as AstNode & { name: string }).name))];
         if (names.length === 0) {
@@ -1025,8 +1030,10 @@ export class ThinaiValidator {
         const hasResult = method.returnPrimitive !== undefined || method.returnType !== undefined ||
             method.returnCollection !== undefined;
         // Application-service commands publish a `result` contract to journeys,
-        // so the name is reserved even when this particular command returns nothing.
-        if (!hasResult && !isApplicationService(method.$container)) {
+        // so the name is reserved even when this particular command returns
+        // nothing. Event handlers are not commands and may use the name when
+        // they do not declare a result.
+        if (!hasResult && !isJourneyCommand(method)) {
             return;
         }
         accept('error', "The name 'result' is reserved for the operation result and cannot be used as a parameter name.", {
@@ -1273,6 +1280,12 @@ export class ThinaiValidator {
         this.checkDuplicateConstructorSignatures(valueObject.constructors, accept);
         if (valueObject.mirrors?.ref) {
             const source = valueObject.mirrors.ref;
+            if (isInSharedKernel(valueObject)) {
+                accept('error', 'A mirrored identifier must be declared in a bounded context, not a shared kernel.', {
+                    node: valueObject,
+                    property: 'mirrors'
+                });
+            }
             if (!isIdentifierValueObject(source)) {
                 accept('error', 'A mirrored value object must target a value object used as an aggregate-root identifier.', {
                     node: valueObject,
@@ -1350,6 +1363,12 @@ export class ThinaiValidator {
         this.modelValidator.checkSharedKernel(sharedKernel, accept);
     }
 
+    private isOwnedSpecificationMember(container: AstNode, target: AstNode): boolean {
+        const owner = AstUtils.getContainerOfType(container,
+            (node): node is AstNode => isEntity(node) || isValueObject(node));
+        return owner !== undefined && target.$container === owner;
+    }
+
     private isNonTerminalPathReference(referenceInfo: ReferenceInfo): boolean {
         const { container, property } = referenceInfo;
         if (property.endsWith('Path') || property === 'path') {
@@ -1385,13 +1404,46 @@ export class ThinaiValidator {
                 });
                 return;
             }
+            const terminalReferenceIndex = isSpecificationTextPart(referenceInfo.container) &&
+                referenceInfo.property === 'targets'
+                ? referenceInfo.index ?? referenceInfo.container.targets.indexOf(referenceInfo.reference as (typeof referenceInfo.container.targets)[number])
+                : undefined;
             const isTerminalSpecificationSegment = isSpecificationTextPart(referenceInfo.container) && (
                 referenceInfo.property === 'target'
                     ? referenceInfo.container.targets.length === 0
                     : referenceInfo.property === 'targets' &&
-                        referenceInfo.index === referenceInfo.container.targets.length - 1
+                        terminalReferenceIndex === referenceInfo.container.targets.length - 1
             );
+            if (isSpecificationTextPart(referenceInfo.container) && isTerminalSpecificationSegment &&
+                referenceInfo.property === 'target' && referenceInfo.container.targets.length === 0 &&
+                (isField(target) || isMethod(target)) &&
+                referenceInfo.reference.$refText === target.name &&
+                !this.isOwnedSpecificationMember(referenceInfo.container, target)) {
+                accept('error', 'Bare field and method references are limited to the enclosing entity or value object; use an owner-qualified path.', {
+                    node: referenceInfo.container as AstNode,
+                    property: referenceInfo.property
+                });
+                return;
+            }
             const journeyStep = AstUtils.getContainerOfType(referenceInfo.container, isJourneyStep);
+            if (isSpecificationTextPart(referenceInfo.container) && !journeyStep && isTerminalSpecificationSegment &&
+                isMethod(target) && isQueryService(target.$container) &&
+                getOwningContextName(referenceInfo.container) === getOwningContextName(target) &&
+                AstUtils.getContainerOfType(referenceInfo.container, isMethod) !== target) {
+                accept('error', 'Non-journey prose must link a query result type or field, not the query operation itself.', {
+                    node: referenceInfo.container as AstNode,
+                    property: referenceInfo.property
+                });
+                return;
+            }
+            if (isSpecificationTextPart(referenceInfo.container) && !isTerminalSpecificationSegment &&
+                !this.referencePolicy.isVisibleSpecificationPathSegment(referenceInfo.container, target, false)) {
+                accept('error', 'This specification path segment is not visible; use a public declaration or an authorized contract path.', {
+                    node: referenceInfo.container as AstNode,
+                    property: referenceInfo.property
+                });
+                return;
+            }
             if (isSpecificationTextPart(referenceInfo.container) && journeyStep) {
                 const kind = getJourneySpecificationKind(referenceInfo.container) ?? 'when';
                 if (isTerminalSpecificationSegment && this.referencePolicy.isJourneyPathOnlyTarget(target)) {
@@ -1412,8 +1464,10 @@ export class ThinaiValidator {
             const targetModule = getOwningModule(target);
             const crossesContext = isCrossContextOwned(referenceInfo.container, target);
             const isSpecificationReference = isSpecificationTextPart(referenceInfo.container);
-            const isEventContractTarget = isSpecificationReference &&
-                this.referencePolicy.isEventContractTargetVisible(referenceInfo.container, target);
+            const isEventContractTarget = isSpecificationReference && (
+                this.referencePolicy.isEventContractTargetVisible(referenceInfo.container, target) ||
+                this.referencePolicy.isIntegrationEventContractTarget(referenceInfo.container, target)
+            );
             if (isSpecificationReference && crossesContext && isInSharedKernel(target)) {
                 const sharedKernel = getOwningSharedKernel(target);
                 const sourceSharedKernel = getOwningSharedKernel(referenceInfo.container);
@@ -1426,7 +1480,7 @@ export class ThinaiValidator {
                     return;
                 }
                 if (sharedKernel && sourceSharedKernel !== sharedKernel && targetModule &&
-                    !isExposedByModule(targetModule, target)) {
+                    !isPublicApiDeclaration(target)) {
                     accept('error', 'Using a module declaration from a shared kernel requires the module to expose that declaration.', {
                         node: referenceInfo.container as AstNode,
                         property: referenceInfo.property
@@ -1464,13 +1518,14 @@ export class ThinaiValidator {
                 return;
             }
             if (isSpecificationReference && crossesContext && !isInSharedKernel(target) &&
-                (isAggregate(target) || isEntity(target) || isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
+                (isValueObject(target) || isEnumType(target) || isEnumValue(target) ||
                     isRepository(target) || isQueryRepository(target) || isParameter(target) || isDataObject(target) || isReadModel(target) ||
                     isTerminalSpecificationSegment && (
-                        isApplicationService(target) || isDomainService(target) || isQueryService(target) ||
-                        isProjector(target) || isFactory(target) || isModule(target)
+                        isAggregate(target) || isEntity(target) || isApplicationService(target) || isDomainService(target) ||
+                        isQueryService(target) || isProjector(target) || isFactory(target) || isModule(target)
                     )) &&
                 !isEventContractTarget &&
+                !this.referencePolicy.isIntegrationEventContractTarget(referenceInfo.container, target) &&
                 !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
                     node: referenceInfo.container,
@@ -1502,8 +1557,8 @@ export class ThinaiValidator {
             }
             if (!sourceModule && targetModule && !isModule(target) &&
                 getOwningContextName(referenceInfo.container) === getOwningContextName(targetModule)) {
-                if (!isExposedByModule(targetModule, target)) {
-                    accept('error', 'A declaration outside a module may reference a module declaration only when its module exposes it.', {
+                if (!isPublicApiDeclaration(target)) {
+                    accept('error', 'A declaration outside a module may reference a module declaration only when its module and all enclosing modules expose it.', {
                         node: referenceInfo.container,
                         property: referenceInfo.property
                     });
@@ -1657,8 +1712,8 @@ export class ThinaiValidator {
                     });
                 }
                 const targetModule = getOwningModule(type);
-                if (targetModule !== undefined && !isExposedByModule(targetModule, type)) {
-                    accept('error', 'Integration-event payload types must be public contract types exposed by their module or belong to a shared kernel.', {
+                if (targetModule !== undefined && !isPublicApiDeclaration(type)) {
+                    accept('error', 'Integration-event payload types must be public contract types exposed by their module and all enclosing modules; context-level types are public.', {
                         node: field,
                         property: 'type'
                     });
@@ -1762,7 +1817,7 @@ export class ThinaiValidator {
                     return;
                 }
                 const targetModule = getOwningModule(target);
-                if (sourceSharedKernel !== sharedKernel && targetModule && !isExposedByModule(targetModule, target)) {
+                if (sourceSharedKernel !== sharedKernel && targetModule && !isPublicApiDeclaration(target)) {
                     accept('error', 'Using a module declaration from a shared kernel requires the module to expose that declaration.', {
                         node,
                         property

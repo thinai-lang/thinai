@@ -44,7 +44,7 @@ describe('Parsing tests', () => {
 
         const parserMessages = document.parseResult.parserErrors.map(error => error.message);
         expect(parserMessages.filter(message =>
-            message === 'Enum values must be unquoted identifiers declared by the field\'s enum type.'
+            message === 'Enum values must be identifiers (use backticks for reserved names), not quoted strings.'
         )).toHaveLength(2);
     });
 
@@ -61,7 +61,7 @@ describe('Parsing tests', () => {
         }`);
 
         expect(document.parseResult.parserErrors.filter(error =>
-            error.message === 'Event names must be unquoted identifiers declared in the model.'
+            error.message === 'Event names must be identifiers (use backticks for reserved names), not quoted strings.'
         )).toHaveLength(2);
     });
 

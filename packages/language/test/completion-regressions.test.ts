@@ -933,4 +933,227 @@ journey J {
         expect(service?.textEdit?.newText).toBe('App.');
         expect(readModel?.textEdit?.newText).toBe('Summary');
     });
+
+    test('does not offer private nested module segments or members', async () => {
+        const closed = await build(`bounded context C
+in bounded context C {
+    module Outer {
+        module Inner {
+            exposes V
+            value object V { raw: string }
+        }
+    }
+    data object D { payload: C.Outer.${marker} }
+}`);
+        expect(closed.completion?.items.map(item => item.label)).not.toContain('Inner');
+
+        const exposed = await build(`bounded context C2
+in bounded context C2 {
+    module Outer {
+        exposes Inner
+        module Inner {
+            exposes V
+            value object V { raw: string }
+        }
+    }
+    data object D { payload: C2.Outer.${marker} }
+}`);
+        expect(exposed.completion?.items.map(item => item.label)).toContain('Inner');
+
+        const hiddenRoot = await build(`bounded context C3
+in bounded context C3 {
+    module Outer {
+        module Inner {
+            exposes V
+            value object V { raw: string }
+        }
+    }
+    data object D { payload: ${marker} }
+}`);
+        expect(hiddenRoot.completion?.items.map(item => item.label)).not.toContain('V');
+    });
+
+    test('does not complete private query result paths in journeys', async () => {
+        const privateQuery = await build(`bounded context C
+in bounded context C {
+    data object Result { status: string }
+    module Internal {
+        query service Hidden { method find() returns Result }
+    }
+    application service App { method run() }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke C.App.run when "[[C.Internal.Hidden.find.${marker}]]"
+    }
+}`);
+        const labels = privateQuery.completion?.items.map(item => item.label) ?? [];
+        expect(labels).not.toContain('result');
+        expect(labels).not.toContain('status');
+    });
+
+    test('completes published aggregate-owned contract types through their canonical path', async () => {
+        const aggregatePath = await build(`bounded context P
+in bounded context P {
+    aggregate Order {
+        root entity Order { identifier id: OrderId }
+        value object OrderId { raw: string }
+    }
+    data object OrderDto { orderId: OrderId }
+    module Api {
+        exposes Queries
+        query service Queries { method find() returns OrderDto }
+    }
+}
+bounded context C
+in bounded context C {
+    application service App {
+        method run() {
+            reads from P.Api.Queries.find
+            behavior "Use [[P.Order.${marker}]]."
+        }
+    }
+}
+context map M { customer C -> supplier P }`);
+        expect(aggregatePath.completion?.items.map(item => item.label)).toContain('OrderId');
+    });
+
+    test('completes authorized integration-event payload shapes outside event handlers', async () => {
+        const payload = await build(`bounded context P
+in bounded context P {
+    value object OrderId { raw: string }
+    integration event E { orderId: OrderId }
+}
+bounded context C
+in bounded context C {
+    application service App {
+        method use() { behavior "Use [[P.E.orderId.${marker}]]." }
+    }
+}
+context map M { customer C -> supplier P }`);
+        expect(payload.completion?.items.map(item => item.label)).toContain('raw');
+    });
+
+    test('offers private nested module prefixes for authorized journey contracts', async () => {
+        const currentInput = await build(`bounded context C
+in bounded context C {
+    module Outer {
+        module Inner {
+            data object RunInput { orderId: string }
+            data object RunResult { accepted: boolean }
+            application service App {
+                method run(input: RunInput) returns RunResult
+            }
+        }
+    }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke C.Outer.Inner.App.run with "[[C.Outer.${marker}]]"
+    }
+}`);
+        expect(currentInput.completion?.items.map(item => item.label)).toContain('Inner');
+
+        const priorResult = await build(`bounded context C2
+in bounded context C2 {
+    module Outer {
+        module Inner {
+            data object Result { status: string }
+        }
+    }
+    application service App {
+        method place() returns Outer.Inner.Result
+        method pay()
+    }
+}
+actor Customer
+journey J2 {
+    by Customer {
+        invoke C2.App.place
+        invoke C2.App.pay when "[[C2.Outer.${marker}]]"
+    }
+}`);
+        expect(priorResult.completion?.items.map(item => item.label)).toContain('Inner');
+    });
+
+    test('still hides private nested module prefixes without a contract terminal', async () => {
+        const noContract = await build(`bounded context C
+in bounded context C {
+    module Outer {
+        module Inner {
+            exposes V
+            value object V { raw: string }
+        }
+    }
+    application service App {
+        method run() { behavior "[[C.Outer.${marker}]]" }
+    }
+}`);
+        expect(noContract.completion?.items.map(item => item.label)).not.toContain('Inner');
+    });
+
+    test('offers private nested module prefixes for published query contracts', async () => {
+        const published = await build(`bounded context P
+in bounded context P {
+    module Outer {
+        module Inner {
+            exposes Result
+            data object Result { status: string }
+        }
+    }
+    module Api depends on Inner {
+        exposes Queries
+        query service Queries { method find() returns Outer.Inner.Result }
+    }
+}
+bounded context C
+in bounded context C {
+    application service App {
+        method use() {
+            reads from P.Api.Queries.find
+            behavior "[[P.Outer.${marker}]]"
+        }
+    }
+}
+context map M { customer C -> supplier P }`);
+        expect(published.completion?.items.map(item => item.label)).toContain('Inner');
+    });
+
+    test('completes prior command results under canonical and suffix spellings', async () => {
+        const suffixFirst = await build(`bounded context C
+in bounded context C {
+    data object Result { status: string }
+    application service App {
+        method place() returns Result
+        method pay()
+    }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke App.place
+        invoke C.App.pay when "[[C.App.place.${marker}]]"
+    }
+}`);
+        expect(suffixFirst.completion?.items.map(item => item.label)).toContain('result');
+
+        const canonicalFirst = await build(`bounded context C2
+in bounded context C2 {
+    data object Result { status: string }
+    application service App {
+        method place() returns Result
+        method pay()
+    }
+}
+actor Customer
+journey J2 {
+    by Customer {
+        invoke C2.App.place
+        invoke C2.App.pay when "[[App.place.${marker}]]"
+    }
+}`);
+        expect(canonicalFirst.completion?.items.map(item => item.label)).toContain('result');
+    });
 });

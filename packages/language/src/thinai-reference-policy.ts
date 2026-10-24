@@ -20,6 +20,7 @@ import {
     isFactory,
     isField,
     isIntegrationEvent,
+    isJourneyStep,
     isMethod,
     isModel,
     isModule,
@@ -30,6 +31,7 @@ import {
     isRepository,
     isSharedKernel,
     isSharedKernelRelationship,
+    isSpecificationTextPart,
     isValueObject,
     type ContextMap,
     type ContextRelationship,
@@ -52,17 +54,29 @@ import {
     getJourneyStepsFor,
     type JourneySpecificationKind
 } from './thinai-journey-timeline.js';
-import { getOwningAggregate, getOwningContextName, getOwningModule, isExposedByModule, resolveAstNodeDescription, resolveImportUri } from './thinai-scope-utils.js';
+import {
+    getOwningAggregate,
+    getOwningContextName,
+    getOwningModule,
+    isExposedByModule,
+    isInSharedKernel,
+    isModuleAccessibleFrom,
+    isPublicApiDeclaration,
+    resolveAstNodeDescription,
+    resolveImportUri
+} from './thinai-scope-utils.js';
 import { getTypeReferences } from './thinai-type-utils.js';
 import { isJourneyCommand } from './thinai-operation-utils.js';
+import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
 export class ThinaiReferencePolicy {
+    private readonly eventContractTargetsCache = new WeakMap<AstNode, Set<AstNode>>();
+
     constructor(private readonly services: LangiumCoreServices) {}
 
     isIntegrationEventExposed(event: IntegrationEvent): boolean {
-        const module = getOwningModule(event);
-        return module === undefined || isExposedByModule(module, event);
+        return isPublicApiDeclaration(event);
     }
 
     /**
@@ -97,6 +111,10 @@ export class ThinaiReferencePolicy {
     }
 
     private getEventContractTargets(event: DomainEvent | IntegrationEvent): Set<AstNode> {
+        const cached = this.eventContractTargetsCache.get(event);
+        if (cached) {
+            return cached;
+        }
         const targets = new Set<AstNode>();
         const visited = new Set<AstNode>();
         targets.add(event);
@@ -106,7 +124,176 @@ export class ThinaiReferencePolicy {
                 this.collectEventContractType(reference.ref, targets, visited);
             }
         }
+        this.eventContractTargetsCache.set(event, targets);
         return targets;
+    }
+
+    /**
+     * An IntegrationEvent is a public cross-context contract once it is exposed
+     * and authorized. Any method in the consumer context may link its payload
+     * shape, not only the event handler that declares the event parameter.
+     */
+    isIntegrationEventContractTarget(source: AstNode, target: AstNode): boolean {
+        return this.isIntegrationEventContractTargetInternal(source, target, true);
+    }
+
+    private isJourneyIntegrationEventContractTarget(source: AstNode, target: AstNode): boolean {
+        return this.isIntegrationEventContractTargetInternal(source, target, false);
+    }
+
+    private isIntegrationEventContractTargetInternal(
+        source: AstNode,
+        target: AstNode,
+        requireAuthorization: boolean
+    ): boolean {
+        const document = AstUtils.getDocument(source);
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        const visibleUris = new Set<string>([document.uri.toString()]);
+        for (const declaration of model.imports) {
+            const uri = resolveImportUri(document, declaration);
+            if (uri) {
+                visibleUris.add(uri.toString());
+            }
+        }
+        for (const description of this.services.shared.workspace.IndexManager.allElements('IntegrationEvent', visibleUris)) {
+            const event = description.node ?? resolveAstNodeDescription(description, this.services);
+            if (!isIntegrationEvent(event) || !this.getEventContractTargets(event).has(target) ||
+                !this.isIntegrationEventVisibleFrom(source, event) ||
+                !this.isIntegrationEventExposed(event)) {
+                continue;
+            }
+            if (getOwningContextName(source) === getOwningContextName(event)) {
+                return true;
+            }
+            if (!requireAuthorization || this.hasAuthorizedEventRelationship(source, event)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private isIntegrationEventVisibleFrom(source: AstNode, event: IntegrationEvent): boolean {
+        const sourceDocument = AstUtils.getDocument(source);
+        const eventDocument = AstUtils.getDocument(event);
+        if (UriUtils.equals(sourceDocument.uri, eventDocument.uri)) {
+            return true;
+        }
+        const model = sourceDocument.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        const eventContext = getOwningContextName(event);
+        return model.imports.some(declaration => {
+            const uri = resolveImportUri(sourceDocument, declaration);
+            if (!uri || !UriUtils.equals(uri, eventDocument.uri)) {
+                return false;
+            }
+            if (declaration.components.length === 0) {
+                return true;
+            }
+            return declaration.components.some(component => {
+                const componentTarget = component.component.ref;
+                return componentTarget !== undefined &&
+                    getOwningContextName(componentTarget) === eventContext;
+            });
+        });
+    }
+
+    /**
+     * Path containers in specification prose have their own visibility rules.
+     * Modules and operations must be reachable; aggregates and entities are
+     * structural containers and are checked through the terminal declaration.
+     */
+    isVisibleSpecificationPathSegment(source: AstNode, target: AstNode, terminal: boolean): boolean {
+        if (terminal) {
+            return true;
+        }
+        if (isModule(target)) {
+            return isModuleAccessibleFrom(source, target) || this.isAuthorizedSpecificationContractPath(source);
+        }
+        if (isMethod(target)) {
+            const enclosing = AstUtils.getContainerOfType(source, isMethod);
+            if (enclosing === target) {
+                return true;
+            }
+            const journeyStep = AstUtils.getContainerOfType(source, isJourneyStep);
+            if (journeyStep) {
+                const kind = getJourneySpecificationKind(source) ?? 'when';
+                return this.isJourneyVisibleTarget(journeyStep, target, kind);
+            }
+            if (isQueryService(target.$container)) {
+                // Non-journey prose links the published result type or field,
+                // not the query operation itself.
+                return false;
+            }
+            if (!isInSharedKernel(target) &&
+                getOwningContextName(source) !== getOwningContextName(target)) {
+                return false;
+            }
+            return isModuleAccessibleFrom(source, getOwningModule(target));
+        }
+        return true;
+    }
+
+    private getTerminalSpecificationTarget(source: AstNode): AstNode | undefined {
+        if (!isSpecificationTextPart(source)) {
+            return undefined;
+        }
+        const reference = source.targets.length > 0 ? source.targets.at(-1) : source.target;
+        return reference?.ref;
+    }
+
+    private isAuthorizedSpecificationContractPath(source: AstNode): boolean {
+        const terminal = this.getTerminalSpecificationTarget(source);
+        return terminal !== undefined && this.isAuthorizedSpecificationContractTarget(source, terminal);
+    }
+
+    /**
+     * True when a candidate terminal is authorized by a command, query, or
+     * event contract rather than merely being independently visible. This is
+     * used for module prefixes during completion.
+     */
+    isAuthorizedSpecificationContractTarget(source: AstNode, target: AstNode): boolean {
+        const journeyStep = AstUtils.getContainerOfType(source, isJourneyStep);
+        if (journeyStep) {
+            const kind = getJourneySpecificationKind(source) ?? 'when';
+            if (isMethod(target)) {
+                return (isJourneyCommand(target) || isQueryService(target.$container)) &&
+                    this.isJourneyVisibleTarget(journeyStep, target, kind);
+            }
+            if (isIntegrationEvent(target)) {
+                return this.isIntegrationEventExposed(target);
+            }
+            const contractSteps = getJourneyContractTargetSteps(journeyStep, target);
+            if (contractSteps.length > 0) {
+                return isJourneyContractTargetVisible(journeyStep, target, kind);
+            }
+            return this.isJourneyQueryResultTarget(journeyStep, target) ||
+                this.isJourneyIntegrationEventContractTarget(source, target);
+        }
+        if (this.isEventContractTargetVisible(source, target) ||
+            this.isIntegrationEventContractTarget(source, target)) {
+            return true;
+        }
+        const contractType = isField(target) ? target.$container : target;
+        return (isDataObject(contractType) || isValueObject(contractType) ||
+            isEnumType(contractType) || isEnumValue(contractType)) &&
+            this.isPublishedReadResponseType(source, contractType);
+    }
+
+    /**
+     * Completion-only module prefix check. A private nested module is offered
+     * only when the specific terminal candidate under it is contract-authorized.
+     */
+    isVisibleSpecificationModulePrefix(source: AstNode, module: AstNode, candidate: AstNode | undefined): boolean {
+        if (!isModule(module)) {
+            return true;
+        }
+        return isModuleAccessibleFrom(source, module) ||
+            (candidate !== undefined && this.isAuthorizedSpecificationContractTarget(source, candidate));
     }
 
     private collectEventContractType(
@@ -232,8 +419,7 @@ export class ThinaiReferencePolicy {
     }
 
     private isContextLevelOrExposed(target: AstNode): boolean {
-        const module = getOwningModule(target);
-        return module === undefined || isExposedByModule(module, target);
+        return isPublicApiDeclaration(target);
     }
 
     /** Containers are valid journey path segments, but not meaningful terminal links. */
@@ -247,8 +433,7 @@ export class ThinaiReferencePolicy {
         if (!isQueryService(service)) {
             return false;
         }
-        const module = getOwningModule(service);
-        return module === undefined || isExposedByModule(module, service);
+        return getOwningModule(service) === undefined || this.isQueryServiceExposed(service);
     }
 
     private isJourneyQueryResultTarget(referenceStep: JourneyStep, target: AstNode): boolean {
@@ -314,8 +499,7 @@ export class ThinaiReferencePolicy {
     }
 
     isQueryServiceExposed(service: QueryService): boolean {
-        const module = getOwningModule(service);
-        return module !== undefined && isExposedByModule(module, service);
+        return getOwningModule(service) !== undefined && isPublicApiDeclaration(service);
     }
 
     isExposedQueryResult(method: Method): boolean {

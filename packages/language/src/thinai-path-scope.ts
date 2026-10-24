@@ -22,6 +22,7 @@ import {
     isMethod,
     isMethodInvocation,
     isModel,
+    isModule,
     isParameter,
     isReadModel,
     isReadSourceReference,
@@ -53,6 +54,8 @@ interface ThinaiPathScopeCallbacks {
     getDescriptionNode(description: AstNodeDescription): AstNode | undefined;
     isSupportedInvocationTarget(container: AstNode, target: Method): boolean;
     isSupportedCandidate(context: ReferenceInfo, target: AstNode): boolean;
+    isSupportedSpecificationPathSegment(context: ReferenceInfo, target: AstNode, terminal: boolean): boolean;
+    isSupportedSpecificationModulePrefix(context: ReferenceInfo, module: AstNode, candidate: AstNode | undefined): boolean;
     isJourneyCommand(method: Method): boolean;
 }
 
@@ -203,37 +206,37 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 continue;
             }
             const path = description.name.split('.');
-            for (let index = 0; index < path.length; index++) {
-                const segmentName = path[index]!;
-                if (segmentName === 'result' && this.isBareResultCollision(context, target)) {
-                    continue;
-                }
-                const ancestorTarget = this.getPathSegmentTarget(target, path, index, context);
-                // Synthetic contract roots such as `result` are attached to the
-                // operation node, so they are not ancestors of their own path
-                // segments. Resolve the root through the scope in that case.
-                const directRootTarget = index === 0
-                    ? description.name === segmentName
-                        ? target
-                        : scope.getElement(segmentName)?.node
-                    : undefined;
-                const segmentTarget = ancestorTarget ?? directRootTarget;
-                if (!segmentTarget) {
-                    continue;
-                }
-                const names = seenSegments.get(segmentTarget) ?? new Set<string>();
-                if (names.has(segmentName)) {
-                    continue;
-                }
-                names.add(segmentName);
-                seenSegments.set(segmentTarget, names);
-                const segmentDescription = this.descriptions.createDescription(
-                    segmentTarget,
-                    segmentName,
-                    AstUtils.getDocument(segmentTarget)
-                );
-                candidates.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}#${segmentName}`, segmentDescription);
+            const segmentName = path[0]!;
+            if (segmentName === 'result' && this.isBareResultCollision(context, target)) {
+                continue;
             }
+            const ancestorTarget = this.getPathSegmentTarget(target, path, 0, context);
+            // Synthetic contract roots such as `result` are attached to the
+            // operation node, so they are not ancestors of their own path
+            // segments. Resolve the root through the scope in that case.
+            const directRootTarget = description.name === segmentName
+                ? target
+                : scope.getElement(segmentName)?.node;
+            const segmentTarget = ancestorTarget ?? directRootTarget;
+            if (!segmentTarget) {
+                continue;
+            }
+            if (isSpecificationTextPart(context.container) && isModule(segmentTarget) &&
+                !this.callbacks.isSupportedSpecificationModulePrefix(context, segmentTarget, target)) {
+                continue;
+            }
+            const names = seenSegments.get(segmentTarget) ?? new Set<string>();
+            if (names.has(segmentName)) {
+                continue;
+            }
+            names.add(segmentName);
+            seenSegments.set(segmentTarget, names);
+            const segmentDescription = this.descriptions.createDescription(
+                segmentTarget,
+                segmentName,
+                AstUtils.getDocument(segmentTarget)
+            );
+            candidates.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}#${segmentName}`, segmentDescription);
         }
         return [...candidates.values()];
     }
@@ -512,6 +515,17 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 targets.add(ancestorTarget);
             }
             for (const target of targets) {
+                const segmentIsTerminal = parts.length === prefix.length + 1;
+                if (isSpecificationTextPart(context.container)) {
+                    if (isModule(target)) {
+                        if (!this.callbacks.isSupportedSpecificationModulePrefix(context, target, candidate)) {
+                            continue;
+                        }
+                    } else if (!segmentIsTerminal &&
+                        !this.callbacks.isSupportedSpecificationPathSegment(context, target, segmentIsTerminal)) {
+                        continue;
+                    }
+                }
                 const segmentDescription = this.descriptions.createDescription(target, segment, AstUtils.getDocument(target));
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
             }
@@ -542,6 +556,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
     ): AstNode[] {
         const target = this.resolveSpecificationShapePrefix(context, prefix, scope);
         if (!target) {
+            return [];
+        }
+        if (isMethod(target) &&
+            !this.callbacks.isSupportedSpecificationPathSegment(context, target, false)) {
             return [];
         }
         const members = new Set<AstNode>();

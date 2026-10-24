@@ -99,6 +99,7 @@ import {
     isCrossContextOwned,
     isExposedByModule,
     isIdentifierValueObject,
+    isPublicApiDeclaration,
     moduleDependsTransitivelyOn,
     isModulePubliclyVisible,
     resolveAstNodeDescription,
@@ -139,6 +140,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             getDescriptionNode: description => this.getDescriptionNode(description),
             isSupportedInvocationTarget: (container, target) => this.isSupportedInvocationTarget(container, target),
             isSupportedCandidate: (context, target) => this.isSupportedCandidate(context, target),
+            isSupportedSpecificationPathSegment: (context, target, terminal) =>
+                this.referencePolicy.isVisibleSpecificationPathSegment(context.container, target, terminal),
+            isSupportedSpecificationModulePrefix: (context, module, candidate) =>
+                this.referencePolicy.isVisibleSpecificationModulePrefix(context.container, module, candidate),
             isJourneyCommand
         });
     }
@@ -438,34 +443,41 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         } else if (isMethod(enclosingOperation) || isConstructor(enclosingOperation)) {
             operation = enclosingOperation;
         }
-        if (!operation) {
+        if (!operation && !journeyStep) {
             return pending;
         }
 
-        const hasOperationResult = isMethod(operation) && (operation.returnPrimitive !== undefined ||
-            operation.returnType !== undefined || operation.returnCollection !== undefined);
-        for (const parameter of operation.parameters) {
-            // `result` is the implicit operation result binding. A colliding
-            // parameter is diagnosed by validation, and the implicit binding wins
-            // in scope so specification lookups remain unambiguous.
-            if (parameter.name === 'result' && hasOperationResult) {
-                continue;
+        const hasOperationResult = operation !== undefined && isMethod(operation) && (
+            operation.returnPrimitive !== undefined ||
+            operation.returnType !== undefined ||
+            operation.returnCollection !== undefined
+        );
+        if (operation) {
+            for (const parameter of operation.parameters) {
+                // `result` is the implicit operation result binding. A colliding
+                // parameter is diagnosed by validation, and the implicit binding wins
+                // in scope so specification lookups remain unambiguous.
+                if (parameter.name === 'result' && hasOperationResult) {
+                    continue;
+                }
+                this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
+                this.addTypeShapeSymbols(pending, parameter.type?.ref, parameter.name, referenceType, new Set());
+                if (parameter.collection) {
+                    this.addCollectionShapeFields(pending, parameter.collection, parameter.name, referenceType, new Set());
+                }
             }
-            this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
-            this.addTypeShapeSymbols(pending, parameter.type?.ref, parameter.name, referenceType, new Set());
-            if (parameter.collection) {
-                this.addCollectionShapeFields(pending, parameter.collection, parameter.name, referenceType, new Set());
-            }
-        }
 
-        if (isMethod(operation) && !journeyStep) {
-            this.addOperationResultSymbols(pending, operation, 'result', referenceType);
+            if (isMethod(operation) && !journeyStep) {
+                this.addOperationResultSymbols(pending, operation, 'result', referenceType);
+            }
         }
         if (journeyStep) {
             // A journey is a timeline. Current inputs are available, but the
             // current command's result only becomes visible to later steps.
+            const methodScope = this.getUnsegmentedScope(context, 'Method');
             const priorSteps = getPriorJourneySteps(journeyStep);
             const seenPriorCommands = new Set<Method>();
+            const contractPrefixes = new Set<string>();
             for (const prior of priorSteps.reverse()) {
                 const command = getJourneyStepCommand(prior);
                 if (!command || seenPriorCommands.has(command)) {
@@ -476,18 +488,41 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     ...prior.path.map(reference => reference.$refText),
                     prior.target?.$refText
                 ].filter((text): text is string => typeof text === 'string' && text.length > 0).join('.');
-                this.addJourneyCommandContractSymbols(
-                    pending,
-                    command,
-                    commandPath || getExportedName(command as AstNode & { name: string }) || command.name,
-                    referenceType
-                );
+                const spellings = new Set<string>();
+                if (commandPath.length > 0) {
+                    spellings.add(commandPath);
+                }
+                const exportedName = getExportedName(command as AstNode & { name: string });
+                if (exportedName) {
+                    spellings.add(exportedName);
+                }
+                for (const description of methodScope.getAllElements()) {
+                    if (this.getDescriptionNode(description) === command) {
+                        spellings.add(description.name);
+                    }
+                }
+                for (const spelling of spellings) {
+                    if (contractPrefixes.has(spelling)) {
+                        continue;
+                    }
+                    contractPrefixes.add(spelling);
+                    this.addJourneyCommandContractSymbols(
+                        pending,
+                        command,
+                        spelling,
+                        referenceType
+                    );
+                }
             }
 
+            const kind = getJourneySpecificationKind(context.container) ?? 'when';
             const resultPrefixes = new Set<string>();
-            for (const description of this.getUnsegmentedScope(context, 'Method').getAllElements()) {
-                const queryMethod = description.node;
+            for (const description of methodScope.getAllElements()) {
+                const queryMethod = this.getDescriptionNode(description);
                 if (!isMethod(queryMethod) || !isQueryService(queryMethod.$container)) {
+                    continue;
+                }
+                if (!this.referencePolicy.isJourneyVisibleTarget(journeyStep, queryMethod, kind)) {
                     continue;
                 }
                 if (!queryMethod.returnType && !queryMethod.returnPrimitive && !queryMethod.returnCollection) {
@@ -755,7 +790,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const sourceModule = getOwningModule(context.container);
         const targetModule = getOwningModule(target);
         const specificationPathContainer = isSpecificationTextPart(context.container) &&
-            this.isStructuralSpecificationPathTarget(target);
+            this.isStructuralSpecificationPathTarget(target) && !this.isTerminalSpecificationSegment(context);
         if (isModuleReference(context.container) && context.property === 'target') {
             const dependencySource = context.container.$container;
             if (!isModule(dependencySource)) {
@@ -770,7 +805,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         if (!specificationPathContainer && !sourceModule && targetModule && !isModule(target) &&
             getOwningContextName(context.container) === getOwningContextName(targetModule)) {
-            if (!isExposedByModule(targetModule, target)) {
+            if (!isPublicApiDeclaration(target)) {
                 return false;
             }
         }
@@ -874,7 +909,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                     return false;
                 }
                 const targetModule = getOwningModule(target);
-                if (targetModule && !isExposedByModule(targetModule, target)) {
+                if (targetModule && !isPublicApiDeclaration(target)) {
                     return false;
                 }
             }
@@ -1139,6 +1174,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind);
         }
 
+        if (isMethod(target) && isQueryService(target.$container) &&
+            AstUtils.getContainerOfType(context.container, isMethod) !== target) {
+            return false;
+        }
+
         const sourceContext = getOwningContextName(context.container);
         const targetContext = getOwningContextName(target);
         if (!sourceContext || !targetContext || sourceContext === targetContext) {
@@ -1151,9 +1191,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 return false;
             }
             const targetModule = getOwningModule(target);
-            return targetModule === undefined || isExposedByModule(targetModule, target);
+            return targetModule === undefined || isPublicApiDeclaration(target);
         }
-        if (this.referencePolicy.isEventContractTargetVisible(context.container, target)) {
+        if (this.referencePolicy.isEventContractTargetVisible(context.container, target) ||
+            this.referencePolicy.isIntegrationEventContractTarget(context.container, target)) {
             return true;
         }
 
@@ -1186,7 +1227,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return false;
         }
         const referenceText = context.reference?.$refText ?? '';
-        const index = context.index ?? part.targets.length - 1;
+        const index = context.index ?? part.targets.indexOf(context.reference as (typeof part.targets)[number]);
         return index === part.targets.length - 1 && referenceText.length > 0;
     }
 

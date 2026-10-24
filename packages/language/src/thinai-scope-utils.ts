@@ -197,6 +197,66 @@ export function isExposedByModule(module: Module, target: AstNode): boolean {
     );
 }
 
+/** True when the module is a namespace that can be named from its context boundary. */
+export function isModuleAccessibleFromContext(module: Module): boolean {
+    let current = module;
+    while (true) {
+        const parent = getOwningModule(current);
+        if (!parent) {
+            return true;
+        }
+        if (!isExposedByModule(parent, current)) {
+            return false;
+        }
+        current = parent;
+    }
+}
+
+/**
+ * True when a declaration is part of the public API of its bounded context or
+ * shared kernel: it is exposed by its immediate module and every enclosing
+ * module is exposed by its parent. Context-level declarations are public.
+ */
+export function isPublicApiDeclaration(target: AstNode): boolean {
+    if (isModule(target)) {
+        return isModuleAccessibleFromContext(target);
+    }
+    const declaration = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
+    if (isModule(declaration)) {
+        return isModuleAccessibleFromContext(declaration);
+    }
+    const module = getOwningModule(declaration);
+    if (!module) {
+        return true;
+    }
+    return isExposedByModule(module, declaration) && isModuleAccessibleFromContext(module);
+}
+
+/**
+ * Resolves module visibility from a specific source. Sources inside a module
+ * may use dependencies and their own public API; sources outside all modules
+ * and cross-context sources may only use the public module chain.
+ */
+export function isModuleAccessibleFrom(source: AstNode, module: Module | undefined): boolean {
+    if (!module) {
+        return true;
+    }
+    const sourceModule = getOwningModule(source);
+    if (!sourceModule) {
+        return isModuleAccessibleFromContext(module);
+    }
+    if (sourceModule === module) {
+        return true;
+    }
+    if (isModulePubliclyVisible(sourceModule, module)) {
+        return true;
+    }
+    if (getOwningContextName(sourceModule) !== getOwningContextName(module)) {
+        return isModuleAccessibleFromContext(module);
+    }
+    return false;
+}
+
 /**
  * Collects a module's public API. Exposing a nested module re-exports that
  * module's public API; dependencies are intentionally not followed here.

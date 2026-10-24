@@ -149,6 +149,12 @@ export class ThinaiModelValidator {
 
     checkModelImports(model: Model, accept: ValidationAcceptor): void {
         const names = new Map<string, Import | ImportComponent>();
+        const localNames = new Set<string>();
+        for (const node of AstUtils.streamAst(model)) {
+            if ('name' in node && typeof node.name === 'string') {
+                localNames.add(node.name);
+            }
+        }
         for (const importDeclaration of model.imports) {
             const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
             for (const component of importDeclaration.components) {
@@ -157,6 +163,12 @@ export class ThinaiModelValidator {
                     node: component,
                     property: component.alias ? 'alias' : 'component'
                 });
+                if (component.alias && localNames.has(component.alias)) {
+                    accept('error', `Import alias '${component.alias}' conflicts with a declaration in this file.`, {
+                        node: component,
+                        property: 'alias'
+                    });
+                }
             }
             for (const declaration of declarations) {
                 if (names.has(declaration.name)) {

@@ -3469,6 +3469,7 @@ bounded context Billing realizes Payments`;
                 URI.file(`/workspace/primitive-type-completion-${index}.tni`), text
             );
             documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(offset)

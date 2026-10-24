@@ -239,8 +239,10 @@ For an IntegrationEvent nested in a module, expose the event, then import its
 owning bounded context and use the qualified module path. Modules organize one
 bounded context; their names are part of the public path for nested contracts.
 A context-level event and its context-level payload types are public; when the
-event or a payload type is nested in a module, expose it. IntegrationEvent
-payloads cannot expose entities or types owned by aggregates.
+event or a payload type is nested in a module, expose it. Any method in an
+authorized consumer context may link an exposed integration event's payload
+shape, not only the event handler. IntegrationEvent payloads cannot expose
+entities or types owned by aggregates.
 A payload value object or enum may come from an exposed sibling module when the
 event's module depends on that module; the normal dependency and exposure rules
 apply.
@@ -254,10 +256,11 @@ import { Ordering as Orders, Shipping } from "./contexts.tni"
 An alias applies to every visible declaration of the selected component,
 including members contributed from other imported files. For example, if
 `Ordering` is aliased as `Orders`, contributed declarations are available as
-`Orders.Member` as well as under their canonical path. Aliases do not import
-files on their own: import the contribution file that declares the members you
-use. Declarations in the current document can also be referenced through a
-local context alias.
+`Orders.Member` as well as under their canonical path. Aliases are document-local
+scope names; an alias must not collide with a declaration in the importing file.
+Aliases do not import files on their own: import the contribution file that
+declares the members you use. Declarations in the current document can also be
+referenced through a local context alias.
 
 Shared value objects belong in an explicit `shared kernel`. Context maps record
 which bounded contexts share that kernel. Modules are optional internal
@@ -287,7 +290,9 @@ DataObject result; a context-level query service is local and journey-visible
 only. Direct module-to-module method references still require the method itself
 to be exposed. Published query DataObjects expose their nested DataObject, value
 object, and enum shape, including enum values; aggregate-owned contract types
-produce a warning. Journeys are model-level timelines and do not require either
+produce a warning. Published result shapes may be linked through their canonical
+type path, including aggregate or entity containers, or through a field path on
+the result contract. Journeys are model-level timelines and do not require either
 form of module exposure merely to invoke an application-service command.
 
 ## Behavior and Journeys
@@ -389,6 +394,9 @@ a date or time zone, and `instant` for an exact point on the global timeline.
 such as a time-zone-aware appointment, with a value object.
 Use `initial State` only on a non-optional enum field of an entity; it marks the
 starting point of that entity's state graph, not a default for arbitrary data.
+A transition on that field must start from a state that is reachable from the
+initial state. Enum values unused by that field remain valid, so a state enum can
+be shared with contracts or other entities.
 Describe other creation-time defaults as constructor postconditions or behavior.
 
 When a domain term is also a Thinai keyword, quote the identifier with
