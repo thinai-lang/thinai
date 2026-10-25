@@ -1,6 +1,6 @@
 {
     "name": "thinai-workspace",
-    "description": "Base workspace package",
+    "description": "Thinai DDD modeling language workspace",
     "version": "0.0.1",
     "type": "module",
     "private": true,
@@ -10,11 +10,15 @@
     },
     "scripts": {
         "clean": "npm run clean --workspaces",
+        "generate": "npm run --workspace packages/language langium:generate",
+        "prebuild": "npm run generate",
         "watch": "tsc -b tsconfig.build.json --watch",
+        "prewatch": "npm run generate",
         "build": "tsc -b tsconfig.build.json && npm run build --workspaces",
         "build:clean": "npm run clean && npm run build",
         "langium:generate": "npm run --workspace packages/language langium:generate",
         "langium:watch": "npm run --workspace packages/language langium:watch",
+        "pretest": "npm run generate && tsc -b tsconfig.build.json",
         "test": "npm run --workspace packages/language test && vitest run --config packages/cli/vitest.config.ts",
         "coverage": "npm run --workspace packages/language coverage"
     },
