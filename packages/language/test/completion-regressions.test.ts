@@ -740,6 +740,100 @@ in bounded context O {
         );
     });
 
+    test('completes aggregate containers in published query contract paths', async () => {
+        const completion = await build(`bounded context P
+in bounded context P {
+    aggregate Order {
+        root entity Order { identifier id: OrderId }
+        value object OrderId { raw: string }
+    }
+    data object OrderDto {
+        orderId: OrderId
+    }
+    module Api {
+        exposes Queries
+        query service Queries {
+            method find() returns OrderDto
+        }
+    }
+}
+bounded context C
+in bounded context C {
+    application service App {
+        method run() {
+            reads from P.Api.Queries.find
+            behavior "Use [[P.${marker}]]."
+        }
+    }
+}
+context map M { customer C -> supplier P }`);
+        const item = completion.completion?.items.find(candidate => candidate.label === 'Order');
+        expect(item).toBeDefined();
+        expect(item?.textEdit?.newText).toBe('Order.');
+    });
+
+    test('does not offer private query service containers in journeys', async () => {
+        const completion = await build(`bounded context C
+in bounded context C {
+    data object Result {
+        status: string
+    }
+    module Internal {
+        exposes Visible
+        query service Hidden {
+            method find() returns Result
+        }
+        query service Visible {
+            method find() returns Result
+        }
+    }
+    application service App {
+        method run()
+    }
+}
+actor Customer
+journey J {
+    by Customer {
+        invoke C.App.run when "[[C.Internal.${marker}]]"
+    }
+}`);
+        const labels = completion.completion?.items.map(item => item.label) ?? [];
+        expect(labels).not.toContain('Hidden');
+        expect(labels).toContain('Visible');
+    });
+
+    test('does not offer a reserved result parameter as a completion', async () => {
+        const completion = await build(`bounded context C
+in bounded context C {
+    application service App {
+        method run(result: string) {
+            behavior "Use [[res${marker}]]."
+        }
+    }
+}`);
+        expect(completion.completion?.items.map(item => item.label) ?? []).not.toContain('result');
+    });
+
+    test('completes specification references inside single-quoted text', async () => {
+        const completion = await build(`bounded context C
+in bounded context C {
+    data object D {
+        payload: string
+    }
+    application service App {
+        method run(input: D) {
+            behavior 'Use [[inp${marker}]]'
+        }
+    }
+}`);
+        expect(completion.completion?.items.map(item => item.label) ?? []).toContain('input');
+    });
+
+    test('triggers completion for single-quoted strings', async () => {
+        expect(services.Thinai.lsp.CompletionProvider?.completionOptions?.triggerCharacters)
+            .toContain("'");
+    });
+
     test('offers published query result value-object and enum references', async () => {
         const model = `bounded context Api
 bounded context Consumer

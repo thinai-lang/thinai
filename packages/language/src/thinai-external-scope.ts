@@ -143,7 +143,7 @@ export class ThinaiExternalScope {
                 }
                 for (const component of declaration.components) {
                     const target = component.component.ref;
-                    if (!target || !this.isWithinComponent(description.name, target)) {
+                    if (!target || !this.isWithinComponent(description, target)) {
                         continue;
                     }
                     visible = true;
@@ -164,7 +164,7 @@ export class ThinaiExternalScope {
             }
             // Aliases apply to every visible declaration of the selected
             // component, including members contributed by other imported files.
-            for (const name of getComponentAliasNames(description.name, aliases)) {
+            for (const name of getComponentAliasNames(description.name, aliases, description.type)) {
                 this.addScopeCandidate(candidates, description, name);
             }
         }
@@ -199,7 +199,7 @@ export class ThinaiExternalScope {
                     this.addScopeCandidate(candidates, description, name);
                 }
             }
-            for (const name of getComponentAliasNames(description.name, aliases)) {
+            for (const name of getComponentAliasNames(description.name, aliases, description.type)) {
                 this.addScopeCandidate(candidates, description, name);
             }
         }
@@ -215,9 +215,12 @@ export class ThinaiExternalScope {
         return getOwningContextName(context.container);
     }
 
-    private isWithinComponent(name: string, component: ImportableComponent): boolean {
+    private isWithinComponent(description: AstNodeDescription, component: ImportableComponent): boolean {
         const componentName = getExportedName(component as AstNode & { name: string });
-        return name === componentName || name.startsWith(`${componentName}.`);
+        if (description.name === componentName) {
+            return description.type === component.$type;
+        }
+        return description.name.startsWith(`${componentName}.`);
     }
 
     private addScopeCandidates(

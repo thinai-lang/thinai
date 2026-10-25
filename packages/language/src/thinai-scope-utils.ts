@@ -61,6 +61,8 @@ export interface ComponentAlias {
     alias: string;
 }
 
+const strategicDeclarationTypes = new Set(['Actor', 'Journey', 'Subdomain']);
+
 /** Collects explicit component aliases. Aliases are document-local scope names. */
 export function getComponentAliases(model: Model): ComponentAlias[] {
     const aliases = new Map<string, ComponentAlias>();
@@ -85,12 +87,22 @@ export function getComponentAliases(model: Model): ComponentAlias[] {
  * Returns alias spellings for an exported declaration name. This applies to
  * declarations declared in any visible file, not only the file that owns the
  * aliased import.
+ *
+ * Exact-name aliases are not applied to strategic declarations (actors,
+ * journeys, subdomains). Those declarations have their own reference
+ * namespaces and may legitimately share a bounded context's name.
  */
-export function getComponentAliasNames(name: string, aliases: readonly ComponentAlias[]): string[] {
+export function getComponentAliasNames(
+    name: string,
+    aliases: readonly ComponentAlias[],
+    targetType?: string
+): string[] {
     const names: string[] = [];
     for (const { canonical, alias } of aliases) {
         if (name === canonical) {
-            names.push(alias);
+            if (targetType === undefined || !strategicDeclarationTypes.has(targetType)) {
+                names.push(alias);
+            }
         } else if (name.startsWith(`${canonical}.`)) {
             names.push(`${alias}.${name.slice(canonical.length + 1)}`);
         }

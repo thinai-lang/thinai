@@ -87,7 +87,8 @@ export function getMethodInvocationViolations(
     const isAssociatedFactoryMethod = applicationService !== undefined && targetFactory !== undefined &&
         isEntity(factoryReturnType) && factoryReturnType.root && context.getOwningAggregate(factoryReturnType) !== undefined;
     if (targetAggregate && !context.isAggregateRootMethod(target, targetAggregate) &&
-        !isEntity(method.$container) && !isAssociatedFactoryMethod) {
+        !isEntity(method.$container) && !isAssociatedFactoryMethod &&
+        !applicationService && !queryService && !isDomainService(method.$container)) {
         violations.push('Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.');
     }
     if (targetAggregate && targetIsAggregateRoot && !isEntity(method.$container) &&

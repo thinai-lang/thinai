@@ -79,7 +79,7 @@ import {
     isValueObject
 } from './generated/ast.js';
 import { getMethodInvocationViolations } from './thinai-method-invocation-policy.js';
-import { isJourneyCommand } from './thinai-operation-utils.js';
+import { isJourneyCommand, isReservedResultParameterName } from './thinai-operation-utils.js';
 import {
     areRelationshipPairDefinitionsCompatible,
     createRelationshipPairSemantics,
@@ -445,7 +445,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 // `result` is the implicit operation result binding. A colliding
                 // parameter is diagnosed by validation, and the implicit binding wins
                 // in scope so specification lookups remain unambiguous.
-                if (parameter.name === 'result' && hasOperationResult) {
+                if (isMethod(operation) && isReservedResultParameterName(operation, parameter.name) &&
+                    (hasOperationResult || isJourneyCommand(operation))) {
                     continue;
                 }
                 this.addSpecificationSymbol(pending, parameter, parameter.name, referenceType);
@@ -650,24 +651,16 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         referenceType: string,
         visited: Set<AstNode>
     ): void {
+        // Specification paths through a Map follow its value shape. Keys are
+        // identity, not navigable data.
         this.addCollectionMemberShape(
             descriptions,
-            collection.elementCollection,
-            collection.elementType?.ref,
+            collection.kind === 'Map' ? collection.valueCollection : collection.elementCollection,
+            collection.kind === 'Map' ? collection.valueType?.ref : collection.elementType?.ref,
             prefix,
             referenceType,
             visited
         );
-        if (collection.kind === 'Map') {
-            this.addCollectionMemberShape(
-                descriptions,
-                collection.valueCollection,
-                collection.valueType?.ref,
-                prefix,
-                referenceType,
-                visited
-            );
-        }
     }
 
     private addCollectionMemberShape(
@@ -699,6 +692,11 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     private isSupportedCandidate(context: ReferenceInfo, target: AstNode | undefined): boolean {
         if (!target) {
             return true;
+        }
+
+        if (isParameter(target) && target.name === 'result' &&
+            isMethod(target.$container) && isReservedResultParameterName(target.$container, target.name)) {
+            return false;
         }
 
         if (isImportComponent(context.container) && context.property === 'component') {
@@ -1472,6 +1470,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
             const kind = getJourneySpecificationKind(context.container) ?? 'when';
             return this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind);
+        }
+
+        // Aggregate and entity containers are structural segments of published
+        // contract paths. Their terminal declarations are still checked by the
+        // other branches below.
+        if ((isAggregate(target) || isEntity(target)) &&
+            !this.isTerminalSpecificationSegment(context)) {
+            return true;
         }
 
         if (isMethod(target) && isQueryService(target.$container) &&

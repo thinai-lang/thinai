@@ -266,9 +266,12 @@ ReadSourceReference:
 AggregateReference:
     (path+=[NamedDeclaration:ID] '.')* target=[Aggregate:ID];
 
+// Subdomains are strategic declarations referenced only by `realizes`; they are
+// intentionally not part of path references or specification links so a
+// subdomain and its equally named bounded context can coexist.
 type NamedDeclaration = Aggregate | ApplicationService | BoundedContext | ContextMap | DomainEvent | DomainService | Entity |
     DataObject | EnumType | Factory | IntegrationEvent | Method | Module | Projector | SharedKernel |
-    QueryRepository | QueryService | ReadModel | Repository | Subdomain | ValueObject;
+    QueryRepository | QueryService | ReadModel | Repository | ValueObject;
 
 Actor:
     'actor' name=ID ;

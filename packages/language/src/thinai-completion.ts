@@ -111,7 +111,7 @@ const initialFieldTypePattern = new RegExp(
 
 export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     override readonly completionOptions = {
-        triggerCharacters: [' ', '"', '/', '.', '[', '>', '-', ':', '<', ',']
+        triggerCharacters: [' ', '"', "'", '/', '.', '[', '>', '-', ':', '<', ',']
     };
 
     private readonly thinaiServices: ThinaiServices;
@@ -205,7 +205,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 continue;
             }
             const exportedName = getExportedName(target as AstNode & { name: string });
-            const aliasNames = getComponentAliasNames(exportedName, aliases);
+            const aliasNames = getComponentAliasNames(exportedName, aliases, target.$type);
             const pathSpelling = description.name === exportedName ||
                 exportedName.endsWith(`.${description.name}`) ||
                 aliasNames.includes(description.name);

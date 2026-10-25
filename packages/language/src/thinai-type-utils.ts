@@ -16,6 +16,39 @@ export function getTypeReferences(
     return references;
 }
 
+/**
+ * Collects the type references a specification path may traverse. Collection
+ * paths follow their element/value type; map paths follow the value type only,
+ * because keys are identity rather than navigable data.
+ */
+export function getNavigableTypeReferences(
+    type?: Reference<TypeDeclaration>,
+    collection?: CollectionType
+): Reference<TypeDeclaration>[] {
+    const references: Reference<TypeDeclaration>[] = [];
+    if (type) {
+        references.push(type);
+    }
+    if (collection) {
+        collectNavigableCollectionReferences(collection, references);
+    }
+    return references;
+}
+
+function collectNavigableCollectionReferences(
+    collection: CollectionType,
+    references: Reference<TypeDeclaration>[]
+): void {
+    const reference = collection.kind === 'Map' ? collection.valueType : collection.elementType;
+    if (reference) {
+        references.push(reference);
+    }
+    const nested = collection.kind === 'Map' ? collection.valueCollection : collection.elementCollection;
+    if (nested) {
+        collectNavigableCollectionReferences(nested, references);
+    }
+}
+
 function collectCollectionReferences(
     collection: CollectionType,
     references: Reference<TypeDeclaration>[]

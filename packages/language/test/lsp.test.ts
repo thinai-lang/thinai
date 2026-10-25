@@ -3943,7 +3943,7 @@ in bounded context Ordering {
         expect(item?.detail).toBe('Parameter input: string');
     });
 
-    test('offers map key and value shape fields in specification completion', async () => {
+    test('offers map value shape fields in specification completion', async () => {
         const source = `bounded context Ordering
 in bounded context Ordering {
     value object Key { keyField: string }
@@ -3964,7 +3964,7 @@ in bounded context Ordering {
             position: document.textDocument.positionAt(source.indexOf('[[input.]]') + '[[input.'.length)
         });
         const labels = completion?.items.map(item => item.label) ?? [];
-        expect(labels).toContain('keyField');
+        expect(labels).not.toContain('keyField');
         expect(labels).toContain('valueField');
     });
 

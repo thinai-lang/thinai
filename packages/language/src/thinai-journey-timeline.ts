@@ -15,7 +15,7 @@ import {
     type Method,
     type TypeDeclaration
 } from './generated/ast.js';
-import { getTypeReferences } from './thinai-type-utils.js';
+import { getNavigableTypeReferences, getTypeReferences } from './thinai-type-utils.js';
 
 export type JourneySpecificationKind = 'with' | 'when';
 
@@ -67,23 +67,29 @@ export function getJourneyStepContracts(step: JourneyStep): JourneyStepContracts
 }
 
 /** Computes the recursive input and output contract of a command method. */
-export function getCommandContractTypes(command: Method): { inputs: Set<AstNode>; outputs: Set<AstNode> } {
+export function getCommandContractTypes(
+    command: Method,
+    navigable = true
+): { inputs: Set<AstNode>; outputs: Set<AstNode> } {
     const inputs = new Set<AstNode>();
     const outputs = new Set<AstNode>();
     const inputVisited = new Set<AstNode>();
     for (const parameter of command.parameters) {
         inputs.add(parameter);
-        for (const reference of getTypeReferences(
+        for (const reference of (navigable ? getNavigableTypeReferences : getTypeReferences)(
             parameter.type as import('langium').Reference<TypeDeclaration> | undefined,
             parameter.collection
         )) {
-            collectContractType(reference.ref, inputs, inputVisited);
+            collectContractType(reference.ref, inputs, inputVisited, navigable);
         }
     }
 
     const outputVisited = new Set<AstNode>();
-    for (const reference of getTypeReferences(command.returnType, command.returnCollection)) {
-        collectContractType(reference.ref, outputs, outputVisited);
+    for (const reference of (navigable ? getNavigableTypeReferences : getTypeReferences)(
+        command.returnType,
+        command.returnCollection
+    )) {
+        collectContractType(reference.ref, outputs, outputVisited, navigable);
     }
     return { inputs, outputs };
 }
@@ -134,7 +140,8 @@ export function isJourneyContractTargetVisible(
 function collectContractType(
     type: AstNode | undefined,
     target: Set<AstNode>,
-    visited: Set<AstNode>
+    visited: Set<AstNode>,
+    navigable: boolean
 ): void {
     if (!type || visited.has(type) || isEntity(type) || isDomainEvent(type) || isIntegrationEvent(type)) {
         return;
@@ -154,8 +161,11 @@ function collectContractType(
 
     for (const field of type.fields) {
         target.add(field);
-        for (const reference of getTypeReferences(field.type, field.collection)) {
-            collectContractType(reference.ref, target, visited);
+        for (const reference of (navigable ? getNavigableTypeReferences : getTypeReferences)(
+            field.type,
+            field.collection
+        )) {
+            collectContractType(reference.ref, target, visited, navigable);
         }
     }
 }

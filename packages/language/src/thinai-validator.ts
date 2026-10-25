@@ -1,5 +1,6 @@
 import {
     type AstNode,
+    type LangiumDocument,
     type Reference,
     type ReferenceInfo,
     AstUtils,
@@ -48,8 +49,11 @@ import type {
 } from './generated/ast.js';
 import {
     isAggregate,
+    isActor,
     isApplicationService,
+    isBoundedContext,
     isConstructor,
+    isContextMap,
     isDomainEvent,
     isDomainService,
     isEntity,
@@ -58,6 +62,8 @@ import {
     isField,
     isIntegrationEvent,
     isEnumType,
+    isJourney,
+    isModel,
     isModule,
     isMethod,
     isProjector,
@@ -67,8 +73,10 @@ import {
     isRepository,
     isQueryService,
     isReadModel,
+    isSharedKernel,
     isSpecificationTextPart,
     isJourneyStep,
+    isSubdomain,
     isValueObject
 } from './generated/ast.js';
 import type { ThinaiServices } from './thinai-module.js';
@@ -85,7 +93,8 @@ import {
     isIdentifierValueObject,
     isPublicApiDeclaration,
     moduleDependsTransitivelyOn,
-    isModulePubliclyVisible
+    isModulePubliclyVisible,
+    resolveImportUri
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
@@ -93,7 +102,8 @@ import {
     canDeclareProjects,
     canDeclareTransition,
     getEventEmissionMode,
-    isJourneyCommand
+    isJourneyCommand,
+    isReservedResultParameterName
 } from './thinai-operation-utils.js';
 import { getCommandContractTypes } from './thinai-journey-timeline.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
@@ -144,11 +154,13 @@ export function registerValidationChecks(services: ThinaiServices): void {
     registry.register(checks, validator);
 }
 
+type DeclarationNameNamespace = 'actor' | 'journey' | 'subdomain' | 'importable' | 'path';
+
 export class ThinaiValidator {
     private readonly referencePolicy: ThinaiReferencePolicy;
     private readonly modelValidator: ThinaiModelValidator;
     private readonly readDependencyValidator: ThinaiReadDependencyValidator;
-    private duplicateNameCounts: Map<string, number> | undefined;
+    private duplicateNameCounts = new WeakMap<LangiumDocument, Map<DeclarationNameNamespace, Map<string, number>>>();
     private writeRepositoriesByAggregate: Map<Aggregate, Repository[]> | undefined;
 
     constructor(private readonly services: ThinaiServices) {
@@ -163,7 +175,7 @@ export class ThinaiValidator {
             parameter => this.isEventParameter(parameter)
         );
         const clearWorkspaceCaches = () => {
-            this.duplicateNameCounts = undefined;
+            this.duplicateNameCounts = new WeakMap();
             this.writeRepositoriesByAggregate = undefined;
             this.referencePolicy.clearCache();
         };
@@ -581,7 +593,7 @@ export class ThinaiValidator {
                 });
             }
         }
-        if (eventParameters.length > 0) {
+        if (eventParameters.length > 0 && !queryService) {
             if (!applicationService && !projectorService) {
                 accept('error', 'Event-typed method parameters are allowed only on application-service handlers and projectors.', {
                     node: method,
@@ -595,7 +607,7 @@ export class ThinaiValidator {
                     property: 'optional'
                 });
             }
-            if (eventParameters.length !== 1 || method.parameters.length !== 1) {
+            if (!projectorService && (eventParameters.length !== 1 || method.parameters.length !== 1)) {
                 accept('error', 'An event-triggered method must have exactly one event-typed parameter.', {
                     node: method,
                     property: 'parameters'
@@ -761,7 +773,7 @@ export class ThinaiValidator {
         if (!module || !isPublicApiDeclaration(method)) {
             return;
         }
-        const contracts = getCommandContractTypes(method);
+        const contracts = getCommandContractTypes(method, false);
         const contractTypes = new Set<AstNode>();
         for (const node of [...contracts.inputs, ...contracts.outputs]) {
             if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
@@ -798,7 +810,7 @@ export class ThinaiValidator {
             !this.referencePolicy.isExposedQueryResult(method)) {
             return;
         }
-        const contracts = getCommandContractTypes(method);
+        const contracts = getCommandContractTypes(method, false);
         const aggregateOwnedTypes = new Set<AstNode>();
         for (const node of [...contracts.inputs, ...contracts.outputs]) {
             if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
@@ -1025,17 +1037,8 @@ export class ThinaiValidator {
     }
 
     private checkReservedResultParameter(method: Method, accept: ValidationAcceptor): void {
-        const parameter = method.parameters.find(candidate => candidate.name === 'result');
+        const parameter = method.parameters.find(candidate => isReservedResultParameterName(method, candidate.name));
         if (!parameter) {
-            return;
-        }
-        const hasResult = method.returnPrimitive !== undefined || method.returnType !== undefined ||
-            method.returnCollection !== undefined;
-        // Application-service commands publish a `result` contract to journeys,
-        // so the name is reserved even when this particular command returns
-        // nothing. Event handlers are not commands and may use the name when
-        // they do not declare a result.
-        if (!hasResult && !isJourneyCommand(method)) {
             return;
         }
         accept('error', "The name 'result' is reserved for the operation result and cannot be used as a parameter name.", {
@@ -1467,7 +1470,7 @@ export class ThinaiValidator {
                     });
                 } else if (isTerminalSpecificationSegment &&
                     !this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind)) {
-                    accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.', {
+                    accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations, private command contract inputs or results, or private domain events.', {
                         node: referenceInfo.container as AstNode,
                         property: referenceInfo.property
                     });
@@ -1511,7 +1514,7 @@ export class ThinaiValidator {
                 if (!authorizedPublicField && !publishedReadField) {
                     accept('error', isDomainEvent(target.$container)
                         ? 'Specification text cannot reference a private DomainEvent field from another bounded context.'
-                        : 'Specification text cannot reference a private field from another bounded context.', {
+                        : 'A field from another bounded context is not part of an authorized event or query contract.', {
                         node: referenceInfo.container,
                         property: referenceInfo.property
                     });
@@ -1525,7 +1528,7 @@ export class ThinaiValidator {
                     this.referencePolicy.isExposedQueryResult(target);
                 accept('error', publishedQuery
                     ? 'Specification text cannot link a cross-context query operation directly; link its published result type or field instead.'
-                    : 'Specification text cannot reference a private method from another bounded context.', {
+                    : 'A method from another bounded context is not part of an authorized event or query contract.', {
                     node: referenceInfo.container as AstNode,
                     property: referenceInfo.property
                 });
@@ -1541,7 +1544,7 @@ export class ThinaiValidator {
                 !isEventContractTarget &&
                 !this.referencePolicy.isIntegrationEventContractTarget(referenceInfo.container, target) &&
                 !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
-                accept('error', 'Specification text cannot reference private operation, data, or query types from another bounded context.', {
+                accept('error', 'Specification text can reference another bounded context only through an authorized event or query contract.', {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
@@ -1561,6 +1564,12 @@ export class ThinaiValidator {
                     node: referenceInfo.container,
                     property: referenceInfo.property
                 });
+                return;
+            }
+            // Integration-event payload visibility has a dedicated diagnostic
+            // with the event-specific rule. Avoid a second generic module error
+            // for the same field reference.
+            if (this.isIntegrationEventPayloadTypeReference(referenceInfo)) {
                 return;
             }
             // Structural path segments are containers, not the declaration being
@@ -1592,6 +1601,11 @@ export class ThinaiValidator {
                 });
             }
         });
+    }
+
+    private isIntegrationEventPayloadTypeReference(referenceInfo: ReferenceInfo): boolean {
+        const container = referenceInfo.container;
+        return isField(container) && isIntegrationEvent(container.$container);
     }
 
     checkRepository(repository: Repository, accept: ValidationAcceptor): void {
@@ -1762,7 +1776,9 @@ export class ThinaiValidator {
         accept: ValidationAcceptor
     ): void {
         const name = getExportedName(node);
-        if ((this.getDuplicateNameCounts().get(name) ?? 0) < 2) {
+        const namespace = this.getDeclarationNameNamespace(node);
+        const counts = this.getDuplicateNameCounts(node);
+        if ((counts.get(namespace)?.get(name) ?? 0) < 2) {
             return;
         }
 
@@ -1772,15 +1788,110 @@ export class ThinaiValidator {
         });
     }
 
-    private getDuplicateNameCounts(): Map<string, number> {
-        if (!this.duplicateNameCounts) {
-            const counts = new Map<string, number>();
-            for (const description of this.services.shared.workspace.IndexManager.allElements()) {
-                counts.set(description.name, (counts.get(description.name) ?? 0) + 1);
-            }
-            this.duplicateNameCounts = counts;
+    private getDeclarationNameNamespace(node: AstNode): DeclarationNameNamespace {
+        if (isActor(node)) {
+            return 'actor';
         }
-        return this.duplicateNameCounts;
+        if (isJourney(node)) {
+            return 'journey';
+        }
+        if (isSubdomain(node)) {
+            return 'subdomain';
+        }
+        if (isBoundedContext(node) || isContextMap(node) || isSharedKernel(node)) {
+            return 'importable';
+        }
+        return 'path';
+    }
+
+    private getDuplicateNameCounts(node: AstNode): Map<DeclarationNameNamespace, Map<string, number>> {
+        const document = AstUtils.getDocument(node);
+        const cached = this.duplicateNameCounts.get(document);
+        if (cached) {
+            return cached;
+        }
+
+        const counts = new Map<DeclarationNameNamespace, Map<string, number>>();
+        for (const description of this.services.shared.workspace.IndexManager.allElements(
+            undefined,
+            this.getModelDocumentUris(document)
+        )) {
+            // Fields and enum values have their own owner-local duplicate
+            // checks. Parameters are not indexed. Excluding them here avoids
+            // duplicate generic diagnostics for the same name collision.
+            if (description.type === 'Field' || description.type === 'EnumValue' || description.type === 'Parameter') {
+                continue;
+            }
+            const namespace = this.getDeclarationNameNamespaceFromType(description.type);
+            const namespaceCounts = counts.get(namespace) ?? new Map<string, number>();
+            namespaceCounts.set(description.name, (namespaceCounts.get(description.name) ?? 0) + 1);
+            counts.set(namespace, namespaceCounts);
+        }
+        this.duplicateNameCounts.set(document, counts);
+        return counts;
+    }
+
+    private getDeclarationNameNamespaceFromType(type: string): DeclarationNameNamespace {
+        if (type === 'Actor') {
+            return 'actor';
+        }
+        if (type === 'Journey') {
+            return 'journey';
+        }
+        if (type === 'Subdomain') {
+            return 'subdomain';
+        }
+        if (type === 'BoundedContext' || type === 'ContextMap' || type === 'SharedKernel') {
+            return 'importable';
+        }
+        return 'path';
+    }
+
+    /**
+     * Duplicate names are scoped to the import-connected model containing a
+     * document. Both import and importer edges participate so every file in a
+     * multi-file model sees the same duplicate diagnostics.
+     */
+    private getModelDocumentUris(document: LangiumDocument): Set<string> {
+        const documents = this.services.shared.workspace.LangiumDocuments.all.toArray();
+        const byUri = new Map<string, LangiumDocument>();
+        const adjacency = new Map<string, Set<string>>();
+        for (const current of documents) {
+            const uri = current.uri.toString();
+            byUri.set(uri, current);
+            adjacency.set(uri, new Set());
+        }
+        for (const current of documents) {
+            const uri = current.uri.toString();
+            const model = current.parseResult.value;
+            if (!isModel(model)) {
+                continue;
+            }
+            for (const importDeclaration of model.imports) {
+                const importedUri = resolveImportUri(current, importDeclaration)?.toString();
+                if (!importedUri || !byUri.has(importedUri)) {
+                    continue;
+                }
+                adjacency.get(uri)?.add(importedUri);
+                adjacency.get(importedUri)?.add(uri);
+            }
+        }
+
+        const uris = new Set<string>();
+        const pending = [document.uri.toString()];
+        while (pending.length > 0) {
+            const uri = pending.pop()!;
+            if (uris.has(uri)) {
+                continue;
+            }
+            uris.add(uri);
+            for (const next of adjacency.get(uri) ?? []) {
+                if (!uris.has(next)) {
+                    pending.push(next);
+                }
+            }
+        }
+        return uris;
     }
 
     private getWriteRepositoriesByAggregate(): Map<Aggregate, Repository[]> {
@@ -1847,8 +1958,8 @@ export class ThinaiValidator {
             const targetContext = getOwningContextName(target);
             if (sourceContext && targetContext && sourceContext !== targetContext) {
                 const message = isValueObject(target)
-                    ? 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.'
-                    : 'A bounded context cannot directly use a private type from another bounded context.';
+                    ? 'A bounded context cannot directly use a value object from another bounded context as a field, parameter, or return type; use a local mirror, an IntegrationEvent, or a published query result contract.'
+                    : 'A bounded context cannot directly use a type from another bounded context as a field, parameter, or return type; use an IntegrationEvent or a published query result contract.';
                 accept('error', message, {
                     node,
                     property

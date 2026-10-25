@@ -1366,7 +1366,7 @@ in bounded context Beta {
         }
     });
 
-    test('rejects direct use of a private value object across contexts', async () => {
+    test('rejects direct use of a value object across contexts', async () => {
         const ordering = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             'bounded context Ordering in bounded context Ordering { value object InternalCode { raw: string } }'
@@ -1387,7 +1387,7 @@ in bounded context Beta {
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('private value object'))).toBe(true);
+        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('cannot directly use a value object from another bounded context'))).toBe(true);
     });
 
     test('links inline method references in command behavior specifications', async () => {

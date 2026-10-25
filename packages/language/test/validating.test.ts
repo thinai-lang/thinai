@@ -953,9 +953,38 @@ in bounded context Ordering {
             }
         `);
 
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.'
-        ))).toBe(true);
+        const messages = (document.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages.filter(message =>
+            message === 'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.'
+        )).toHaveLength(1);
+        expect(messages).not.toContain('Only entity behavior may invoke child-entity methods; aggregate-root behavior must coordinate aggregate changes.');
+    });
+
+    test('reports one primary diagnostic for invalid event handler roles', async () => {
+        const document = await parse(`
+            bounded context C
+            in bounded context C {
+                event E
+                read model R {
+                    text: string
+                }
+                projector P {
+                    method handle(a: E, b: string) {
+                        projects R
+                    }
+                }
+                query service Q {
+                    method find(e: E) returns string
+                }
+            }
+        `);
+        const messages = (document.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages.filter(message => message === 'A projector method must handle exactly one domain or integration event.'))
+            .toHaveLength(1);
+        expect(messages).not.toContain('An event-triggered method must have exactly one event-typed parameter.');
+        expect(messages.filter(message => message === 'A query cannot handle events.'))
+            .toHaveLength(1);
+        expect(messages).not.toContain('Event-typed method parameters are allowed only on application-service handlers and projectors.');
     });
 
     test('allows an application service to coordinate multiple aggregate roots', async () => {
@@ -1200,7 +1229,7 @@ in bounded context Ordering {
         `);
 
         expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'Only entity behavior may invoke child-entity methods'
+            'A domain service must not invoke aggregate-owned methods'
         ))).toBe(true);
     });
 
@@ -1847,6 +1876,33 @@ in bounded context Ordering {
         expect(messages).toContain('Integration-event payload types must be public contract types exposed by their module and all enclosing modules; context-level types are public.');
     });
 
+    test('reports one module diagnostic for a private integration-event payload type', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                module Outer {
+                    module Inner {
+                        value object Payload {
+                            raw: string
+                        }
+                    }
+                }
+                module Contracts {
+                    integration event E {
+                        payload: Outer.Inner.Payload
+                    }
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => String(diagnostic.message));
+        expect(messages.filter(message =>
+            message === 'Integration-event payload types must be public contract types exposed by their module and all enclosing modules; context-level types are public.'
+        )).toHaveLength(1);
+        expect(messages).not.toContain('This module reference requires a dependency on a module that exposes the target declaration.');
+    });
+
     test('rejects entities hidden in a nested integration-event payload value object', async () => {
         const document = await parse(`
             bounded context Shop
@@ -2188,13 +2244,55 @@ in bounded context Ordering {
         );
         const second = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-two.tni'),
-            'bounded context Ordering'
+            'import "./ordering-one.tni"\nbounded context Ordering'
         );
         documents = [first, second];
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        expect(first.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Ordering'.")).toBe(true);
+        expect(second.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Ordering'.")).toBe(true);
+    });
+
+    test('reports duplicates across imported files from a root model', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/root-duplicate-one.tni'),
+            'bounded context RootDuplicate'
+        );
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/root-duplicate-two.tni'),
+            'bounded context RootDuplicate'
+        );
+        const root = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/root-duplicate-model.tni'),
+            'import "./root-duplicate-one.tni"\nimport "./root-duplicate-two.tni"'
+        );
+        documents = [first, second, root];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(first.diagnostics?.some(diagnostic =>
+            diagnostic.message === "Duplicate declaration 'RootDuplicate'."
+        )).toBe(true);
+        expect(second.diagnostics?.some(diagnostic =>
+            diagnostic.message === "Duplicate declaration 'RootDuplicate'."
+        )).toBe(true);
+    });
+
+    test('permits the same declaration name in independent models', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/independent-one.tni'),
+            'bounded context Independent'
+        );
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/independent-two.tni'),
+            'bounded context Independent'
+        );
+        documents = [first, second];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(first.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Independent'.")).toBe(false);
+        expect(second.diagnostics?.some(diagnostic => diagnostic.message === "Duplicate declaration 'Independent'.")).toBe(false);
     });
 
     test('reports a duplicate declaration added after an initial build', async () => {
@@ -2207,7 +2305,7 @@ in bounded context Ordering {
 
         const second = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/incremental-duplicate-a.tni'),
-            'bounded context IncrementalDuplicate'
+            'import "./incremental-duplicate-z.tni"\nbounded context IncrementalDuplicate'
         );
         documents.push(second);
         await services.shared.workspace.DocumentBuilder.build([second], { validation: true });
@@ -2215,6 +2313,144 @@ in bounded context Ordering {
         expect(second.diagnostics?.some(diagnostic =>
             diagnostic.message === "Duplicate declaration 'IncrementalDuplicate'."
         )).toBe(true);
+    });
+
+    test('keeps strategic declaration names separate from path declarations', async () => {
+        const document = await parse(`
+            subdomain Ordering kind core
+            actor Ordering
+            journey Ordering {
+                by Ordering {
+                    invoke Ordering.App.run
+                }
+            }
+            bounded context Ordering realizes Ordering
+            in bounded context Ordering {
+                application service App {
+                    method run()
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            String(diagnostic.message).startsWith("Duplicate declaration 'Ordering'")
+        )).toEqual([]);
+    });
+
+    test('still rejects duplicate names within the same strategic namespace', async () => {
+        const document = await parse(`
+            actor Customer
+            actor Customer
+            subdomain Sales kind core
+            subdomain Sales kind supporting
+            journey Checkout { by Customer { invoke Ordering.App.run } }
+            journey Checkout { by Customer { invoke Ordering.App.run } }
+            bounded context Ordering
+            in bounded context Ordering {
+                application service App { method run() }
+            }
+        `);
+        const duplicates = semanticDiagnostics(document)
+            .filter(diagnostic => String(diagnostic.message).startsWith('Duplicate declaration'))
+            .map(diagnostic => String(diagnostic.message));
+        expect(duplicates.filter(message => message === "Duplicate declaration 'Customer'.")).toHaveLength(2);
+        expect(duplicates.filter(message => message === "Duplicate declaration 'Sales'.")).toHaveLength(2);
+        expect(duplicates.filter(message => message === "Duplicate declaration 'Checkout'.")).toHaveLength(2);
+    });
+
+    test('allows an import alias to match an operation parameter name', async () => {
+        const other = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-parameter-other.tni'),
+            'bounded context Other'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-parameter-consumer.tni'),
+            `import { Other as input } from "./alias-parameter-other.tni"
+            bounded context Consumer
+            in bounded context Consumer {
+                application service App {
+                    method run(input: string)
+                }
+            }`
+        );
+        documents = [other, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("Import alias 'input' conflicts")
+        )).toBe(false);
+    });
+
+    test('does not let a component alias shadow strategic declarations', async () => {
+        const other = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-strategic-other.tni'),
+            `bounded context Other
+            in bounded context Other {
+                application service App {
+                    method run()
+                }
+            }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-strategic-consumer.tni'),
+            `import { Other as Ordering } from "./alias-strategic-other.tni"
+            subdomain Ordering kind core
+            actor Ordering
+            journey Checkout {
+                by Ordering {
+                    invoke Ordering.App.run
+                }
+            }
+            bounded context Consumer realizes Ordering`
+        );
+        documents = [other, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('reports an alias that collides with an imported canonical declaration', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-canonical-common.tni'),
+            'bounded context Common'
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-canonical-ordering.tni'),
+            'bounded context Ordering'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-canonical-consumer.tni'),
+            `import "./alias-canonical-common.tni"
+            import { Ordering as Common } from "./alias-canonical-ordering.tni"
+            bounded context Consumer`
+        );
+        documents = [common, ordering, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("Import alias 'Common' conflicts with an imported declaration")
+        )).toBe(true);
+    });
+
+    test('does not navigate map keys through specification paths', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                value object Key {
+                    keyField: string
+                }
+                value object Value {
+                    valueField: string
+                }
+                application service App {
+                    method use(input: Map<Key, Value>) {
+                        behavior "Use [[input.keyField]] and [[input.valueField]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes("Could not resolve reference to SpecificationTarget named 'keyField'")
+        )).toBe(true);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes("Could not resolve reference to SpecificationTarget named 'valueField'")
+        )).toBe(false);
     });
 
     test('requires a shared-kernel relationship to name at least two contexts', async () => {
@@ -2942,7 +3178,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).filter(diagnostic =>
-            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.'
+            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations, private command contract inputs or results, or private domain events.'
         )).toHaveLength(2);
     });
 
@@ -3027,36 +3263,68 @@ in bounded context Ordering {
         expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
     });
 
-    test('rejects future command contract references in journey prose', async () => {
+    test('rejects private future command contract references in journey prose', async () => {
         const document = await parse(`
             bounded context Ordering
             in bounded context Ordering {
                 data object FirstResult {
                     first: string
                 }
-                data object SecondResult {
-                    second: string
+                data object PublicInput {
+                    payload: string
                 }
-                data object SecondInput {
-                    input: string
+                module Contracts {
+                    data object SecondResult {
+                        second: string
+                    }
+                    data object SecondInput {
+                        input: string
+                    }
+                    application service App {
+                        method first() returns FirstResult
+                        method second(input: SecondInput) returns SecondResult
+                    }
+                }
+            }
+            actor Customer
+            journey Ordered {
+                by Customer {
+                    invoke Ordering.Contracts.App.first
+                        when "A future result [[Ordering.Contracts.SecondResult.second]], future input [[Ordering.Contracts.SecondInput.input]], and public input [[Ordering.PublicInput.payload]]"
+                    invoke Ordering.Contracts.App.second
+                }
+            }
+        `);
+        const messages = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => diagnostic.message);
+        expect(messages.some(message => String(message).includes('later command operations, private command contract inputs or results'))).toBe(true);
+    });
+
+    test('allows public types used by future commands in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object PublicInput {
+                    payload: string
                 }
                 application service App {
-                    method first() returns FirstResult
-                    method second(input: SecondInput) returns SecondResult
+                    method first()
+                    method second(input: PublicInput)
                 }
             }
             actor Customer
             journey Ordered {
                 by Customer {
                     invoke Ordering.App.first
-                        when "A future result [[Ordering.SecondResult.second]] and future input [[Ordering.SecondInput.input]]"
+                        when "Public [[Ordering.PublicInput.payload]]"
                     invoke Ordering.App.second
                 }
             }
         `);
-        expect(semanticDiagnostics(document).some(diagnostic =>
-            diagnostic.message === 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.'
-        )).toBe(true);
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
     });
 
     test('rejects current and unrelated aggregate contract references in journey prose', async () => {
@@ -3091,7 +3359,33 @@ in bounded context Ordering {
         const messages = semanticDiagnostics(document)
             .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
             .map(diagnostic => diagnostic.message);
-        expect(messages).toContain('Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations or results, or private domain events.');
+        expect(messages).toContain('Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations, private command contract inputs or results, or private domain events.');
+    });
+
+    test('rejects private current command result contract paths in journey prose', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Contracts {
+                    data object PlaceResult {
+                        status: string
+                    }
+                    application service App {
+                        method place() returns PlaceResult
+                    }
+                }
+            }
+            actor Customer
+            journey Place {
+                by Customer {
+                    invoke Ordering.Contracts.App.place
+                        when "The private current result [[Ordering.Contracts.PlaceResult.status]]"
+                }
+            }
+        `);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message).includes('later command operations, private command contract inputs or results')
+        )).toBe(true);
     });
 
     test('rejects private services and modules in cross-context specification text', async () => {
@@ -3113,7 +3407,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).filter(diagnostic =>
-            diagnostic.message === 'Specification text cannot reference private operation, data, or query types from another bounded context.'
+            diagnostic.message === 'Specification text can reference another bounded context only through an authorized event or query contract.'
         ).length).toBeGreaterThanOrEqual(3);
     });
 
@@ -3175,7 +3469,7 @@ in bounded context Ordering {
 
         const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
         expect(messages.filter(message =>
-            message === 'A bounded context cannot directly use a private value object from another bounded context; create a local mirror.'
+            message === 'A bounded context cannot directly use a value object from another bounded context as a field, parameter, or return type; use a local mirror, an IntegrationEvent, or a published query result contract.'
         )).toHaveLength(3);
         expect(messages.filter(message =>
             message === 'Data objects may contain value data, but not entities or read models.'

@@ -67,7 +67,7 @@ import {
     resolveAstNodeDescription,
     resolveImportUri
 } from './thinai-scope-utils.js';
-import { getTypeReferences } from './thinai-type-utils.js';
+import { getNavigableTypeReferences, getTypeReferences } from './thinai-type-utils.js';
 import { isJourneyCommand } from './thinai-operation-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 
@@ -132,7 +132,7 @@ export class ThinaiReferencePolicy {
         targets.add(event);
         for (const field of event.fields) {
             targets.add(field);
-            for (const reference of getTypeReferences(field.type, field.collection)) {
+            for (const reference of getNavigableTypeReferences(field.type, field.collection)) {
                 this.collectEventContractType(reference.ref, targets, visited);
             }
         }
@@ -360,7 +360,7 @@ export class ThinaiReferencePolicy {
         }
         for (const field of type.fields) {
             targets.add(field);
-            for (const reference of getTypeReferences(field.type, field.collection)) {
+            for (const reference of getNavigableTypeReferences(field.type, field.collection)) {
                 this.collectEventContractType(reference.ref, targets, visited);
             }
         }
@@ -381,8 +381,11 @@ export class ThinaiReferencePolicy {
         kind: JourneySpecificationKind
     ): boolean {
         if (isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target) ||
-            isApplicationService(target) || isQueryService(target)) {
+            isApplicationService(target)) {
             return true;
+        }
+        if (isQueryService(target)) {
+            return getOwningModule(target) === undefined || this.isQueryServiceExposed(target);
         }
         if (isQueryRepository(target)) {
             return false;
@@ -408,8 +411,8 @@ export class ThinaiReferencePolicy {
         }
 
         const contractSteps = getJourneyContractTargetSteps(referenceStep, target);
-        if (contractSteps.length > 0) {
-            return isJourneyContractTargetVisible(referenceStep, target, kind);
+        if (contractSteps.length > 0 && isJourneyContractTargetVisible(referenceStep, target, kind)) {
+            return true;
         }
 
         if (isField(target)) {
@@ -529,12 +532,12 @@ export class ThinaiReferencePolicy {
             }
             for (const field of type.fields) {
                 targets.add(field);
-                for (const reference of getTypeReferences(field.type, field.collection)) {
+                for (const reference of getNavigableTypeReferences(field.type, field.collection)) {
                     visit(reference.ref);
                 }
             }
         };
-        for (const reference of getTypeReferences(method.returnType, method.returnCollection)) {
+        for (const reference of getNavigableTypeReferences(method.returnType, method.returnCollection)) {
             visit(reference.ref);
         }
         return targets;
@@ -755,10 +758,10 @@ export class ThinaiReferencePolicy {
             }
             visited.add(candidate);
             return candidate.fields.some(field =>
-                getTypeReferences(field.type, field.collection).some(reference => includesType(reference.ref))
+                getNavigableTypeReferences(field.type, field.collection).some(reference => includesType(reference.ref))
             );
         };
-        return getTypeReferences(method.returnType, method.returnCollection)
+        return getNavigableTypeReferences(method.returnType, method.returnCollection)
             .some(reference => includesType(reference.ref));
     }
 }

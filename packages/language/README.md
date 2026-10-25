@@ -14,7 +14,16 @@ and the [complete Order Fulfillment example](../../examples/order-fulfillment/RE
 
 Declare a bounded context once, without braces. Put members in one or more
 `in bounded context Name { ... }` blocks; contributions in other files import
-the file containing the canonical declaration:
+the file containing the canonical declaration.
+
+A document's model is its import-connected component: its transitive imports
+and the files that import it, not every file in the workspace. Duplicate
+declaration names are therefore scoped to that component; independent models
+may reuse names. Cross-references still require the target to be reachable
+through imports. Actors,
+journeys, and subdomains have their own strategic namespaces, so a subdomain may
+share a name with its bounded context. Subdomains are referenced through
+`realizes`; they are not specification-path targets.
 
 ```thinai
 // ordering.tni
@@ -257,7 +266,10 @@ An alias applies to every visible declaration of the selected component,
 including members contributed from other imported files. For example, if
 `Ordering` is aliased as `Orders`, contributed declarations are available as
 `Orders.Member` as well as under their canonical path. Aliases are document-local
-scope names; an alias must not collide with a declaration in the importing file.
+scope names; an alias must not collide with a document-scope declaration or with
+a canonical declaration visible through imports. Strategic declarations (actors,
+journeys, and subdomains) are not aliased by component imports; import them
+with a bare file import rather than a component selection.
 Aliases do not import files on their own: import the contribution file that
 declares the members you use. Declarations in the current document can also be
 referenced through a local context alias.
@@ -269,7 +281,12 @@ declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
 Only the terminal declaration in a qualified path must be exposed; structural
 containers such as an aggregate, entity, or service used as path segments do not
-need separate exposures. An identifier value object referenced by a `mirrors`
+need separate exposures. Module exposure and context-level visibility make a
+declaration part of a published contract; they do not make another bounded
+context's value object, data object, read model, or enum directly usable as a
+field, parameter, or return type. Use a local mirror for identifiers, an
+IntegrationEvent for event data, a shared-kernel type where appropriate, or a
+published query result contract for read data. An identifier value object referenced by a `mirrors`
 declaration is an explicit exception: the mirror may name an identifier that is
 private to its module, because the local mirror is the sanctioned cross-context
 use. Exposing a nested module re-exports that module's
@@ -339,9 +356,12 @@ text with linked references; commands enforce their own invariants.
 A journey is a model-level command timeline, not a module or a bounded context.
 Steps are ordered in source order across actor blocks. A later step's `with` or
 `when` prose may refer to inputs or results of earlier command invocations.
-The current command's result becomes visible only to later steps. A command
-operation invoked later in the same journey is not visible from an earlier step;
-public operations not scheduled later remain linkable. References to
+The current command's result binding becomes visible only to later steps. A
+command operation invoked later in the same journey is not visible from an
+earlier step. Visibility is additive: a declaration that is independently
+context-level, exposed, or part of a visible query result remains linkable even
+if a future command also uses it; only the future operation and its private
+contract internals are hidden. References to
 a command result name the nearest earlier invocation of that command; a journey
 that invokes the same command more than once produces a warning because those
 references are inherently ambiguous. The language deliberately has no step
@@ -386,7 +406,10 @@ mirrored value objects, data objects, read models, projectors, query services an
 typed methods and constructors, domain services, write repositories, factories,
 events, reusable actors, journeys, and context maps.
 Built-in collections are
-`List<T>`, `Set<T>`, and `Map<K, V>`.
+`List<T>`, `Set<T>`, and `Map<K, V>`. Specification paths through a `Map` follow
+its value type: for `Map<K, V>`, `[[field.name]]` resolves a field of `V`, not
+`K`. Map keys are identity, not navigable data; wrap key data in a value or data
+object if it must be referenced.
 Primitive types include `string`, `number`, `boolean`, `date`, `time`, and
 `instant`. Use `date` for a calendar date, `time` for a wall-clock time without
 a date or time zone, and `instant` for an exact point on the global timeline.

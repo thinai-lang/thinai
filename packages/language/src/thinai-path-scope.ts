@@ -37,7 +37,7 @@ import {
     type TypeDeclaration,
     type ValueObject
 } from './generated/ast.js';
-import { getTypeReferences } from './thinai-type-utils.js';
+import { getNavigableTypeReferences } from './thinai-type-utils.js';
 import { unquoteIdentifier } from './thinai-identifiers.js';
 
 type FieldShape = DataObject | DomainEvent | Entity | IntegrationEvent | ReadModel | ValueObject;
@@ -655,11 +655,11 @@ export class ThinaiPathScope extends DefaultScopeProvider {
 
     private getShapeTypes(target: AstNode): AstNode[] {
         const references = isField(target)
-            ? getTypeReferences(target.type, target.collection)
+            ? getNavigableTypeReferences(target.type, target.collection)
             : isParameter(target)
-                ? getTypeReferences(target.type as Reference<TypeDeclaration> | undefined, target.collection)
+                ? getNavigableTypeReferences(target.type as Reference<TypeDeclaration> | undefined, target.collection)
                 : isMethod(target)
-                    ? getTypeReferences(target.returnType, target.returnCollection)
+                    ? getNavigableTypeReferences(target.returnType, target.returnCollection)
                     : [];
         if (references.length > 0) {
             return references

@@ -6,18 +6,23 @@ import {
     UriUtils
 } from 'langium';
 import {
+    isActor,
     isContextMap,
     isCustomerSupplierRelationship,
+    isJourney,
     isModel,
+    isParameter,
     isPartnershipRelationship,
     isSeparateWaysRelationship,
     isSharedKernelRelationship,
+    isSubdomain,
     type BoundedContext,
     type BoundedContextPart,
     type ContextMap,
     type ContextMapEndpoint,
     type ContextRelationship,
     type Import,
+    type ImportableComponent,
     type ImportComponent,
     type Model,
     type SharedKernel
@@ -26,7 +31,7 @@ import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics, type ContextRelationshipPairSemantics } from './thinai-context-map-utils.js';
 import type { ThinaiServices } from './thinai-module.js';
 import { findCstTokenOffset, getSiblingStatementPolicy, isLineSeparatedSibling, siblingContainerPolicies } from './thinai-layout.js';
-import { resolveImportUri } from './thinai-scope-utils.js';
+import { getExportedName, resolveImportUri } from './thinai-scope-utils.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 
@@ -151,10 +156,16 @@ export class ThinaiModelValidator {
         const names = new Map<string, Import | ImportComponent>();
         const localNames = new Set<string>();
         for (const node of AstUtils.streamAst(model)) {
+            if (isParameter(node) || isActor(node) || isJourney(node) || isSubdomain(node)) {
+                // Parameters are local to their operation, and strategic
+                // declarations have their own reference namespaces.
+                continue;
+            }
             if ('name' in node && typeof node.name === 'string') {
                 localNames.add(node.name);
             }
         }
+        const importedNames = this.getVisibleImportedCanonicalNames(model);
         for (const importDeclaration of model.imports) {
             const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
             for (const component of importDeclaration.components) {
@@ -169,6 +180,18 @@ export class ThinaiModelValidator {
                         property: 'alias'
                     });
                 }
+                if (component.alias && importedNames.has(component.alias)) {
+                    const target = component.component.ref;
+                    const targetName = target
+                        ? getExportedName(target as AstNode & { name: string })
+                        : undefined;
+                    if (component.alias !== targetName) {
+                        accept('error', `Import alias '${component.alias}' conflicts with an imported declaration.`, {
+                            node: component,
+                            property: 'alias'
+                        });
+                    }
+                }
             }
             for (const declaration of declarations) {
                 if (names.has(declaration.name)) {
@@ -182,6 +205,50 @@ export class ThinaiModelValidator {
             }
         }
         this.checkImportedContextMapConsistency(model, accept);
+    }
+
+    private getVisibleImportedCanonicalNames(model: Model): Set<string> {
+        const names = new Set<string>();
+        const document = AstUtils.getDocument(model);
+        for (const importDeclaration of model.imports) {
+            const uri = resolveImportUri(document, importDeclaration);
+            if (!uri) {
+                continue;
+            }
+            const importedModel = this.services.shared.workspace.LangiumDocuments
+                .getDocument(uri)?.parseResult.value;
+            if (!isModel(importedModel)) {
+                continue;
+            }
+            const components = importDeclaration.components;
+            const selected = components
+                .map(component => component.component.ref)
+                .filter((target): target is ImportableComponent => target !== undefined);
+            const selectedNames = selected.map(target => getExportedName(target as AstNode & { name: string }));
+            for (const description of this.services.shared.workspace.IndexManager.allElements(
+                undefined,
+                new Set([uri.toString()])
+            )) {
+                if (this.isStrategicDeclarationType(description.type)) {
+                    // Strategic declarations have their own namespaces and are
+                    // not aliased by component imports.
+                    continue;
+                }
+                if (components.length === 0) {
+                    names.add(description.name);
+                    continue;
+                }
+                if (selectedNames.some(name => description.name === name ||
+                    description.name.startsWith(`${name}.`))) {
+                    names.add(description.name);
+                }
+            }
+        }
+        return names;
+    }
+
+    private isStrategicDeclarationType(type: string): boolean {
+        return type === 'Actor' || type === 'Journey' || type === 'Subdomain';
     }
 
     checkContextMapRelationships(contextMap: ContextMap, accept: ValidationAcceptor): void {

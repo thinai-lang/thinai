@@ -468,7 +468,7 @@ journey J {
 `;
         const document = addDocument('future-command.tni', source);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: true });
-        expect(errors(document).some(message => message.includes('later command operations or results'))).toBe(true);
+        expect(errors(document).some(message => message.includes('later command operations, private command contract inputs or results'))).toBe(true);
         const offset = source.indexOf('[[C.App.') + '[[C.App.'.length;
         const labels = await completionLabels(document, offset);
         expect(labels).not.toContain('second');

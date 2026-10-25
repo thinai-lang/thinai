@@ -58,6 +58,21 @@ export function isJourneyCommand(method: Method): boolean {
     );
 }
 
+/**
+ * The implicit result binding reserves the parameter name `result` for methods
+ * with a result and for application-service commands. Event handlers and other
+ * non-returning operations may use it.
+ */
+export function isReservedResultParameterName(method: Method, name: string): boolean {
+    if (name !== 'result') {
+        return false;
+    }
+    const hasResult = method.returnPrimitive !== undefined ||
+        method.returnType !== undefined ||
+        method.returnCollection !== undefined;
+    return hasResult || isJourneyCommand(method);
+}
+
 export type EventEmissionMode = 'domain' | 'integration' | undefined;
 
 export function getEventEmissionMode(method: Method): EventEmissionMode {
