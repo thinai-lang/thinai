@@ -69,7 +69,9 @@ export class ThinaiCodeActionProvider {
                 } else {
                     const newline = getNewline(textDocument.getText());
                     range = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
-                    newText = `import "${importPath}"${newline}`;
+                    newText = component
+                        ? `import { ${formatIdentifier(component.name)} } from "${importPath}"${newline}`
+                        : `import "${importPath}"${newline}`;
                 }
                 actions.push({
                     title,
@@ -142,21 +144,35 @@ export class ThinaiCodeActionProvider {
             const uriKey = description.documentUri.toString();
             const existingImport = importsByUri.get(uriKey)?.find(importDeclaration => importDeclaration.components.length > 0);
             const importPath = toImportPath(UriUtils.dirname(document.uri), description.documentUri);
+            const targetNode = resolveAstNodeDescription(description, this.services);
+            const component = this.getImportableComponent(targetNode);
             if (importsByUri.has(uriKey)) {
                 if (!existingImport) {
                     continue;
                 }
-                const component = this.getImportableComponent(resolveAstNodeDescription(description, this.services));
                 if (!component || existingImport.components.some(selection => selection.component.ref === component)) {
                     continue;
                 }
                 const key = `${uriKey}#${component.$cstNode?.offset ?? component.name}`;
                 candidates.set(key, { importPath, existingImport, component });
+            } else if (component && this.countImportableComponents(description.documentUri) > 1) {
+                // Files that declare several components must be imported
+                // selectively; a bare import would expose every sibling.
+                const key = `${uriKey}#${component.$cstNode?.offset ?? component.name}`;
+                candidates.set(key, { importPath, component });
             } else {
                 candidates.set(uriKey, { importPath });
             }
         }
         return [...candidates.values()];
+    }
+
+    private countImportableComponents(uri: import('langium').URI): number {
+        const document = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
+        const model = document?.parseResult.value;
+        return isModel(model)
+            ? model.declarations.filter(isImportableComponent).length
+            : 0;
     }
 
     private getImportableComponent(node: import('langium').AstNode | undefined): ImportableComponent | undefined {

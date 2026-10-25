@@ -121,7 +121,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     private readonly externalScope: ThinaiExternalScope;
     private readonly referencePolicy: ThinaiReferencePolicy;
     private readonly pathScope: ThinaiPathScope;
-    private eventPayloadUsageCache = new WeakMap<AstNode, 'domain' | 'integration' | null>();
+    private eventPayloadUsageByValueObject: WeakMap<AstNode, 'domain' | 'integration'> | undefined;
 
     constructor(services: LangiumCoreServices) {
         super(services);
@@ -134,7 +134,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         );
         const clearCaches = () => {
             this.externalScope.clearCache();
-            this.eventPayloadUsageCache = new WeakMap();
+            this.eventPayloadUsageByValueObject = undefined;
             this.referencePolicy.clearCache();
         };
         services.shared.workspace.DocumentBuilder.onUpdate(clearCaches);
@@ -1198,66 +1198,57 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (!valueObject) {
             return undefined;
         }
-        if (this.eventPayloadUsageCache.has(valueObject)) {
-            return this.eventPayloadUsageCache.get(valueObject) ?? undefined;
+        return this.getEventPayloadUsageIndex().get(valueObject);
+    }
+
+    /**
+     * Build one value-object usage index for the whole build instead of
+     * scanning every event for every edited value object.
+     */
+    private getEventPayloadUsageIndex(): WeakMap<AstNode, 'domain' | 'integration'> {
+        if (this.eventPayloadUsageByValueObject) {
+            return this.eventPayloadUsageByValueObject;
         }
-        let usage: 'domain' | 'integration' | undefined;
-        for (const eventType of ['DomainEvent', 'IntegrationEvent'] as const) {
-            for (const description of this.indexManager.allElements(eventType)) {
-                const event = this.getDescriptionNode(description);
-                if (!isDomainEvent(event) && !isIntegrationEvent(event)) {
-                    continue;
+        const index = new WeakMap<AstNode, 'domain' | 'integration'>();
+        const markEvent = (event: DomainEvent | IntegrationEvent, usage: 'domain' | 'integration'): void => {
+            const visited = new Set<AstNode>();
+            const visit = (type: AstNode | undefined): void => {
+                if (!type || visited.has(type)) {
+                    return;
                 }
-                if (eventType === 'DomainEvent' && !isDomainEvent(event)) {
-                    continue;
+                if (isValueObject(type) && (usage === 'integration' || !index.has(type))) {
+                    index.set(type, usage);
                 }
-                if (eventType === 'IntegrationEvent' && !isIntegrationEvent(event)) {
-                    continue;
+                if (!isValueObject(type) && !isDataObject(type) && !isReadModel(type)) {
+                    return;
                 }
-                if (this.eventReferencesType(event, valueObject, new Set())) {
-                    if (eventType === 'IntegrationEvent') {
-                        usage = 'integration';
-                        break;
+                visited.add(type);
+                for (const field of type.fields) {
+                    for (const reference of getTypeReferences(field.type, field.collection)) {
+                        visit(reference.ref);
                     }
-                    usage = usage ?? 'domain';
+                }
+            };
+            for (const field of event.fields) {
+                for (const reference of getTypeReferences(field.type, field.collection)) {
+                    visit(reference.ref);
                 }
             }
-            if (usage === 'integration') {
-                break;
+        };
+        for (const description of this.indexManager.allElements('DomainEvent')) {
+            const event = this.getDescriptionNode(description);
+            if (isDomainEvent(event)) {
+                markEvent(event, 'domain');
             }
         }
-        this.eventPayloadUsageCache.set(valueObject, usage ?? null);
-        return usage;
-    }
-
-    private eventReferencesType(
-        event: DomainEvent | IntegrationEvent,
-        expected: AstNode,
-        visited: Set<AstNode>
-    ): boolean {
-        return event.fields.some(field =>
-            getTypeReferences(field.type, field.collection).some(reference =>
-                reference.ref !== undefined && this.shapeReferencesType(reference.ref, expected, visited)
-            )
-        );
-    }
-
-    private shapeReferencesType(type: AstNode | undefined, expected: AstNode, visited: Set<AstNode>): boolean {
-        if (!type || visited.has(type)) {
-            return false;
+        for (const description of this.indexManager.allElements('IntegrationEvent')) {
+            const event = this.getDescriptionNode(description);
+            if (isIntegrationEvent(event)) {
+                markEvent(event, 'integration');
+            }
         }
-        if (type === expected) {
-            return true;
-        }
-        if (!isValueObject(type) && !isDataObject(type) && !isReadModel(type)) {
-            return false;
-        }
-        visited.add(type);
-        return type.fields.some(field =>
-            getTypeReferences(field.type, field.collection).some(reference =>
-                reference.ref !== undefined && this.shapeReferencesType(reference.ref, expected, visited)
-            )
-        );
+        this.eventPayloadUsageByValueObject = index;
+        return index;
     }
 
     private isWellFormedValueShape(type: AstNode | undefined, visited = new Set<AstNode>()): boolean {
@@ -1438,7 +1429,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target);
     }
 
-    private isStructuralSpecificationPathTarget(target: AstNode): boolean {
+    isStructuralSpecificationPathTarget(target: AstNode): boolean {
         return this.isSpecificationPathContainer(target) || isAggregate(target) || isEntity(target) ||
             isApplicationService(target) || isQueryService(target) || isDomainService(target);
     }

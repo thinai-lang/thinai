@@ -1014,6 +1014,43 @@ in bounded context Ordering {
         });
 
         expect(actions?.some(action => 'title' in action && action.title === "Import 'OrderPlaced' from './ordering.tni'")).toBe(true);
+        const action = actions?.find(candidate =>
+            'title' in candidate && candidate.title === "Import 'OrderPlaced' from './ordering.tni'"
+        );
+        const newText = action && 'edit' in action
+            ? action.edit?.changes?.[source.uri.toString()]?.[0]?.newText
+            : undefined;
+        expect(newText).toContain('import "./ordering.tni"');
+        expect(newText).not.toContain('{ OrderPlaced }');
+    });
+
+    test('uses a selective import for a target file with multiple components', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-component-target.tni'),
+            'bounded context Ordering\nbounded context Shipping'
+        );
+        const sourceText = 'in bounded context Shipping {}';
+        const source = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-component-consumer.tni'), sourceText
+        );
+        documents = [target, source];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(source, {
+            textDocument: { uri: source.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: sourceText.length }
+            },
+            context: { diagnostics: source.diagnostics ?? [] }
+        });
+        const action = actions?.find(candidate =>
+            'title' in candidate && candidate.title === "Import 'Shipping' from './multi-component-target.tni'"
+        );
+        const newText = action && 'edit' in action
+            ? action.edit?.changes?.[source.uri.toString()]?.[0]?.newText
+            : undefined;
+        expect(newText).toContain('import { Shipping } from "./multi-component-target.tni"');
     });
 
     test('extends an existing selective import for an unresolved component', async () => {

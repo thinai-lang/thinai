@@ -359,6 +359,9 @@ export function resolveAstNodeDescription(
     if (description.node) {
         return description.node;
     }
+    if (!description.documentUri) {
+        return undefined;
+    }
     const document = services.shared.workspace.LangiumDocuments.getDocument(description.documentUri);
     return document?.parseResult.value
         ? services.workspace.AstNodeLocator.getAstNode(document.parseResult.value, description.path)

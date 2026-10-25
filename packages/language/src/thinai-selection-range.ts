@@ -50,18 +50,7 @@ export function createThinaiSelectionRange(
  * keeps selection ranges available instead of failing the whole request.
  */
 function createLineSelectionRange(document: LangiumDocument, position: Position): SelectionRange {
-    const text = document.textDocument.getText();
-    const lineStart = document.textDocument.offsetAt({ line: position.line, character: 0 });
-    const lineEnd = text.indexOf('\n', lineStart);
-    let lineLength = (lineEnd === -1 ? text.length : lineEnd) - lineStart;
-    if (lineLength > 0 && text[lineStart + lineLength - 1] === '\r') {
-        lineLength -= 1;
-    }
-    const lineRange = Range.create(
-        { line: position.line, character: 0 },
-        { line: position.line, character: lineLength }
-    );
-    return SelectionRange.create(lineRange);
+    return SelectionRange.create(document.textDocument.getLineRange(position.line));
 }
 
 function findProjectClause(method: ReturnType<typeof getMethod>, offset: number) {

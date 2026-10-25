@@ -1,4 +1,4 @@
-import type { AstNode, AstNodeDescription } from 'langium';
+import type { AstNode, AstNodeDescription, LangiumCoreServices } from 'langium';
 import {
     isDomainEvent,
     isEnumValue,
@@ -10,13 +10,15 @@ import {
     type Field,
     type Parameter
 } from './generated/ast.js';
-import { getExportedName } from './thinai-scope-utils.js';
+import { getExportedName, resolveAstNodeDescription } from './thinai-scope-utils.js';
 import { formatCollectionType } from './thinai-type-utils.js';
 
 /** Builds concise symbol and type details for Thinai completion items. */
 export class ThinaiCompletionDetails {
+    constructor(private readonly services: Pick<LangiumCoreServices, 'shared' | 'workspace'>) {}
+
     getCompletionDetail(description: AstNodeDescription): string {
-        const node = description.node;
+        const node = description.node ?? resolveAstNodeDescription(description, this.services);
         if (!node) {
             return `${description.type} ${description.name}`;
         }

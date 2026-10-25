@@ -57,3 +57,7 @@ lai evaluate
 
 Review the selected service's data handling policies before sending project
 content.
+
+## License
+
+Thinai is released under the [MIT License](./LICENSE).

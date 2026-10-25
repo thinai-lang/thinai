@@ -173,7 +173,7 @@ export class ThinaiModelValidator {
                 continue;
             }
             if ('name' in node && typeof node.name === 'string') {
-                localNames.add(node.name);
+                this.addPathRootSpellings(localNames, node.name);
             }
         }
         const importedNames = this.getVisibleImportedCanonicalNames(model);
@@ -251,16 +251,29 @@ export class ThinaiModelValidator {
                     continue;
                 }
                 if (components.length === 0) {
-                    names.add(description.name);
+                    this.addPathRootSpellings(names, description.name);
                     continue;
                 }
                 if (selectedNames.some(name => description.name === name ||
                     description.name.startsWith(`${name}.`))) {
-                    names.add(description.name);
+                    this.addPathRootSpellings(names, description.name);
                 }
             }
         }
         return names;
+    }
+
+    /**
+     * Paths may start at a context-relative suffix (for example `X` for
+     * `Context.X`). An import alias is also a path root, so it must not shadow
+     * any such visible spelling.
+     */
+    private addPathRootSpellings(names: Set<string>, name: string): void {
+        names.add(name);
+        const parts = name.split('.');
+        for (let index = 1; index < parts.length; index++) {
+            names.add(parts.slice(index).join('.'));
+        }
     }
 
     private isStrategicDeclarationType(type: string): boolean {
@@ -416,17 +429,22 @@ export class ThinaiModelValidator {
         }
 
         for (const endpoint of endpoints) {
-            if (new Set(endpoint.integrationPatterns).size !== endpoint.integrationPatterns.length) {
-                accept('error', 'An integration pattern may only be listed once per bounded context.', {
-                    node: endpoint,
-                    property: 'integrationPatterns'
-                });
-            }
-            for (const pattern of endpoint.integrationPatterns) {
+            const seenPatterns = new Set<string>();
+            for (const [index, pattern] of endpoint.integrationPatterns.entries()) {
+                if (seenPatterns.has(pattern)) {
+                    accept('error', 'An integration pattern may only be listed once per bounded context.', {
+                        node: endpoint,
+                        property: 'integrationPatterns',
+                        index
+                    });
+                    continue;
+                }
+                seenPatterns.add(pattern);
                 if (!INTEGRATION_PATTERNS.has(pattern)) {
                     accept('error', `Unknown integration pattern '${pattern}'. Expected one of: ${[...INTEGRATION_PATTERNS].join(', ')}.`, {
                         node: endpoint,
-                        property: 'integrationPatterns'
+                        property: 'integrationPatterns',
+                        index
                     });
                 }
             }

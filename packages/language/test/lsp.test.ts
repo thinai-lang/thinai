@@ -539,7 +539,7 @@ in bounded context Ordering {
     });
 
     test('describes completion details for methods, fields, parameters, and enum values', () => {
-        const details = new ThinaiCompletionDetails();
+        const details = new ThinaiCompletionDetails(services.Thinai);
         const getDetail = (description: AstNodeDescription) => details.getCompletionDetail(description);
         const typeNode = (type: string, name: string) => ({ $type: type, name }) as AstNode;
         const domainEvent = typeNode('DomainEvent', 'OrderPlaced');
@@ -617,6 +617,31 @@ in bounded context Ordering {
             name: 'Order',
             node: { $type: 'Aggregate', name: 'Order' } as AstNode
         } as AstNodeDescription)).toBe('Aggregate Order');
+    });
+
+    test('resolves imported completion details without an attached AST node', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/imported-detail.tni'),
+            `bounded context Ordering
+in bounded context Ordering {
+    value object Money {
+        amount: number
+    }
+}`
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const field = AstUtils.streamAst(document.parseResult.value)
+            .find(node => node.$type === 'Field' && 'name' in node && node.name === 'amount');
+        expect(field).toBeDefined();
+        const description = {
+            type: 'Field',
+            name: 'Ordering.Money.amount',
+            documentUri: document.uri,
+            path: services.Thinai.workspace.AstNodeLocator.getAstNodePath(field!)
+        } as AstNodeDescription;
+        const details = new ThinaiCompletionDetails(services.Thinai);
+        expect(details.getCompletionDetail(description)).toBe('Field Ordering.Money.amount: number');
     });
 
     test('suggests workspace files inside import paths', async () => {
@@ -4204,6 +4229,21 @@ in bounded context Ordering {
         const source = 'bounded context Ordering\n   \nbounded context Shipping';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/whitespace-selection-range.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const selection = createThinaiSelectionRange(document, { line: 1, character: 1 });
+        expect(selection?.range).toEqual({
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: 3 }
+        });
+    });
+
+    test('falls back to the line range for CR-only whitespace selection positions', async () => {
+        const source = 'bounded context Ordering\r   \rbounded context Shipping';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cr-whitespace-selection-range.tni'), source
         );
         documents.push(document);
         await services.shared.workspace.DocumentBuilder.build([document], { validation: false });

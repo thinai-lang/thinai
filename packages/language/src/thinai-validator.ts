@@ -162,6 +162,7 @@ export class ThinaiValidator {
     private readonly readDependencyValidator: ThinaiReadDependencyValidator;
     private duplicateNameCounts = new WeakMap<LangiumDocument, Map<DeclarationNameNamespace, Map<string, number>>>();
     private writeRepositoriesByAggregate: Map<Aggregate, Repository[]> | undefined;
+    private importComponentsByDocument: Map<string, Set<string>> | undefined;
 
     constructor(private readonly services: ThinaiServices) {
         this.referencePolicy = new ThinaiReferencePolicy(services);
@@ -177,6 +178,7 @@ export class ThinaiValidator {
         const clearWorkspaceCaches = () => {
             this.duplicateNameCounts = new WeakMap();
             this.writeRepositoriesByAggregate = undefined;
+            this.importComponentsByDocument = undefined;
             this.referencePolicy.clearCache();
         };
         services.shared.workspace.DocumentBuilder.onUpdate(clearWorkspaceCaches);
@@ -1324,7 +1326,7 @@ export class ThinaiValidator {
     checkModule(module: Module, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(module, accept);
         const seenDependencies = new Set<AstNode>();
-        for (const dependency of module.dependencies) {
+        for (const [index, dependency] of module.dependencies.entries()) {
             const target = dependency.target.ref;
             if (target) {
                 if (seenDependencies.has(target)) {
@@ -1338,27 +1340,37 @@ export class ThinaiValidator {
             if (dependency.target.ref === module) {
                 accept('error', 'A module cannot depend on itself.', {
                     node: module,
-                    property: 'dependencies'
+                    property: 'dependencies',
+                    index
                 });
             }
             if (dependency.target.ref && getOwningContextName(dependency.target.ref) !== getOwningContextName(module)) {
-                accept('error', 'A module can depend only on another module in the same bounded context.', {
+                const sourceSharedKernel = getOwningSharedKernel(module);
+                const targetSharedKernel = getOwningSharedKernel(dependency.target.ref);
+                const message = sourceSharedKernel === undefined || targetSharedKernel === sourceSharedKernel
+                    ? 'A module can depend only on another module in the same bounded context or shared kernel.'
+                    : targetSharedKernel === undefined
+                        ? "A shared kernel cannot depend on a bounded context's private model."
+                        : "A shared kernel cannot depend on another shared kernel's private model.";
+                accept('error', message, {
                     node: module,
-                    property: 'dependencies'
+                    property: 'dependencies',
+                    index
                 });
             }
             if (dependency.target.ref && dependency.target.ref !== module &&
                 moduleDependsTransitivelyOn(dependency.target.ref, module)) {
                 accept('error', 'Module dependencies cannot contain a cycle.', {
                     node: module,
-                    property: 'dependencies'
+                    property: 'dependencies',
+                    index
                 });
                 break;
             }
         }
         const seenExposures = new Set<AstNode>();
         for (const exposure of module.exposures) {
-            for (const declaration of exposure.declarations) {
+            for (const [index, declaration] of exposure.declarations.entries()) {
                 const target = declaration.target.ref;
                 if (target) {
                     if (seenExposures.has(target)) {
@@ -1372,7 +1384,8 @@ export class ThinaiValidator {
                 if (target && getOwningModule(target) !== module) {
                     accept('error', 'A module may expose only declarations that it owns.', {
                         node: exposure,
-                        property: 'declarations'
+                        property: 'declarations',
+                        index
                     });
                 }
             }
@@ -1414,7 +1427,7 @@ export class ThinaiValidator {
                 !isDataObject(target.$container)) {
                 accept('error', 'Specification text can reference only declared domain, event, data-object, or read-model fields.', {
                     node: referenceInfo.container,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1438,7 +1451,7 @@ export class ThinaiValidator {
                 )) {
                 accept('error', 'Bare field and method references are limited to the enclosing entity or value object; use an owner-qualified path.', {
                     node: referenceInfo.container as AstNode,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1449,7 +1462,7 @@ export class ThinaiValidator {
                 AstUtils.getContainerOfType(referenceInfo.container, isMethod) !== target) {
                 accept('error', 'Non-journey prose must link a query result type or field, not the query operation itself.', {
                     node: referenceInfo.container as AstNode,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1457,7 +1470,7 @@ export class ThinaiValidator {
                 !this.referencePolicy.isVisibleSpecificationPathSegment(referenceInfo.container, target, false)) {
                 accept('error', 'This specification path segment is not visible; use a public declaration or an authorized contract path.', {
                     node: referenceInfo.container as AstNode,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1466,13 +1479,13 @@ export class ThinaiValidator {
                 if (isTerminalSpecificationSegment && this.referencePolicy.isJourneyPathOnlyTarget(target)) {
                     accept('error', 'A journey specification must end at a visible declaration, operation, field, or value, not a module, context, map, kernel, or service container.', {
                         node: referenceInfo.container as AstNode,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                 } else if (isTerminalSpecificationSegment &&
                     !this.referencePolicy.isJourneyVisibleTarget(journeyStep, target, kind)) {
                     accept('error', 'Journey specifications may reference current inputs, prior command results, visible read/query values, and public contracts, but not private aggregate internals, later command operations, private command contract inputs or results, or private domain events.', {
                         node: referenceInfo.container as AstNode,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                 }
                 return;
@@ -1492,7 +1505,7 @@ export class ThinaiValidator {
                     !this.referencePolicy.hasSharedKernelRelationship(referenceInfo.container, sharedKernel)) {
                     accept('error', 'Using a shared-kernel declaration in specification text requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.', {
                         node: referenceInfo.container as AstNode,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                     return;
                 }
@@ -1500,7 +1513,7 @@ export class ThinaiValidator {
                     !isPublicApiDeclaration(target)) {
                     accept('error', 'Using a module declaration from a shared kernel requires the module to expose that declaration.', {
                         node: referenceInfo.container as AstNode,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                     return;
                 }
@@ -1516,7 +1529,7 @@ export class ThinaiValidator {
                         ? 'Specification text cannot reference a private DomainEvent field from another bounded context.'
                         : 'A field from another bounded context is not part of an authorized event or query contract.', {
                         node: referenceInfo.container,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                     return;
                 }
@@ -1530,7 +1543,7 @@ export class ThinaiValidator {
                     ? 'Specification text cannot link a cross-context query operation directly; link its published result type or field instead.'
                     : 'A method from another bounded context is not part of an authorized event or query contract.', {
                     node: referenceInfo.container as AstNode,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1546,14 +1559,14 @@ export class ThinaiValidator {
                 !this.referencePolicy.isPublishedReadResponseType(referenceInfo.container, target)) {
                 accept('error', 'Specification text can reference another bounded context only through an authorized event or query contract.', {
                     node: referenceInfo.container,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
             if (isSpecificationReference && isDomainEvent(target) && crossesContext) {
                 accept('error', 'Specification text cannot reference a private DomainEvent from another bounded context.', {
                     node: referenceInfo.container,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1562,7 +1575,7 @@ export class ThinaiValidator {
                     !this.referencePolicy.hasAuthorizedEventRelationship(referenceInfo.container, target))) {
                 accept('error', 'Cross-context IntegrationEvent references require an exposed contract and an authorized context-map relationship.', {
                     node: referenceInfo.container,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
                 return;
             }
@@ -1583,7 +1596,7 @@ export class ThinaiValidator {
                 if (!isPublicApiDeclaration(target)) {
                     accept('error', 'A declaration outside a module may reference a module declaration only when its module and all enclosing modules expose it.', {
                         node: referenceInfo.container,
-                        property: referenceInfo.property
+                        property: referenceInfo.property, index: referenceInfo.index
                     });
                     return;
                 }
@@ -1597,15 +1610,19 @@ export class ThinaiValidator {
             if (!isModulePubliclyVisible(sourceModule, targetModule) || !isExposedByModule(targetModule, target)) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
                     node: referenceInfo.container,
-                    property: referenceInfo.property
+                    property: referenceInfo.property, index: referenceInfo.index
                 });
             }
         });
     }
 
     private isIntegrationEventPayloadTypeReference(referenceInfo: ReferenceInfo): boolean {
-        const container = referenceInfo.container;
-        return isField(container) && isIntegrationEvent(container.$container);
+        // Direct field types and collection element/value types inside an
+        // integration event are all payload contract references. The dedicated
+        // payload check owns their module diagnostics so the generic module
+        // check must not report a second error for collection references.
+        const field = AstUtils.getContainerOfType(referenceInfo.container, isField);
+        return field !== undefined && isIntegrationEvent(field.$container);
     }
 
     checkRepository(repository: Repository, accept: ValidationAcceptor): void {
@@ -1629,9 +1646,9 @@ export class ThinaiValidator {
             });
         }
         const writeRepositories = this.getWriteRepositoriesByAggregate().get(aggregate) ?? [];
-        if (writeRepositories.length > 1) {
-            const otherRepository = writeRepositories.find(candidate => candidate !== repository);
-            accept('error', `Aggregate '${aggregate.name}' already has write repository '${otherRepository?.name ?? 'another repository'}'; '${repository.name}' is a second write repository.`, {
+        if (writeRepositories.length > 1 && writeRepositories.at(-1) === repository) {
+            const names = writeRepositories.map(candidate => `'${candidate.name}'`).join(', ');
+            accept('error', `Aggregate '${aggregate.name}' has multiple write repositories: ${names}. An aggregate may declare at most one write repository.`, {
                 node: repository,
                 property: 'name',
                 code: 'duplicate-write-repository'
@@ -1676,15 +1693,29 @@ export class ThinaiValidator {
 
     checkFactory(factory: Factory, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(factory, accept);
+        const roots = new Set<Entity>();
         for (const method of factory.methods) {
             const result = method.returnType?.ref;
-            if (isSyntacticallyComplete(method) &&
-                (!isEntity(result) || !result.root || !getOwningAggregate(result) || isCrossContextOwned(factory, result))) {
+            const isValidRoot = isEntity(result) && result.root &&
+                getOwningAggregate(result) !== undefined && !isCrossContextOwned(factory, result);
+            if (isSyntacticallyComplete(method) && !isValidRoot) {
                 accept('error', 'A factory method must return an aggregate-root entity in its own bounded context.', {
                     node: method,
                     property: 'returnType'
                 });
+                continue;
             }
+            if (isValidRoot) {
+                roots.add(result);
+            }
+        }
+        if (roots.size > 1) {
+            const names = [...roots].map(root => root.name).join(', ');
+            accept('error', `A factory must create one aggregate root; it creates multiple roots: ${names}. Split creation of different roots into separate factories.`, {
+                node: factory,
+                property: 'name',
+                code: 'multiple-factory-roots'
+            });
         }
     }
 
@@ -1715,6 +1746,29 @@ export class ThinaiValidator {
         }
         const integrationEvent = isIntegrationEvent(event);
         const visited = new Set<AstNode>();
+        const checkModuleDependency = (referenceInfo: ReferenceInfo, type: AstNode | undefined): void => {
+            if (!integrationEvent || !type) {
+                return;
+            }
+            const eventModule = getOwningModule(event);
+            const targetModule = getOwningModule(type);
+            if (!eventModule || !targetModule || eventModule === targetModule ||
+                getOwningContextName(eventModule) !== getOwningContextName(targetModule)) {
+                return;
+            }
+            // Private payload types already receive the dedicated public
+            // contract diagnostic below; do not stack a module error on top.
+            if (!isPublicApiDeclaration(type)) {
+                return;
+            }
+            if (!isModulePubliclyVisible(eventModule, targetModule)) {
+                accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
+                    node: referenceInfo.container,
+                    property: referenceInfo.property,
+                    index: referenceInfo.index
+                });
+            }
+        };
         const visit = (type: AstNode | undefined, field: Field): void => {
             if (!type || visited.has(type)) {
                 return;
@@ -1749,15 +1803,27 @@ export class ThinaiValidator {
             }
             if (isValueObject(type)) {
                 for (const nestedField of type.fields) {
-                    for (const reference of getTypeReferences(nestedField.type, nestedField.collection)) {
-                        visit(reference.ref, nestedField);
+                    for (const nestedReference of AstUtils.streamReferences(nestedField)) {
+                        if (nestedReference.property?.endsWith('Path') ||
+                            !isReference(nestedReference.reference)) {
+                            continue;
+                        }
+                        visit(nestedReference.reference.ref, nestedField);
                     }
                 }
             }
         };
         for (const field of event.fields) {
-            for (const reference of getTypeReferences(field.type, field.collection)) {
-                visit(reference.ref, field);
+            for (const referenceInfo of AstUtils.streamReferences(field)) {
+                if (referenceInfo.property?.endsWith('Path') ||
+                    !isReference(referenceInfo.reference)) {
+                    continue;
+                }
+                // Only direct payload field types must be visible from the
+                // event's own module. Nested shapes follow the outer payload
+                // type's dependencies.
+                checkModuleDependency(referenceInfo, referenceInfo.reference.ref);
+                visit(referenceInfo.reference.ref, field);
             }
         }
     }
@@ -1851,8 +1917,20 @@ export class ThinaiValidator {
      * Duplicate names are scoped to the import-connected model containing a
      * document. Both import and importer edges participate so every file in a
      * multi-file model sees the same duplicate diagnostics.
+     *
+     * The import graph and its connected components are built once per build;
+     * rebuilding them per document makes validation quadratic in workspace
+     * size.
      */
     private getModelDocumentUris(document: LangiumDocument): Set<string> {
+        const components = this.getImportComponentsByDocument();
+        return components.get(document.uri.toString()) ?? new Set([document.uri.toString()]);
+    }
+
+    private getImportComponentsByDocument(): Map<string, Set<string>> {
+        if (this.importComponentsByDocument) {
+            return this.importComponentsByDocument;
+        }
         const documents = this.services.shared.workspace.LangiumDocuments.all.toArray();
         const byUri = new Map<string, LangiumDocument>();
         const adjacency = new Map<string, Set<string>>();
@@ -1877,21 +1955,33 @@ export class ThinaiValidator {
             }
         }
 
-        const uris = new Set<string>();
-        const pending = [document.uri.toString()];
-        while (pending.length > 0) {
-            const uri = pending.pop()!;
-            if (uris.has(uri)) {
+        const components = new Map<string, Set<string>>();
+        const visited = new Set<string>();
+        for (const uri of byUri.keys()) {
+            if (visited.has(uri)) {
                 continue;
             }
-            uris.add(uri);
-            for (const next of adjacency.get(uri) ?? []) {
-                if (!uris.has(next)) {
-                    pending.push(next);
+            const component = new Set<string>();
+            const pending = [uri];
+            while (pending.length > 0) {
+                const next = pending.pop()!;
+                if (visited.has(next) || !byUri.has(next)) {
+                    continue;
+                }
+                visited.add(next);
+                component.add(next);
+                for (const neighbor of adjacency.get(next) ?? []) {
+                    if (!visited.has(neighbor)) {
+                        pending.push(neighbor);
+                    }
                 }
             }
+            for (const member of component) {
+                components.set(member, component);
+            }
         }
-        return uris;
+        this.importComponentsByDocument = components;
+        return components;
     }
 
     private getWriteRepositoriesByAggregate(): Map<Aggregate, Repository[]> {

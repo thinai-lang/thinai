@@ -530,4 +530,29 @@ in bounded context Local {
             "Import alias 'Local' conflicts with a declaration in this file."
         );
     });
+
+    test('rejects import aliases that collide with a context-relative path-root suffix', async () => {
+        const docs = await build({
+            'catalog.tni': `bounded context Catalog
+in bounded context Catalog {
+    module Shared {
+        value object Money {
+            raw: string
+        }
+    }
+}`,
+            'other.tni': `bounded context Other
+in bounded context Other {
+    value object V {
+        raw: string
+    }
+}`,
+            'consumer.tni': `import { Catalog } from "./catalog.tni"
+import { Other as Shared } from "./other.tni"
+bounded context Consumer`
+        });
+        expect(errors(docs['consumer.tni']!)).toContain(
+            "Import alias 'Shared' conflicts with an imported declaration."
+        );
+    });
 });

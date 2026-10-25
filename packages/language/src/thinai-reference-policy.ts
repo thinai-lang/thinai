@@ -282,7 +282,45 @@ export class ThinaiReferencePolicy {
             const kind = getJourneySpecificationKind(source) ?? 'when';
             return this.isJourneyVisibleTarget(journeyStep, target, kind);
         }
+        if (isValueObject(target) || isDataObject(target) || isReadModel(target) ||
+            isEnumType(target) || isEnumValue(target) || isField(target)) {
+            return this.isVisibleDataBearingSpecificationSegment(source, target);
+        }
         return true;
+    }
+
+    /**
+     * Data-bearing declarations are not free structural containers. Using one
+     * as a non-terminal path segment exposes its shape, so the source must
+     * reach it through the module API, share its module, or traverse an
+     * authorized event/published-query contract.
+     */
+    private isVisibleDataBearingSpecificationSegment(source: AstNode, target: AstNode): boolean {
+        const sourceModule = getOwningModule(source);
+        const targetModule = getOwningModule(target);
+        if (sourceModule !== undefined && sourceModule === targetModule) {
+            return true;
+        }
+        if (this.isAuthorizedSpecificationContractTarget(source, target)) {
+            return true;
+        }
+        const targetSharedKernel = getOwningSharedKernel(target);
+        if (targetSharedKernel !== undefined) {
+            const sourceSharedKernel = getOwningSharedKernel(source);
+            if (sourceSharedKernel !== targetSharedKernel &&
+                !this.hasSharedKernelRelationship(source, targetSharedKernel)) {
+                return false;
+            }
+            // Even inside one shared kernel, modules keep their exposure and
+            // dependency boundaries.
+            return isPublicApiDeclaration(target) && isModuleAccessibleFrom(source, targetModule);
+        }
+        if (getOwningContextName(source) !== getOwningContextName(target)) {
+            // Cross-context data shapes are reachable only through the event
+            // and published-query contracts checked above.
+            return false;
+        }
+        return isPublicApiDeclaration(target) && isModuleAccessibleFrom(source, targetModule);
     }
 
     private getTerminalSpecificationTarget(source: AstNode): AstNode | undefined {

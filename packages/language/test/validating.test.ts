@@ -1653,7 +1653,8 @@ in bounded context Ordering {
         expect(duplicate).toBeDefined();
         expect(String(duplicate?.message)).toContain("Aggregate 'Order'");
         expect(String(duplicate?.message)).toContain('write repository');
-        expect(String(duplicate?.message)).toContain('second write repository');
+        expect(String(duplicate?.message)).toContain("'FirstOrderRepository'");
+        expect(String(duplicate?.message)).toContain("'SecondOrderRepository'");
     });
 
     test('requires a write repository to manage an aggregate-root entity', async () => {
@@ -1700,7 +1701,7 @@ in bounded context Ordering {
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
-    test('allows a factory to create different aggregate roots with different methods', async () => {
+    test('rejects a factory that creates different aggregate roots with different methods', async () => {
         const document = await parse(`
             bounded context Commerce in bounded context Commerce {
                 aggregate Order {
@@ -1714,6 +1715,27 @@ in bounded context Ordering {
                 factory CommerceFactory {
                     method createOrder(id: OrderId) returns Order.Order
                     method createCustomer(id: CustomerId) returns Customer.Customer
+                }
+            }
+        `);
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.code === 'multiple-factory-roots' &&
+            String(diagnostic.message).includes('A factory must create one aggregate root')
+        )).toBe(true);
+    });
+
+    test('allows a factory to create one aggregate root with multiple methods', async () => {
+        const document = await parse(`
+            bounded context Commerce in bounded context Commerce {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                factory OrderFactory {
+                    method create(id: OrderId) returns Order.Order
+                    method reconstitute(id: OrderId) returns Order.Order
                 }
             }
         `);
@@ -2160,6 +2182,42 @@ in bounded context Ordering {
         `);
 
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
+    });
+
+    test('requires a dependency for a direct integration-event payload type in a sibling module', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                module Types {
+                    exposes Payload
+                    value object Payload { raw: string }
+                }
+                module Contracts {
+                    exposes E
+                    integration event E { payload: Payload }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            String(diagnostic.message) === 'This module reference requires a dependency on a module that exposes the target declaration.'
+        )).toBe(true);
+    });
+
+    test('accepts a direct integration-event payload type through a module dependency', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                module Types {
+                    exposes Payload
+                    value object Payload { raw: string }
+                }
+                module Contracts depends on Types {
+                    exposes E
+                    integration event E { payload: Payload }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
     test('requires module-nested integration events to be exposed before cross-context use', async () => {
@@ -2702,6 +2760,21 @@ in bounded context Ordering {
         ))).toBe(true);
     });
 
+    test('underlines the unknown integration pattern rather than the whole pattern list', async () => {
+        const source = `bounded context Ordering
+bounded context Shipping
+context map Fulfillment {
+    customer Shipping { integrationPatterns: ["PublishedLanguage", "Bogus"] }
+        -> supplier Ordering
+}`;
+        const document = await parse(source);
+        const diagnostic = semanticDiagnostics(document).find(candidate =>
+            String(candidate.message).includes("Unknown integration pattern 'Bogus'")
+        );
+        expect(diagnostic).toBeDefined();
+        expect(document.textDocument.getText(diagnostic!.range)).toContain('Bogus');
+    });
+
     test('requires map collections to declare both key and value types', async () => {
         const document = await parse(`
             bounded context Inventory in bounded context Inventory {
@@ -2753,6 +2826,26 @@ in bounded context Ordering {
         `);
         expect(semanticDiagnostics(realizations).map(diagnostic => diagnostic.message)).toContain(
             "Subdomain 'Shared' is realized more than once."
+        );
+    });
+
+    test('reports a shared-kernel module depending on a bounded-context module', async () => {
+        const document = await parse(`
+            shared kernel Common {
+                module Client depends on Ordering.Internal {
+                    value object ClientCode { raw: string }
+                }
+            }
+            bounded context Ordering
+            in bounded context Ordering {
+                module Internal {
+                    value object InternalCode { raw: string }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => diagnostic.message)).toContain(
+            "A shared kernel cannot depend on a bounded context's private model."
         );
     });
 
@@ -3325,6 +3418,144 @@ in bounded context Ordering {
         expect(semanticDiagnostics(document).filter(diagnostic =>
             diagnostic.severity === DiagnosticSeverity.Error
         )).toEqual([]);
+    });
+
+    test('rejects private module data shapes as non-terminal specification path segments', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Hidden {
+                    value object Secret {
+                        raw: string
+                    }
+                }
+                application service App {
+                    method run() {
+                        behavior "Use [[Hidden.Secret.raw]] and [[Hidden.Secret]]."
+                    }
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
+        expect(messages).toContain('This specification path segment is not visible; use a public declaration or an authorized contract path.');
+    });
+
+    test('accepts same-module and exposed module data shapes as specification path segments', async () => {
+        const sameModule = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Internal {
+                    exposes Secret
+                    value object Secret {
+                        raw: string
+                    }
+                    application service App {
+                        method run() {
+                            behavior "Use [[Internal.Secret.raw]]."
+                        }
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(sameModule).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+
+        const exposed = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Public {
+                    exposes Secret
+                    value object Secret {
+                        raw: string
+                    }
+                }
+                application service App {
+                    method run() {
+                        behavior "Use [[Public.Secret.raw]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(exposed).filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)).toEqual([]);
+    });
+
+    test('rejects a private module shape used as a stepping stone to an exposed field', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                module Hidden {
+                    exposes Inner
+                    value object Secret {
+                        inner: Inner
+                    }
+                    value object Inner {
+                        raw: string
+                    }
+                }
+                application service App {
+                    method run() {
+                        behavior "Use [[Hidden.Secret.inner.raw]]."
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).some(diagnostic =>
+            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+        )).toBe(true);
+    });
+
+    test('underlines the invisible specification path segment, not the first segment', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    module Hidden {
+        value object Secret { raw: string }
+    }
+    application service App {
+        method run() {
+            behavior "Use [[Hidden.Secret.raw]]."
+        }
+    }
+}`;
+        const document = await parse(source);
+        const diagnostic = semanticDiagnostics(document).find(candidate =>
+            candidate.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+        );
+        expect(diagnostic).toBeDefined();
+        expect(document.textDocument.getText(diagnostic!.range)).toBe('Secret');
+    });
+
+    test('applies shared-kernel module visibility to data-bearing path segments', async () => {
+        const privateShape = await parse(`
+            shared kernel Common {
+                module Hidden {
+                    value object Secret { raw: string }
+                }
+                domain service Policy {
+                    method run() {
+                        behavior "Use [[Hidden.Secret.raw]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(privateShape).some(diagnostic =>
+            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+        )).toBe(true);
+
+        const exposedShape = await parse(`
+            shared kernel Common {
+                module Hidden {
+                    exposes Secret
+                    value object Secret { raw: string }
+                }
+                domain service Policy {
+                    method run() {
+                        behavior "Use [[Hidden.Secret.raw]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(exposedShape).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
     test('rejects current and unrelated aggregate contract references in journey prose', async () => {
@@ -4706,7 +4937,7 @@ in bounded context Ordering {
 
         const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
         expect(messages).toContain('A repository must manage an aggregate-root entity.');
-        expect(messages.some(message => message.includes('already has write repository'))).toBe(false);
+        expect(messages.some(message => message.includes('multiple write repositories'))).toBe(false);
     });
 
     test('still rejects a second valid write repository for the same aggregate', async () => {
@@ -4731,7 +4962,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).some(diagnostic =>
-            String(diagnostic.message).includes("Aggregate 'Order' already has write repository")
+            String(diagnostic.message).includes("Aggregate 'Order' has multiple write repositories")
         )).toBe(true);
     });
 

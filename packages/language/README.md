@@ -123,7 +123,9 @@ rather than entity instances. Entity references are rejected recursively,
 including entities nested inside value-object shapes, unless both belong to the
 same aggregate. A factory that needs another aggregate uses its
 identifier or a value-object snapshot; if its input comes from a DataObject, an
-application service maps that DataObject into domain values first. Domain
+application service maps that DataObject into domain values first. A factory
+creates exactly one aggregate root: all of its valid methods must return the
+same root entity, and separate roots require separate factories. Domain
 services may accept aggregate-root or entity parameters because they model domain
 operations, but their signatures use domain values rather than DataObjects.
 Method and constructor signatures follow this table:
@@ -136,7 +138,7 @@ Method and constructor signatures follow this table:
 | Entity method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
 | Aggregate-owned value-object method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
 | Context-level value-object method | Domain values; no entities, DataObjects, events, or read models | Domain values |
-| Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | Its own aggregate root only |
+| Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | The single aggregate root created by this factory; every valid method in one factory returns that same root |
 | Domain-service method | Entity or aggregate-root entity parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
 | Application-service method | Domain values and DataObjects; no entities or read models; event handlers have exactly one event parameter and no other parameters | Domain values and DataObjects; no entities or read models |
 | Query-service method | Domain values and DataObjects; no entities, read models, or events | Domain values, DataObjects, and read models; no entities |
@@ -158,6 +160,7 @@ calculation as domain-service behavior or aggregate behavior instead.
 An aggregate may declare at most one write repository; repository declarations
 are optional and use blocks:
 
+<!-- thinai-fragment -->
 ```thinai
 repository OrderRepository {
   manages Order.Order
@@ -212,6 +215,7 @@ contexts' event declarations and handlers.
 
 An incoming integration event can invoke a local command method:
 
+<!-- thinai-fragment -->
 ```thinai
 bounded context Shipping
 in bounded context Shipping {
@@ -265,6 +269,7 @@ public event payload: every enclosing module must expose the payload type.
 
 When a file declares multiple components, select them explicitly:
 
+<!-- thinai-fragment -->
 ```thinai
 import { Ordering as Orders, Shipping } from "./contexts.tni"
 ```
@@ -276,9 +281,9 @@ including members contributed from other imported files. For example, if
 an aliased context, declarations belonging to that context also keep
 context-relative spellings such as `Module.Type` and `Type`; local and imported
 contributions behave the same way. Aliases are document-local
-scope names; an alias must not collide with a declaration that can begin a
-qualified path (a component, module, type, service, aggregate, or similar
-declaration) or with a canonical declaration visible through imports. Terminal
+scope names; an alias must not collide with any visible path-root spelling,
+including a context-relative suffix such as `Module` or `Type`, a component
+name, or a canonical declaration visible through imports. Terminal
 fields, methods, enum values, and parameters do not conflict with aliases.
 Strategic declarations (actors,
 journeys, and subdomains) are not aliased by component imports; import them
@@ -292,12 +297,18 @@ which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
 declarations such as value objects, enums, events, services, modules, and
 methods; fields and enum values inherit visibility from their declaration.
-Only the terminal declaration in a qualified path must be exposed; structural
-containers such as an aggregate, entity, or service used as path segments do not
-need separate exposures. Module exposure and context-level visibility make a
-declaration part of a published contract; they do not make another bounded
-context's value object, data object, read model, or enum directly usable as a
-field, parameter, or return type. Use a local mirror for identifiers, an
+A qualified specification path may traverse structural containers without
+exposing each segment: bounded contexts, context maps, shared kernels, modules,
+aggregates, entities, services, projectors, and factories. Data-bearing
+declarations (value objects, data objects, read models, enums, and fields) are
+different: using one as a non-terminal path segment exposes its shape, so the
+source must be in the same module, reach it through the public module API, share
+its shared kernel through an authorized relationship, or traverse an authorized
+event or published-query contract. The terminal declaration is still checked
+against the applicable visibility rule. Module exposure and context-level
+visibility make a declaration part of a published contract; they do not make
+another bounded context's value object, data object, read model, or enum
+directly usable as a field, parameter, or return type. Use a local mirror for identifiers, an
 IntegrationEvent for event data, a shared-kernel type where appropriate, or a
 published query result contract for read data. An identifier value object referenced by a `mirrors`
 declaration is an explicit exception: the mirror may name an identifier that is
@@ -444,6 +455,7 @@ Describe other creation-time defaults as constructor postconditions or behavior.
 When a domain term is also a Thinai keyword, quote the identifier with
 backticks in declarations and references:
 
+<!-- thinai-fragment -->
 ```thinai
 data object Request {
   `value`: string
@@ -466,5 +478,11 @@ spaces.
 - [src/thinai.langium](src/thinai.langium) — grammar definition.
 - [src/thinai-formatter.ts](src/thinai-formatter.ts) — document formatting.
 - [src/thinai-validator.ts](src/thinai-validator.ts) — semantic validation.
-- [src/thinai-scope.ts](src/thinai-scope.ts) — import and reference scoping.
+- [src/thinai-scope-provider.ts](src/thinai-scope-provider.ts),
+  [src/thinai-scope-computation.ts](src/thinai-scope-computation.ts), and
+  [src/thinai-scope-utils.ts](src/thinai-scope-utils.ts) — import and reference scoping.
 - [test](test) — parsing, linking, validation, and LSP tests.
+
+## License
+
+Thinai is released under the [MIT License](../../LICENSE).

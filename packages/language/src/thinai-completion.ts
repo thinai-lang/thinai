@@ -126,7 +126,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     constructor(services: ThinaiServices) {
         super(services);
         this.thinaiServices = services;
-        this.completionDetails = new ThinaiCompletionDetails();
+        this.completionDetails = new ThinaiCompletionDetails(services);
         this.importCompletion = new ThinaiImportCompletion(services);
         this.optionalClauseCompletion = new ThinaiOptionalClauseCompletion(services);
         this.contextMapCompletion = new ThinaiContextMapCompletion(services, {
@@ -347,9 +347,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
             .thinaiPathContinuation === true;
         const readSourcePathContinuation = this.isReadSourcePathContinuation(refInfo, target, context);
+        const structuralSpecificationContinuation = isSpecificationTextPart(refInfo.container) &&
+            AstUtils.getContainerOfType(refInfo.container, isJourneyStep) === undefined &&
+            target !== undefined &&
+            (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
+                .isStructuralSpecificationPathTarget(target) &&
+            this.shouldAppendPathDot(refInfo, context);
         if (target && (
             this.isJourneyPathContinuation(refInfo, target, context) ||
             readSourcePathContinuation ||
+            structuralSpecificationContinuation ||
             pathContinuation && this.shouldAppendPathDot(refInfo, context)
         )) {
             insertText = `${insertText}.`;

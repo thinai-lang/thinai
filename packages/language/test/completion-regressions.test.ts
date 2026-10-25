@@ -339,6 +339,22 @@ in bounded context Ordering {
         expect(typedRoot.completion?.items.map(item => item.label)).toContain('result');
     });
 
+    test('appends a continuation dot for a non-journey structural specification root', async () => {
+        const result = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        value object Money { amount: number }
+    }
+    application service App {
+        method run() {
+            behavior "Use [[${marker}]]."
+        }
+    }
+}`);
+        const item = result.completion?.items.find(candidate => candidate.label === 'Ordering');
+        expect(item?.textEdit?.newText ?? item?.insertText).toBe('Ordering.');
+    });
+
     test('completes backtick-delimited names while the closing backtick is being typed', async () => {
         const result = await build(`bounded context Ordering
 in bounded context Ordering {

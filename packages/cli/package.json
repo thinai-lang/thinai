@@ -2,6 +2,7 @@
     "name": "thinai-cli",
     "description": "Command-line tools for Thinai models",
     "version": "0.0.1",
+    "license": "MIT",
     "type": "module",
     "engines": {
         "node": ">=22.0.0",

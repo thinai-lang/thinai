@@ -3,6 +3,7 @@
     "publisher": "thinai-lang",
     "description": "Thinai language support for VS Code",
     "version": "0.0.1",
+    "license": "MIT",
     "displayName": "Thinai",
     "icon": "./icon.png",
     "type": "module",

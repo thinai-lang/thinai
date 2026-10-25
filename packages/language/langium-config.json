@@ -1,5 +1,6 @@
 {
     "projectName": "Thinai",
+    "mode": "production",
     "languages": [
         {
             "id": "thinai",
