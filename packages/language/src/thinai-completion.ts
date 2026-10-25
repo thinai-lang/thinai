@@ -594,7 +594,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const indentation = await this.getClientIndentationOptions(document);
-        const completion = await this.getCompletionInternal(document, params, cancelToken);
+        const completion = this.dedupeCompletionItems(
+            await this.getCompletionInternal(document, params, cancelToken)
+        );
         return completion && indentation
             ? {
                 ...completion,
@@ -605,6 +607,35 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 )
             }
             : completion;
+    }
+
+    /**
+     * Multiple completion paths can propose the exact same item for the same
+     * cursor. Keep the first; candidates with different details remain distinct
+     * because they can represent different valid path targets.
+     */
+    private dedupeCompletionItems(completion: CompletionList | undefined): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const seen = new Set<string>();
+        const items = completion.items.filter(item => {
+            const editKey = item.textEdit ? JSON.stringify(item.textEdit) : item.insertText ?? '';
+            const key = [
+                item.label,
+                item.kind ?? '',
+                item.detail ?? '',
+                editKey
+            ].join('\u0000');
+            if (seen.has(key)) {
+                return false;
+            }
+            seen.add(key);
+            return true;
+        });
+        return items.length === completion.items.length
+            ? completion
+            : { ...completion, items };
     }
 
     private async getClientIndentationOptions(document: LangiumDocument) {

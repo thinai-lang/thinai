@@ -470,6 +470,8 @@ behavior "Use [[Request.`value`]]."
 
 The same quoted form is available for field, parameter, method, type, and enum
 value names. Completion inserts the quoted form automatically for such names.
+Identifiers are ASCII-only, including quoted names; quoted names may contain
+spaces and hyphens but not non-ASCII letters.
 
 The language server provides keyword and cross-reference completion,
 navigation, diagnostics, import-path completion, document formatting, and quick

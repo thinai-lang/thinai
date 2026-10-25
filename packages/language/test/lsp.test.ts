@@ -4240,6 +4240,27 @@ in bounded context Ordering {
         });
     });
 
+    test('falls back to the line range inside line and block comments', async () => {
+        const source = 'bounded context Ordering\n// a line comment\n/* a block comment */\nbounded context Shipping';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/comment-selection-range.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const lineComment = createThinaiSelectionRange(document, { line: 1, character: 5 });
+        expect(lineComment?.range).toEqual({
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: '// a line comment'.length }
+        });
+
+        const blockComment = createThinaiSelectionRange(document, { line: 2, character: 5 });
+        expect(blockComment?.range).toEqual({
+            start: { line: 2, character: 0 },
+            end: { line: 2, character: '/* a block comment */'.length }
+        });
+    });
+
     test('falls back to the line range for CR-only whitespace selection positions', async () => {
         const source = 'bounded context Ordering\r   \rbounded context Shipping';
         const document = services.shared.workspace.LangiumDocuments.createDocument(

@@ -81,6 +81,79 @@ describe('Order Fulfillment example', () => {
         expect(errors).toEqual([]);
     });
 
+    test('does not repeat exposure completion items in the shared contracts example', async () => {
+        const source = await readFile(new URL('../../../examples/order-fulfillment/common-types.tni', import.meta.url), 'utf8');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-fulfillment/common-types-completion.tni'), source
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        for (const marker of ['exposes CorrelationId', 'exposes ExternalId']) {
+            const offset = source.indexOf(marker) + marker.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const keys = (completion?.items ?? []).map(item => {
+                const editKey = item.textEdit ? JSON.stringify(item.textEdit) : item.insertText ?? '';
+                return [item.label, item.kind ?? '', item.detail ?? '', editKey].join('\u0000');
+            });
+            expect(new Set(keys).size, marker).toBe(keys.length);
+        }
+    });
+
+    test('completion output has no exact duplicates or invalid text edits across examples', async () => {
+        const exampleDirectory = new URL('../../../examples/order-fulfillment/', import.meta.url);
+        const files = (await readdir(exampleDirectory)).filter(file => file.endsWith('.tni')).sort();
+        documents = await Promise.all(files.map(async file => {
+            const source = await readFile(new URL(file, exampleDirectory), 'utf8');
+            return services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/order-fulfillment/${file}`), source
+            );
+        }));
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const duplicates: string[] = [];
+        const invalidRanges: string[] = [];
+        for (const document of documents) {
+            const text = document.textDocument.getText();
+            for (let offset = 0; offset <= text.length; offset += 23) {
+                const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                    textDocument: { uri: document.uri.toString() },
+                    position: document.textDocument.positionAt(offset)
+                });
+                const seen = new Set<string>();
+                for (const item of completion?.items ?? []) {
+                    if (typeof item.label !== 'string') {
+                        continue;
+                    }
+                    const editKey = item.textEdit ? JSON.stringify(item.textEdit) : item.insertText ?? '';
+                    const key = [item.label, item.kind ?? '', item.detail ?? '', editKey].join('\u0000');
+                    if (seen.has(key)) {
+                        duplicates.push(`${document.uri.path}@${offset}: ${item.label}`);
+                    }
+                    seen.add(key);
+
+                    const edit = item.textEdit;
+                    if (!edit) {
+                        continue;
+                    }
+                    const ranges = 'range' in edit ? [edit.range] : [edit.insert, edit.replace];
+                    for (const range of ranges) {
+                        const start = document.textDocument.offsetAt(range.start);
+                        const end = document.textDocument.offsetAt(range.end);
+                        if (start > end || end > text.length) {
+                            invalidRanges.push(`${document.uri.path}@${offset}: ${item.label} ${start}-${end}`);
+                        }
+                    }
+                }
+            }
+        }
+        expect(duplicates).toEqual([]);
+        expect(invalidRanges).toEqual([]);
+    });
+
     test('completes cross-context commands in an example journey', async () => {
         const exampleDirectory = new URL('../../../examples/order-fulfillment/', import.meta.url);
         const importedFiles = ['ordering-events.tni', 'shipping.tni'];

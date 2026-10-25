@@ -1,6 +1,7 @@
 import { AstUtils, CstUtils, GrammarUtils, type LangiumDocument } from 'langium';
 import { Range, SelectionRange, type Position } from 'vscode-languageserver-types';
 import { isMethod, isSpecificationText } from './generated/ast.js';
+import { scanThinaiSource } from './thinai-source-scanner.js';
 
 /**
  * Creates a selection hierarchy from the smallest relevant Thinai syntax node
@@ -10,12 +11,16 @@ export function createThinaiSelectionRange(
     document: LangiumDocument,
     position: Position
 ): SelectionRange | undefined {
+    const offset = document.textDocument.offsetAt(position);
+    if (scanThinaiSource(document.textDocument.getText().slice(0, offset)).inComment) {
+        return createLineSelectionRange(document, position);
+    }
+
     const root = document.parseResult.value.$cstNode;
     if (!root) {
         return createLineSelectionRange(document, position);
     }
 
-    const offset = document.textDocument.offsetAt(position);
     const leaf = CstUtils.findLeafNodeAtOffset(root, offset);
     if (!leaf) {
         return createLineSelectionRange(document, position);

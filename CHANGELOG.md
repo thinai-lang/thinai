@@ -24,3 +24,7 @@
 - Require commas between enum values and enforce backtick-quoted reserved words in specification references.
 - Deduplicate exposure completions already present earlier in the same `exposes` clause.
 - Validate complete sysprompt snippets and mark fragment examples explicitly.
+- Deduplicate identical completion items and validate completion text-edit ranges across examples.
+- Return line selection ranges inside line and block comments.
+- Exclude source maps from the VS Code extension package.
+- Run CI on Linux, Windows, and macOS; document ASCII-only identifiers.
