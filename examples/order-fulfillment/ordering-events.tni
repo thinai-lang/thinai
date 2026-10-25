@@ -16,6 +16,7 @@ in bounded context Ordering {
 
     method publishOrderPlaced(source: OrderPlaced) {
       emits Contracts.OrderPlacedV1, Contracts.OrderPlacedAuditV1
+        when "The internal event has been mapped to both public contracts."
       precondition "The source event is a valid placed-order event."
       behavior "First, authorize the Common.Role.System role for publishing the event with [[Authorization.authorize]]; stop if authorization fails. Then map the internal event to the public integration contract."
       postcondition "The corresponding public event contracts are emitted."
@@ -115,6 +116,7 @@ in bounded context Ordering {
   query service OrderQueries {
     method canPlaceOrder(orderId: OrderId) returns OrderEligibilityResult {
       reads from OrderSummaryRepository
+        when "The order summary is available for eligibility checks."
       precondition "The identified order exists."
       behavior "Read [[OrderSummaryRepository]] for [[orderId]] and return whether [[result.eligible]] is true."
       postcondition "The result reports whether the order is eligible for placement."

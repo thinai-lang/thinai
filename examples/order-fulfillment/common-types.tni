@@ -19,7 +19,7 @@ shared kernel CommonTypes {
   }
 
   module SharedContracts {
-    exposes CorrelationId, TenantId
+    exposes CorrelationId, TenantId, Identifiers
 
     value object CorrelationId {
       raw: string

@@ -1,0 +1,49 @@
+// Module tour: nested modules, re-exports, dependencies, and exposed methods.
+bounded context ModulesTour
+
+in bounded context ModulesTour {
+  module Outer {
+    exposes Inner, PublicValue
+
+    module Inner {
+      exposes InnerValue
+
+      value object InnerValue {
+        raw: string
+      }
+    }
+
+    value object PublicValue {
+      raw: string
+    }
+  }
+
+  module Consumer depends on Outer {
+    value object UsesPublic {
+      publicValue: PublicValue
+      innerValue: Outer.Inner.InnerValue
+    }
+  }
+
+  data object OutsideUsesNested {
+    innerValue: Outer.Inner.InnerValue
+  }
+
+  module Api {
+    exposes Handler.run
+
+    application service Handler {
+      method run() {}
+    }
+  }
+
+  module ApiConsumer depends on Api {
+    event Triggered
+
+    application service UsesApi {
+      method onTriggered(source: Triggered) {
+        invokes Api.Handler.run
+      }
+    }
+  }
+}

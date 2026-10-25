@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { readdir, readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import * as path from 'node:path';
 import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
 import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from 'thinai-language';
@@ -75,6 +77,78 @@ describe('Order Fulfillment example', () => {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         const errors = documents.flatMap(document => (document.diagnostics ?? [])
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => ({ file: document.uri.fsPath, message: diagnostic.message }))
+        );
+        expect(errors).toEqual([]);
+    });
+
+    test('validates every Thinai file in every example directory', async () => {
+        const root = fileURLToPath(new URL('../../../examples/', import.meta.url));
+        const files = (await readdir(root, { recursive: true }))
+            .filter((entry): entry is string => typeof entry === 'string' && entry.endsWith('.tni'))
+            .sort();
+        expect(files.length).toBeGreaterThan(0);
+
+        documents = await Promise.all(files.map(async file => {
+            const source = await readFile(path.join(root, file), 'utf8');
+            return services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/examples/${file.split(path.sep).join('/')}`), source
+            );
+        }));
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const errors = documents.flatMap(document => (document.diagnostics ?? [])
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
+            .map(diagnostic => ({ file: document.uri.fsPath, message: diagnostic.message }))
+        );
+        expect(errors).toEqual([]);
+    });
+
+    test('formats and revalidates every example file', async () => {
+        const root = fileURLToPath(new URL('../../../examples/', import.meta.url));
+        const files = (await readdir(root, { recursive: true }))
+            .filter((entry): entry is string => typeof entry === 'string' && entry.endsWith('.tni'))
+            .sort();
+        const sourceDocuments = await Promise.all(files.map(async file => {
+            const source = await readFile(path.join(root, file), 'utf8');
+            return {
+                file,
+                document: services.shared.workspace.LangiumDocuments.createDocument(
+                    URI.file(`/workspace/examples-format-source/${file.split(path.sep).join('/')}`), source
+                )
+            };
+        }));
+        await services.shared.workspace.DocumentBuilder.build(sourceDocuments.map(entry => entry.document), {
+            validation: false
+        });
+
+        const formattedDocuments: LangiumDocument[] = [];
+        for (const { file, document } of sourceDocuments) {
+            const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+                textDocument: { uri: document.uri.toString() },
+                options: { tabSize: 2, insertSpaces: true }
+            });
+            const formatted = edits
+                .slice()
+                .sort((left, right) =>
+                    document.textDocument.offsetAt(right.range.start) -
+                    document.textDocument.offsetAt(left.range.start)
+                )
+                .reduce((text, edit) => {
+                    const start = document.textDocument.offsetAt(edit.range.start);
+                    const end = document.textDocument.offsetAt(edit.range.end);
+                    return text.slice(0, start) + edit.newText + text.slice(end);
+                }, document.textDocument.getText());
+            formattedDocuments.push(services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/examples-formatted/${file.split(path.sep).join('/')}`),
+                formatted
+            ));
+        }
+        documents = [...sourceDocuments.map(entry => entry.document), ...formattedDocuments];
+        await services.shared.workspace.DocumentBuilder.build(formattedDocuments, { validation: true });
+
+        const errors = formattedDocuments.flatMap(document => (document.diagnostics ?? [])
             .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)
             .map(diagnostic => ({ file: document.uri.fsPath, message: diagnostic.message }))
         );

@@ -14,9 +14,10 @@ examples.
 - `shipping.tni` demonstrates a mirrored identifier, an integration-event handler, module exposures, and multiple module dependencies.
 - `cross-context-journey.tni` demonstrates a journey that invokes commands from both Ordering and Shipping.
 - `context-map.tni` demonstrates every relationship form and every integration-pattern label.
-- `common-types.tni` defines shared-kernel values, services, and nested modules.
+- `common-types.tni` defines shared-kernel values, services, and nested modules, including a nested-module re-export.
+- `language-tour/` contains a compact syntax and visibility tour for features that are easier to read outside the main domain model.
 
-The model demonstrates root and child entity identities and transitions, constructors that accept domain values and describe non-state initialization in postconditions (for example, `createdAt`), DataObjects kept at the application-service boundary, a grouped transition across two status fields with one shared descriptive guard, guarded method invocations, conditional emissions, application-service calls to aggregate-root and factory methods, multiple command services per aggregate, query projections reused across aggregates, event-driven projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive cross-context journeys. Where authorization is relevant, application-service behavior specifications describe it as the first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, and module dependencies.
+The model demonstrates root and child entity identities and transitions, constructors that accept domain values and describe non-state initialization in postconditions (for example, `createdAt`), DataObjects kept at the application-service boundary, a grouped transition across two status fields with one shared descriptive guard, guarded method invocations, conditional emissions, application-service calls to aggregate-root and factory methods, multiple command services per aggregate, query projections reused across aggregates, event-driven projectors, event-to-integration-event translation, incoming integration-event handling, and descriptive cross-context journeys. Where authorization is relevant, application-service behavior specifications describe it as the first step, using a context-local authorization domain service and roles from the shared-kernel enum. It also shows all four behavior-specification kinds, inline links to parameters and event/read-model fields, optional fields/parameters, collections, mirrored identifiers, component-selective imports, context maps, module dependencies, a shared-kernel domain-service invocation, nested-module re-export, backtick-quoted identifiers, triple-quoted specifications, guarded multi-event emissions, guarded read dependencies, and a prior-command result link in a journey.
 
 ## Language coverage index
 
@@ -26,6 +27,11 @@ The model demonstrates root and child entity identities and transitions, constru
 | Simple and component-selective imports, aliases, and qualified references | `ordering.tni`, `context-map.tni`, `ordering-events.tni`, `shipping.tni` |
 | Customer-supplier, partnership, separate-ways, and shared-kernel relationships; all integration-pattern labels | `context-map.tni` |
 | Shared-kernel value objects, enum, domain services, nested modules, and multiple exposures | `common-types.tni` |
+| Nested-module re-export and qualified nested module types | `common-types.tni`, `ordering.tni` |
+| Shared-kernel domain-service invocation | `ordering.tni` |
+| Backtick-quoted identifiers, triple-quoted specifications, and escaped markers | `ordering.tni` |
+| Guarded multi-event emissions and guarded `reads from` clauses | `ordering-events.tni` |
+| Prior-command result binding in a journey | `cross-context-journey.tni` |
 | `string`, `number`, `boolean`, `date`, `time`, and `instant`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
 | Nested data objects, optional fields/parameters, identifiers, enum initial states, constructors, and mirrored value objects | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
 | Application/domain/query services, repositories, factories, projectors, read models, events, and exposed integration contracts | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |

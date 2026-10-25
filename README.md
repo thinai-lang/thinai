@@ -15,6 +15,8 @@ formatting, and import quick fixes for `.tni` files.
   tactical modeling, events, and behavior.
 - Browse the [Order Fulfillment example](./examples/order-fulfillment/README.md)
   for a complete multi-file model.
+- Use the [Language Tour](./examples/language-tour/README.md) to see individual
+  syntax, module, and sharing features without following the full domain model.
 - See the [Thinai language package](./packages/language/README.md),
   [CLI](./packages/cli/README.md), and
   [VS Code extension development guide](./packages/extension/langium-quickstart.md).

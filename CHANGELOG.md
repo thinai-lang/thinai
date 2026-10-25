@@ -28,3 +28,5 @@
 - Return line selection ranges inside line and block comments.
 - Exclude source maps from the VS Code extension package.
 - Run CI on Linux, Windows, and macOS; document ASCII-only identifiers.
+- Add a Language Tour example and expand Order Fulfillment coverage for quoting, guards, shared-kernel services, nested re-exports, and journey result links.
+- Validate and format every example directory in tests.
