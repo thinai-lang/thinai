@@ -1024,6 +1024,46 @@ in bounded context Ordering {
         expect(newText).not.toContain('{ OrderPlaced }');
     });
 
+    test('offers an import code action for a same-context contribution member', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contribution-catalog.tni'),
+            'bounded context A'
+        );
+        const contribution = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contribution-types.tni'),
+            `import { A } from "./contribution-catalog.tni"
+in bounded context A {
+    value object V { raw: string }
+}`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contribution-consumer.tni'),
+            `import { A } from "./contribution-catalog.tni"
+in bounded context A {
+    data object D { x: V }
+}`
+        );
+        documents = [catalog, contribution, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: consumer.textDocument.getText().length }
+            },
+            context: { diagnostics: consumer.diagnostics ?? [] }
+        });
+        const action = actions?.find(candidate =>
+            'title' in candidate && candidate.title === "Import 'V' from './contribution-types.tni'"
+        );
+        const newText = action && 'edit' in action
+            ? action.edit?.changes?.[consumer.uri.toString()]?.[0]?.newText
+            : undefined;
+        expect(newText).toContain('import "./contribution-types.tni"');
+        expect(newText).not.toContain('{ A }');
+    });
+
     test('uses a selective import for a target file with multiple components', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/multi-component-target.tni'),
