@@ -78,6 +78,12 @@ describe('TextMate highlighting', () => {
         expect(scopesOn('items: List<OrderLine>', 'List')).toContain('storage.type.thinai');
         expect(scopesOn('enum OrderStatus { Draft, Placed }', 'Draft')).toContain('constant.other.enum-member.thinai');
         expect(scopesOn('customer Shipping -> supplier Ordering', '->')).toContain('keyword.operator.relationship.thinai');
+        expect(scopesOn('integrationPatterns: ["Conformist"]', 'integrationPatterns'))
+            .toContain('keyword.control.thinai');
+        expect(scopesOn('participants: [Ordering, Shipping]', 'participants'))
+            .toContain('keyword.control.thinai');
+        expect(scopesOn('`integrationPatterns`: string', 'integrationPatterns'))
+            .toContain('variable.other.property.thinai');
     });
 
     test('scopes backtick-delimited declarations and linked references', () => {

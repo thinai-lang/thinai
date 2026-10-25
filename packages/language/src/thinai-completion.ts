@@ -346,8 +346,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
         const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
             .thinaiPathContinuation === true;
+        const readSourcePathContinuation = this.isReadSourcePathContinuation(refInfo, target, context);
         if (target && (
             this.isJourneyPathContinuation(refInfo, target, context) ||
+            readSourcePathContinuation ||
             pathContinuation && this.shouldAppendPathDot(refInfo, context)
         )) {
             insertText = `${insertText}.`;
@@ -372,6 +374,27 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return false;
         }
         return this.shouldAppendPathDot(refInfo, context);
+    }
+
+    /**
+     * A cross-context or module-qualified read source may start at a structural
+     * container and continue through one or more path segments. Offer the dot
+     * so accepting the container keeps the user on a valid qualified path.
+     */
+    private isReadSourcePathContinuation(
+        refInfo: ReferenceInfo,
+        target: AstNode | undefined,
+        context: CompletionContext
+    ): boolean {
+        return isReadSourceReference(refInfo.container) &&
+            this.isReadSourceStructuralTarget(target) &&
+            this.shouldAppendPathDot(refInfo, context);
+    }
+
+    private isReadSourceStructuralTarget(target: AstNode | undefined): boolean {
+        return target !== undefined &&
+            (isBoundedContext(target) || isContextMap(target) || isModule(target) ||
+                isQueryService(target) || isSharedKernel(target));
     }
 
     private shouldAppendPathDot(refInfo: ReferenceInfo, context: CompletionContext): boolean {
@@ -865,7 +888,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return {
             active: true,
             items: this.dedupeCompletionCandidates(context, stream(descriptions)).map(description => {
-                const insertText = formatQualifiedName(description.name);
+                const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+                const insertText = `${formatQualifiedName(description.name)}${this.isReadSourceStructuralTarget(target) ? '.' : ''}`;
                 const item: CompletionValueItem = {
                     nodeDescription: description,
                     kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),

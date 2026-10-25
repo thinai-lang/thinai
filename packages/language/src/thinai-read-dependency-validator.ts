@@ -116,7 +116,7 @@ export class ThinaiReadDependencyValidator {
             }
             if (!this.referencePolicy.isQueryServiceExposed(target.$container) ||
                 !this.referencePolicy.hasAuthorizedQueryRelationship(read, target)) {
-                accept('error', 'Reading a query service in another bounded context requires an exposed query contract and an imported authorized context map.', {
+                accept('error', 'Reading a query service in another bounded context requires an exposed query contract and an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.', {
                     node: source,
                     property: 'target'
                 });

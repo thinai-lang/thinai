@@ -1434,6 +1434,147 @@ in bounded context Ordering {
         expect(completion?.items.map(item => item.label)).not.toContain('OrderRepository');
     });
 
+    test('completes structural read-source roots and appends continuation dots', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-contexts.tni'),
+            'bounded context Catalog bounded context Ordering'
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-catalog.tni'),
+            `import "./read-root-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries, ProductInfo
+                     data object ProductInfo { available: boolean }
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns ProductInfo
+                     }
+                 }
+             }`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-map.tni'),
+            `import "./read-root-contexts.tni"
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }`
+        );
+        const consumerText = `import "./read-root-contexts.tni"
+import "./read-root-catalog.tni"
+import { Commerce } from "./read-root-map.tni"
+in bounded context Ordering {
+    application service App {
+        method check() {
+            reads from __CURSOR__
+        }
+    }
+}`;
+        const emptyConsumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-consumer-empty.tni'), consumerText.replace('__CURSOR__', '')
+        );
+        const partialConsumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-consumer-partial.tni'), consumerText.replace('__CURSOR__', 'Cat')
+        );
+        documents.push(contexts, catalog, contextMap, emptyConsumer, partialConsumer);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const completeAt = async (document: LangiumDocument, offset: number) =>
+            services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+
+        const emptyOffice = consumerText.indexOf('__CURSOR__');
+        const emptyItems = await completeAt(emptyConsumer, emptyOffice);
+        expect(emptyItems?.items.map(item => item.label)).toContain('Catalog');
+        expect(emptyItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog.');
+
+        const partialOffset = consumerText.indexOf('__CURSOR__') + 'Cat'.length;
+        const partialItems = await completeAt(partialConsumer, partialOffset);
+        expect(partialItems?.items.map(item => item.label)).toContain('Catalog');
+        expect(partialItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog.');
+
+        const sameContextText = `bounded context C
+in bounded context C {
+    aggregate A {
+        root entity A {
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+    module M {
+        exposes R
+        repository R {
+            manages A.A
+        }
+    }
+    application service App {
+        method check() {
+            reads from __CURSOR__
+        }
+    }
+}`;
+        const sameOffset = sameContextText.indexOf('__CURSOR__');
+        const sameContext = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-root-same-context.tni'),
+            sameContextText.replace('__CURSOR__', '')
+        );
+        documents.push(sameContext);
+        await services.shared.workspace.DocumentBuilder.build([sameContext], { validation: false });
+        const sameItems = await completeAt(sameContext, sameOffset);
+        expect(sameItems?.items.map(item => item.label)).toContain('M');
+        expect(sameItems?.items.find(item => item.label === 'M')?.textEdit?.newText).toBe('M.');
+    });
+
+    test('filters read-source structural roots with no accessible repository descendant', async () => {
+        const source = (name: string, exposed: boolean) => `bounded context ${name}
+in bounded context ${name} {
+    aggregate X {
+        root entity X {
+            identifier id: Id
+        }
+        value object Id { raw: string }
+    }
+    module A {
+        ${exposed ? 'exposes B' : ''}
+        module B {
+            exposes R
+            repository R {
+                manages X.X
+            }
+        }
+    }
+    application service App {
+        method run() {
+            reads from __CURSOR__
+        }
+    }
+}`;
+        const hiddenText = source('Hidden', false);
+        const exposedText = source('Exposed', true);
+        const hidden = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-source-hidden-root.tni'), hiddenText.replace('__CURSOR__', '')
+        );
+        const exposed = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/read-source-exposed-root.tni'), exposedText.replace('__CURSOR__', '')
+        );
+        documents.push(hidden, exposed);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const completeAt = async (document: LangiumDocument, offset: number) =>
+            services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+
+        const hiddenItems = await completeAt(hidden, hiddenText.indexOf('__CURSOR__'));
+        expect(hiddenItems?.items.map(item => item.label)).not.toContain('A');
+
+        const exposedItems = await completeAt(exposed, exposedText.indexOf('__CURSOR__'));
+        expect(exposedItems?.items.map(item => item.label)).toContain('A');
+        expect(exposedItems?.items.find(item => item.label === 'A')?.textEdit?.newText).toBe('A.');
+    });
+
     test('offers read models for projector targets with read-model icons', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             read model OrderSummary { status: string }

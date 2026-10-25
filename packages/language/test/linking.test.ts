@@ -536,8 +536,61 @@ in bounded context B {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(true);
+    });
+
+    test('authorizes a same-document context-map relationship between local contexts', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map.tni'),
+            `bounded context Ordering
+             bounded context Shipping
+             in bounded context Ordering {
+                 integration event OrderPlacedV1
+             }
+             context map Fulfillment {
+                 customer Shipping -> supplier Ordering
+             }
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('authorizes a same-document context-map relationship for a local query read', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-query-map.tni'),
+            `bounded context Catalog
+             bounded context Ordering
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns string
+                     }
+                 }
+             }
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }
+             in bounded context Ordering {
+                 application service App {
+                     method check() {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+             }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
     test('authorizes event consumption across a partnership without pattern labels', async () => {
@@ -567,7 +620,7 @@ in bounded context B {
 
         expect(shippingPart.parseResult.parserErrors).toHaveLength(0);
         expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(false);
     });
 
@@ -676,7 +729,7 @@ in bounded context B {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(false);
     });
 
@@ -706,7 +759,7 @@ in bounded context B {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(true);
     });
 
@@ -736,7 +789,7 @@ in bounded context B {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(false);
     });
 
@@ -772,7 +825,7 @@ in bounded context B {
             'Imported context maps'
         ))).toBe(false);
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(false);
     });
 
@@ -808,7 +861,7 @@ in bounded context B {
             "define conflicting relationships between 'Ordering' and 'Shipping'"
         ))).toBe(true);
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(true);
         const prefixEnd = consumerText.indexOf('Ordering.OrderPlacedV1') + 'Ordering.'.length;
         const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
@@ -865,10 +918,10 @@ in bounded context B {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(consumer.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes('requires an imported context map with an authorized relationship')
+            String(diagnostic.message).includes('requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints')
         )).toBe(true);
         expect(consumer.diagnostics?.some(diagnostic =>
-            String(diagnostic.message).includes('requires an exposed query contract and an imported authorized context map')
+            String(diagnostic.message).includes('requires an exposed query contract and an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints')
         )).toBe(true);
         expect(consumer.diagnostics?.some(diagnostic =>
             String(diagnostic.message).includes('Imported context maps')
@@ -965,7 +1018,7 @@ import { Second } from "./import-range-map-two.tni"
             "define conflicting relationships between 'Ordering' and 'Shipping'"
         ))).toBe(false);
         expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(false);
     });
 
@@ -1013,7 +1066,7 @@ in bounded context Beta {
 
         const messages = (consumer.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
         expect(messages).toContain("Imported context maps 'SharedTypes' and 'SeparateTypes' define conflicting relationships between 'Alpha' and 'Beta'.");
-        expect(messages).toContain('Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.');
+        expect(messages).toContain('Using a shared-kernel type requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.');
     });
 
     test('separate-ways relationships do not authorize event consumption', async () => {
@@ -1042,7 +1095,7 @@ in bounded context Beta {
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
-            'requires an imported context map with an authorized relationship'
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
         ))).toBe(true);
     });
 
@@ -2051,6 +2104,166 @@ in bounded context Beta {
         expect(aggregateNames).toContain('Ordering.Model');
         expect(valueObjectNames).toContain('Ordering.Model.ModelId');
         expect(valueObjectNames).not.toContain('Other.Model.ModelId');
+    });
+
+    test('allows multiple component imports from the same file', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-import-contexts.tni'),
+            'bounded context Alpha bounded context Beta'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-import-consumer.tni'),
+            `import { Alpha } from "./multi-import-contexts.tni"
+import { Beta } from "./multi-import-contexts.tni"
+context map M {
+    customer Alpha -> supplier Beta
+}`
+        );
+        documents = [contexts, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(consumer).map(diagnostic => String(diagnostic.message)))
+            .not.toContain('The same file is imported with more than one bare import.');
+        expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('invalidates the complete import component for duplicate declarations on add and delete', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-component-duplicates-'));
+        const aUri = URI.file(path.join(directory, 'a.tni'));
+        const bUri = URI.file(path.join(directory, 'b.tni'));
+        const aText = `bounded context C
+in bounded context C {
+    aggregate X {
+        root entity X {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`;
+        const bText = `bounded context B
+`;
+        const bDuplicateText = `import "./a.tni"
+in bounded context C {
+    aggregate X {
+        root entity X {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`;
+        fs.writeFileSync(aUri.fsPath, aText);
+        fs.writeFileSync(bUri.fsPath, bText);
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const [a, b] = await Promise.all([aUri, bUri].map(uri => localDocuments.getOrCreateDocument(uri)));
+        const messages = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+        const duplicates = (document: LangiumDocument) => messages(document)
+            .filter(message => message.startsWith('Duplicate declaration'));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build([a, b], { validation: true });
+            expect(duplicates(a)).toEqual([]);
+
+            fs.writeFileSync(bUri.fsPath, bDuplicateText);
+            await localServices.shared.workspace.DocumentBuilder.update([bUri], []);
+            expect(duplicates(a)).toContain("Duplicate declaration 'C.X'.");
+            expect(duplicates(b)).toContain("Duplicate declaration 'C.X'.");
+
+            fs.rmSync(bUri.fsPath);
+            await localServices.shared.workspace.DocumentBuilder.update([], [bUri]);
+            expect(duplicates(a)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, [a, b]);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
+    test('invalidates transitive shape dependencies for nested event payload validation', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-component-shapes-'));
+        const aggUri = URI.file(path.join(directory, 'agg.tni'));
+        const typesUri = URI.file(path.join(directory, 'types.tni'));
+        const payloadUri = URI.file(path.join(directory, 'payload.tni'));
+        const eventUri = URI.file(path.join(directory, 'event.tni'));
+        const files = {
+            [aggUri.fsPath]: `bounded context C
+in bounded context C {
+    aggregate A {
+        root entity A {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`,
+            [typesUri.fsPath]: `import "./agg.tni"
+in bounded context C {
+    value object Nested {
+        raw: string
+    }
+}
+`,
+            [payloadUri.fsPath]: `import "./agg.tni"
+import "./types.tni"
+in bounded context C {
+    value object Payload {
+        nested: Nested
+    }
+}
+`,
+            [eventUri.fsPath]: `import "./agg.tni"
+import "./payload.tni"
+in bounded context C {
+    integration event E {
+        payload: Payload
+    }
+}
+`
+        };
+        for (const [file, text] of Object.entries(files)) {
+            fs.writeFileSync(file, text);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all([aggUri, typesUri, payloadUri, eventUri].map(uri =>
+            localDocuments.getOrCreateDocument(uri)
+        ));
+        const [, , , event] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(event)).toEqual([]);
+
+            fs.writeFileSync(typesUri.fsPath, `import "./agg.tni"
+in bounded context C {
+    value object Nested {
+        raw: string
+        owner: C.A.A
+    }
+}
+`);
+            await localServices.shared.workspace.DocumentBuilder.update([typesUri], []);
+            expect(errors(event)).toContain(
+                'Event payloads must not expose entity instances; use stable value data instead.'
+            );
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
     });
 });
 

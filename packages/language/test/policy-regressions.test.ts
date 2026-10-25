@@ -110,6 +110,60 @@ in bounded context Ctx {
         expect(errors(docs['contribution.tni']!)).toEqual([]);
     });
 
+    test('keeps context-relative module paths inside an aliased contribution', async () => {
+        const docs = await build({
+            'catalog.tni': `bounded context Catalog
+in bounded context Catalog {
+    module B {
+        exposes Money, Service, run
+        value object Money {
+            raw: string
+        }
+        domain service Service {
+            method run()
+        }
+    }
+}`,
+            'consumer.tni': `import { Catalog as Ctx } from "./catalog.tni"
+in bounded context Ctx {
+    module A depends on Ctx.B {
+        value object Holder {
+            money: B.Money
+        }
+        application service App {
+            method use() {
+                invokes B.Service.run
+            }
+        }
+    }
+}`
+        });
+
+        expect(errors(docs['consumer.tni']!)).toEqual([]);
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const offset = source.indexOf('B.Money') + 'B.'.length;
+        const items = await completion(docs['consumer.tni']!, offset);
+        expect(items?.items.map(item => item.label)).toContain('Money');
+    });
+
+    test('allows an alias to match a terminal field or method name', async () => {
+        const docs = await build({
+            'catalog.tni': 'bounded context Catalog',
+            'consumer.tni': `import { Catalog as Orders } from "./catalog.tni"
+bounded context Consumer
+in bounded context Consumer {
+    data object D {
+        Orders: string
+    }
+    application service App {
+        method Orders()
+    }
+}`
+        });
+
+        expect(errors(docs['consumer.tni']!)).toEqual([]);
+    });
+
     test('does not make an unimported contribution visible through an alias', async () => {
         const docs = await build({
             'catalog.tni': 'bounded context Ordering',

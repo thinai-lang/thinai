@@ -34,6 +34,7 @@ import {
     isAggregate,
     isConstructor,
     isBoundedContext,
+    isBoundedContextPart,
     isDomainEvent,
     isDomainService,
     isApplicationService,
@@ -100,6 +101,7 @@ import {
     isExposedByModule,
     isIdentifierValueObject,
     isPublicApiDeclaration,
+    isModuleAccessibleFrom,
     moduleDependsTransitivelyOn,
     isModulePubliclyVisible,
     resolveAstNodeDescription,
@@ -191,7 +193,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         let result = this.createScope(this.filterUnqualifiedSpecificationTargets(
             context,
             referenceType,
-            this.externalScope.getImportedSymbols(document, referenceType)
+            this.externalScope.getImportedSymbols(context, document, referenceType)
         ));
         result = this.createScope(this.filterUnqualifiedSpecificationTargets(
             context,
@@ -854,7 +856,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             }
             return isReadModel(target)
                 ? getOwningContextName(current) === getOwningContextName(target)
-                : this.hasReadModelDescendant(target, getOwningContextName(current));
+                : this.hasReadModelDescendant(target, current);
         }
 
         if (isRepository(context.container) && (context.property === 'root' || context.property === 'rootPath')) {
@@ -1287,15 +1289,21 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             );
         if (isValueObject(type)) {
             visited.add(type);
-            return nested(false, false);
+            const valid = nested(false, false);
+            visited.delete(type);
+            return valid;
         }
         if (isDataObject(type)) {
             visited.add(type);
-            return nested(true, false);
+            const valid = nested(true, false);
+            visited.delete(type);
+            return valid;
         }
         if (isReadModel(type)) {
             visited.add(type);
-            return nested(false, true);
+            const valid = nested(false, true);
+            visited.delete(type);
+            return valid;
         }
         return true;
     }
@@ -1414,7 +1422,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             if (!isEntity(entity) || !entity.root || getOwningContextName(entity) !== contextName) {
                 continue;
             }
-            if (AstUtils.getContainerOfType(entity, (candidate): candidate is AstNode => candidate === target)) {
+            if (this.isAstAncestor(target, entity)) {
                 return true;
             }
         }
@@ -1566,10 +1574,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
     }
 
     private hasEmittableEventDescendant(context: ReferenceInfo, candidate: AstNode): boolean {
+        const source = AstUtils.getContainerOfType(context.container, isMethod);
+        if (!source) {
+            return false;
+        }
         for (const type of ['DomainEvent', 'IntegrationEvent']) {
             for (const description of this.indexManager.allElements(type)) {
                 const event = this.getDescriptionNode(description);
-                if (event && this.isEmittableEvent(context, event) && this.isAstAncestor(candidate, event)) {
+                if (event && this.isEmittableEvent(context, event) &&
+                    this.isVisibleFromSource(source, event) && this.isAstAncestor(candidate, event)) {
                     return true;
                 }
             }
@@ -1577,22 +1590,38 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         return false;
     }
 
-    private hasReadModelDescendant(candidate: AstNode, contextName: string | undefined): boolean {
+    private hasReadModelDescendant(candidate: AstNode, source: Method): boolean {
+        const contextName = getOwningContextName(source);
         if (!contextName) {
             return false;
         }
         for (const description of this.indexManager.allElements('ReadModel')) {
             const readModel = this.getDescriptionNode(description);
             if (isReadModel(readModel) && getOwningContextName(readModel) === contextName &&
-                this.isAstAncestor(candidate, readModel)) {
+                this.isVisibleFromSource(source, readModel) && this.isAstAncestor(candidate, readModel)) {
                 return true;
             }
         }
         return false;
     }
 
+    private isVisibleFromSource(source: AstNode, target: AstNode): boolean {
+        return this.referencePolicy.isDeclarationVisibleFrom(source, target) &&
+            isModuleAccessibleFrom(source, getOwningModule(target));
+    }
+
     private isAstAncestor(ancestor: AstNode, node: AstNode): boolean {
-        return AstUtils.getContainerOfType(node, (candidate): candidate is AstNode => candidate === ancestor) !== undefined;
+        if (AstUtils.getContainerOfType(node, (candidate): candidate is AstNode => candidate === ancestor) !== undefined) {
+            return true;
+        }
+        // The canonical BoundedContext node is not an AST container of its
+        // `in bounded context ... { ... }` contributions; the contribution
+        // points at it through a cross-reference instead.
+        if (isBoundedContext(ancestor)) {
+            const part = AstUtils.getContainerOfType(node, isBoundedContextPart);
+            return part?.context?.ref === ancestor;
+        }
+        return false;
     }
 
     private getDescriptionNode(description: AstNodeDescription): AstNode | undefined {
@@ -1622,33 +1651,51 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const owner = method.$container;
         const sourceContext = getOwningContextName(method);
         const targetContext = getOwningContextName(target);
-        if (!sourceContext || !targetContext) {
+        if (!sourceContext || !targetContext || !this.referencePolicy.isDeclarationVisibleFrom(method, target)) {
             return false;
         }
         if (sourceContext === targetContext) {
-            if (isApplicationService(owner) || isDomainService(owner)) {
-                return isRepository(target);
+            if (isApplicationService(owner) || isDomainService(owner) || isProjector(owner)) {
+                return this.hasVisibleReadRepositoryDescendant(target, method, 'Repository');
             }
             if (isQueryService(owner)) {
-                return isQueryRepository(target);
-            }
-            if (isProjector(owner)) {
-                return isRepository(target);
+                return this.hasVisibleReadRepositoryDescendant(target, method, 'QueryRepository');
             }
             return false;
         }
         if (!(isApplicationService(owner) || isQueryService(owner) || isProjector(owner) || isDomainService(owner))) {
             return false;
         }
-        return isMethod(target) && isQueryService(target.$container) &&
-            this.hasPublishedQueryMethodDescendant(target, method);
+        return this.hasPublishedQueryMethodDescendant(target, method);
+    }
+
+    private hasVisibleReadRepositoryDescendant(
+        candidate: AstNode,
+        source: Method,
+        type: 'Repository' | 'QueryRepository'
+    ): boolean {
+        const sourceContext = getOwningContextName(source);
+        if (!sourceContext) {
+            return false;
+        }
+        for (const description of this.indexManager.allElements(type)) {
+            const repository = this.getDescriptionNode(description);
+            if (!repository || getOwningContextName(repository) !== sourceContext ||
+                !this.isAstAncestor(candidate, repository) ||
+                !this.isVisibleFromSource(source, repository)) {
+                continue;
+            }
+            return true;
+        }
+        return false;
     }
 
     private hasPublishedQueryMethodDescendant(candidate: AstNode, source: Method): boolean {
         return this.indexManager.allElements('Method').some(description => {
-            const method = description.node;
+            const method = this.getDescriptionNode(description);
             return isMethod(method) && isQueryService(method.$container) &&
                 getOwningContextName(source) !== getOwningContextName(method) &&
+                this.referencePolicy.isDeclarationVisibleFrom(source, method) &&
                 this.referencePolicy.isQueryServiceExposed(method.$container) &&
                 this.referencePolicy.isExposedQueryResult(method) &&
                 this.referencePolicy.hasAuthorizedQueryRelationship(source, method) &&

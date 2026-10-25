@@ -20,7 +20,8 @@ A document's model is its import-connected component: its transitive imports
 and the files that import it, not every file in the workspace. Duplicate
 declaration names are therefore scoped to that component; independent models
 may reuse names. Cross-references still require the target to be reachable
-through imports. Actors,
+through the document's own direct imports; imports are not implicitly
+transitive. Actors,
 journeys, and subdomains have their own strategic namespaces, so a subdomain may
 share a name with its bounded context. Subdomains are referenced through
 `realizes`; they are not specification-path targets.
@@ -178,10 +179,12 @@ declared `projects` targets. CQRS projectors do not read query repositories.
 Aggregate-repository and external query-API reads are explicit projector
 exceptions, since current-state lookups can make replay results differ. Domain
 services may read domain repositories when a business rule requires it. An
-external query API must be published and authorized by an imported context map.
-Application services, query services, projectors, and domain services may use
-such a published query API; prefer event data or a domain-facing port or
-anti-corruption layer when replay or domain isolation matters.
+external query API must be published and authorized by an imported context map,
+or by a context map in the same document when the query service and reader are
+declared there. Application services, query services, projectors, and domain
+services may use such a published query API; prefer event data or a
+domain-facing port or anti-corruption layer when replay or domain isolation
+matters.
 Method-level `behavior` describes how returned data is used—there are no result
 aliases or per-read behavior clauses. A projector behavior may link the
 aggregate repository it declares in `reads from`; other repository references
@@ -228,9 +231,12 @@ in bounded context Shipping {
 ## Imports and Context Maps
 
 Imports are direct and relative. An explicit bounded-context import makes its
-declarations visible. A context map must also be imported for an authorized
-cross-context integration-event relationship. Only IntegrationEvents cross
-bounded-context boundaries; DomainEvents remain private. Customer-supplier
+declarations visible. A file may be imported with multiple component selections;
+a bare import of the same file may appear only once. A context map authorizes a
+cross-context integration-event relationship when it is imported with the other
+endpoint's document, or when it is declared in the same document as both
+endpoints. Only IntegrationEvents cross bounded-context boundaries; DomainEvents
+remain private. Customer-supplier
 relationships point from customer/downstream to supplier/upstream, while
 `integrationPatterns` are quoted labels from a predefined set, listed on the
 endpoint they describe. They are descriptive metadata: they do not assert
@@ -254,7 +260,8 @@ shape, not only the event handler. IntegrationEvent payloads cannot expose
 entities or types owned by aggregates.
 A payload value object or enum may come from an exposed sibling module when the
 event's module depends on that module; the normal dependency and exposure rules
-apply.
+apply. A direct dependency on a nested module is not by itself enough for a
+public event payload: every enclosing module must expose the payload type.
 
 When a file declares multiple components, select them explicitly:
 
@@ -265,9 +272,15 @@ import { Ordering as Orders, Shipping } from "./contexts.tni"
 An alias applies to every visible declaration of the selected component,
 including members contributed from other imported files. For example, if
 `Ordering` is aliased as `Orders`, contributed declarations are available as
-`Orders.Member` as well as under their canonical path. Aliases are document-local
-scope names; an alias must not collide with a document-scope declaration or with
-a canonical declaration visible through imports. Strategic declarations (actors,
+`Orders.Member` as well as under their canonical path. Inside a contribution to
+an aliased context, declarations belonging to that context also keep
+context-relative spellings such as `Module.Type` and `Type`; local and imported
+contributions behave the same way. Aliases are document-local
+scope names; an alias must not collide with a declaration that can begin a
+qualified path (a component, module, type, service, aggregate, or similar
+declaration) or with a canonical declaration visible through imports. Terminal
+fields, methods, enum values, and parameters do not conflict with aliases.
+Strategic declarations (actors,
 journeys, and subdomains) are not aliased by component imports; import them
 with a bare file import rather than a component selection.
 Aliases do not import files on their own: import the contribution file that
@@ -330,7 +343,9 @@ owner-qualified path, such as `[[Order.Order.customerId]]` or
 roots, such as `[[input.orderId]]` and `[[result.status]]`; the canonical form is
 required for the current result binding. Where a method's result shape is
 visible, a method path may also continue through it directly, such as
-`[[Command.status]]`, as a compatibility convenience. The name `result` is reserved for the operation result on methods
+`[[Command.status]]`, as a compatibility convenience. That convenience does not make a
+current command's `result` binding available early; the timeline rule applies to
+the binding and to future operation paths. The name `result` is reserved for the operation result on methods
 that declare a result or are application-service commands; it cannot be used as
 a parameter there, but remains available on constructors and on other
 non-returning methods. Factory
@@ -347,7 +362,8 @@ remain accepted for compatibility.
 Journeys are top-level, actor-led timelines of user-invoked application-service
 commands that may cross bounded contexts. Declare each `actor` once at model
 scope, then reference it in a `by Actor { ... }` block. Each actor may have at
-most one `by` block per journey. A journey does not
+most one `by` block per journey. A step names at least a service or context
+segment before the command; bare command names are not valid journey syntax. A journey does not
 represent background event handoffs, a synchronous remote call, or a shared
 transaction; event-triggered reactions remain in their contexts. Steps may
 include optional descriptive `with "..."` input text and `when "..."` guard
@@ -361,7 +377,10 @@ command operation invoked later in the same journey is not visible from an
 earlier step. Visibility is additive: a declaration that is independently
 context-level, exposed, or part of a visible query result remains linkable even
 if a future command also uses it; only the future operation and its private
-contract internals are hidden. References to
+contract internals are hidden. In a later step, a prior command result is
+referenced through that command's qualified path, such as
+`[[Ordering.App.place.result.status]]`; bare `result` is not an implicit
+prior-command binding. References to
 a command result name the nearest earlier invocation of that command; a journey
 that invokes the same command more than once produces a warning because those
 references are inherently ambiguous. The language deliberately has no step

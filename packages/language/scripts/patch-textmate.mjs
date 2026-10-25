@@ -135,6 +135,7 @@ const enumDeclaration = {
     ]
 };
 
+const nonPropertyKeywordPrefix = '(?!(?:integrationPatterns|participants)\\s*:)';
 const additionalScopes = [
     enumDeclaration,
     { name: 'storage.type.thinai', match: '\\b(?:string|number|boolean|date|time|instant|List|Set|Map)\\b' },
@@ -148,7 +149,7 @@ const additionalScopes = [
             '2': { name: 'keyword.operator.optional.thinai' }
         }
     },
-    { name: 'variable.other.property.thinai', match: `${identifierPattern}(?=\\s*:)` }
+    { name: 'variable.other.property.thinai', match: `${nonPropertyKeywordPrefix}${identifierPattern}(?=\\s*:)` }
 ];
 
 grammar.patterns = grammar.patterns.filter(pattern => pattern.name !== 'meta.declaration.thinai');

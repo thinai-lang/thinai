@@ -623,7 +623,7 @@ export class ThinaiValidator {
             if (event && isIntegrationEvent(event) && isCrossContextOwned(method, event) &&
                 !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
                 accept('error', this.referencePolicy.isIntegrationEventExposed(event)
-                    ? 'Consuming this integration event requires an imported context map with an authorized relationship to its producer.'
+                    ? 'Consuming this integration event requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.'
                     : 'An integration event in a module must be exposed by its module and every enclosing module before another bounded context can consume it.', {
                     node: eventParameters[0],
                     property: 'type'
@@ -1490,7 +1490,7 @@ export class ThinaiValidator {
                 const sourceSharedKernel = getOwningSharedKernel(referenceInfo.container);
                 if (sharedKernel && sourceSharedKernel !== sharedKernel &&
                     !this.referencePolicy.hasSharedKernelRelationship(referenceInfo.container, sharedKernel)) {
-                    accept('error', 'Using a shared-kernel declaration in specification text requires an imported context map that declares a shared-kernel relationship for this context.', {
+                    accept('error', 'Using a shared-kernel declaration in specification text requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.', {
                         node: referenceInfo.container as AstNode,
                         property: referenceInfo.property
                     });
@@ -1939,7 +1939,7 @@ export class ThinaiValidator {
                 const sourceSharedKernel = getOwningSharedKernel(node);
                 if (sourceContext && sourceSharedKernel !== sharedKernel &&
                     (!sharedKernel || !this.referencePolicy.hasSharedKernelRelationship(node, sharedKernel))) {
-                    accept('error', 'Using a shared-kernel type requires an imported context map that declares a shared-kernel relationship for this context.', {
+                    accept('error', 'Using a shared-kernel type requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.', {
                         node,
                         property
                     });

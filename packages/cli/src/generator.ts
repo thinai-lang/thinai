@@ -14,7 +14,9 @@ export async function generateJavaScript(documents: LangiumDocument<Model>[], fi
         return model.declarations.map(declaration => ({
             file: document.uri.fsPath,
             type: declaration.$type,
-            name: 'name' in declaration ? declaration.name : declaration.context.$refText
+            name: 'name' in declaration
+                ? declaration.name
+                : declaration.context?.ref?.name ?? declaration.context?.$refText ?? 'unknown'
         }));
     });
 

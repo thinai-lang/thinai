@@ -88,7 +88,13 @@ export class ThinaiExternalScope {
                 this.addScopeCandidate(candidates, this.descriptions.createDescription(target, name), name);
             }
             const exportedName = getExportedName(target as AstNode & { name: string });
-            this.addScopeCandidate(candidates, this.descriptions.createDescription(target, exportedName), exportedName);
+            for (const exportedSpelling of this.getUnaliasedNames(exportedName)) {
+                this.addScopeCandidate(
+                    candidates,
+                    this.descriptions.createDescription(target, exportedSpelling),
+                    exportedSpelling
+                );
+            }
         }
         if ((isEntity(target) || isValueObject(target) || isDomainEvent(target) ||
             isIntegrationEvent(target) || isReadModel(target) || isDataObject(target)) &&
@@ -110,8 +116,13 @@ export class ThinaiExternalScope {
         }
     }
 
-    getImportedSymbols(document: import('langium').LangiumDocument, referenceType: string): AstNodeDescription[] {
-        const cacheKey = JSON.stringify([document.uri.toString(), referenceType]);
+    getImportedSymbols(
+        context: ReferenceInfo,
+        document: import('langium').LangiumDocument,
+        referenceType: string
+    ): AstNodeDescription[] {
+        const lexicalContextName = this.getLexicalContextName(context);
+        const cacheKey = JSON.stringify([document.uri.toString(), referenceType, lexicalContextName ?? null]);
         const cached = this.importedSymbolsCache.get(cacheKey);
         if (cached) {
             return cached;
@@ -161,6 +172,18 @@ export class ThinaiExternalScope {
             this.addScopeCandidate(candidates, description, description.name);
             if (unaliased) {
                 this.addScopeCandidates(candidates, description, this.getUnaliasedNames(description.name));
+            } else if (lexicalContextName !== undefined &&
+                description.name.startsWith(`${lexicalContextName}.`)) {
+                // Inside a contribution to an aliased bounded context (or shared
+                // kernel), declarations of that same context remain addressable
+                // with context-relative paths such as `Module.Type` and `Type`.
+                // Local contributions already behave this way through document
+                // symbol suffixes; imported contributions must match them.
+                this.addScopeCandidates(
+                    candidates,
+                    description,
+                    this.getUnaliasedNames(description.name).slice(1)
+                );
             }
             // Aliases apply to every visible declaration of the selected
             // component, including members contributed by other imported files.

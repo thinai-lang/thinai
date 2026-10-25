@@ -266,6 +266,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 segmentName,
                 AstUtils.getDocument(segmentTarget)
             );
+            if (this.hasNavigableShapeMembers(segmentTarget)) {
+                (segmentDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
+                    .thinaiPathContinuation = true;
+            }
             candidates.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}#${segmentName}`, segmentDescription);
         }
         return [...candidates.values()];
@@ -578,10 +582,31 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     continue;
                 }
                 const description = this.descriptions.createDescription(target, name, AstUtils.getDocument(target));
+                if (this.hasNavigableShapeMembers(target)) {
+                    (description as AstNodeDescription & { thinaiPathContinuation?: boolean })
+                        .thinaiPathContinuation = true;
+                }
                 results.set(`${description.documentUri.toString()}#${description.path}`, description);
             }
         }
         return [...results.values()];
+    }
+
+    /**
+     * True when completing a field should continue into a nested shape.
+     * Parameter roots and type containers stay terminal-friendly because they
+     * are also valid standalone links.
+     */
+    private hasNavigableShapeMembers(target: AstNode): boolean {
+        if (!isField(target)) {
+            return false;
+        }
+        return this.getShapeTypes(target).some(type => {
+            if (isEnumType(type)) {
+                return type.values.length > 0;
+            }
+            return isFieldShape(type) && type.fields.length > 0;
+        });
     }
 
     /**

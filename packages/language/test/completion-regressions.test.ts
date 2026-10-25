@@ -104,6 +104,23 @@ in bounded context Shop {
     }
 }`);
         expect(nested.completion?.items.map(item => item.label)).toContain('city');
+
+        const parameter = await build(`bounded context Shop
+in bounded context Shop {
+    value object Address {
+        city: string
+    }
+    data object Dto {
+        address: Address
+    }
+    application service App {
+        method handle(input: Dto) {
+            behavior "[[input.${marker}]]."
+        }
+    }
+}`);
+        const addressItem = parameter.completion?.items.find(item => item.label === 'address');
+        expect(addressItem?.textEdit?.newText).toBe('address.');
     });
 
     test('completes entity fields from specification result and parameter roots', async () => {

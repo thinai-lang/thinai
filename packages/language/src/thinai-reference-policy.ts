@@ -188,19 +188,33 @@ export class ThinaiReferencePolicy {
     }
 
     private isIntegrationEventVisibleFrom(source: AstNode, event: IntegrationEvent): boolean {
+        return this.isDeclarationVisibleFrom(source, event);
+    }
+
+    /**
+     * True when the target declaration is reachable from the source document
+     * through its direct imports. A bare import exposes the whole imported
+     * document; a component import exposes only declarations owned by the
+     * selected bounded context, context map, or shared kernel.
+     *
+     * This mirrors the import visibility used for integration-event contracts
+     * and is also used for completion-only structural descendants (for example,
+     * a context path that leads to an authorized external query operation).
+     */
+    isDeclarationVisibleFrom(source: AstNode, target: AstNode): boolean {
         const sourceDocument = AstUtils.getDocument(source);
-        const eventDocument = AstUtils.getDocument(event);
-        if (UriUtils.equals(sourceDocument.uri, eventDocument.uri)) {
+        const targetDocument = AstUtils.getDocument(target);
+        if (UriUtils.equals(sourceDocument.uri, targetDocument.uri)) {
             return true;
         }
         const model = sourceDocument.parseResult.value;
         if (!isModel(model)) {
             return false;
         }
-        const eventContext = getOwningContextName(event);
+        const targetContext = getOwningContextName(target);
         return model.imports.some(declaration => {
             const uri = resolveImportUri(sourceDocument, declaration);
-            if (!uri || !UriUtils.equals(uri, eventDocument.uri)) {
+            if (!uri || !UriUtils.equals(uri, targetDocument.uri)) {
                 return false;
             }
             if (declaration.components.length === 0) {
@@ -209,7 +223,7 @@ export class ThinaiReferencePolicy {
             return declaration.components.some(component => {
                 const componentTarget = component.component.ref;
                 return componentTarget !== undefined &&
-                    getOwningContextName(componentTarget) === eventContext;
+                    getOwningContextName(componentTarget) === targetContext;
             });
         });
     }

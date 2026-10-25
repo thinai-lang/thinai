@@ -40,6 +40,13 @@ type DuplicateDeclarationCallback = (
     accept: ValidationAcceptor
 ) => void;
 
+/**
+ * These declarations are terminal symbols in a reference path. They are not
+ * document-scope path roots, so an import alias with the same spelling does not
+ * shadow them.
+ */
+const nonPathDeclarationTypes = new Set(['Field', 'EnumValue', 'Method', 'Parameter']);
+
 /** Validates top-level model structure, imports, context maps, and shared kernels. */
 export class ThinaiModelValidator {
     constructor(
@@ -127,11 +134,12 @@ export class ThinaiModelValidator {
         const duplicate = isModel(document.parseResult.value)
             ? document.parseResult.value.imports.some(other => {
                 const otherUri = resolveImportUri(document, other);
-                return other !== importDeclaration && otherUri !== undefined && UriUtils.equals(otherUri, uri);
+                return other !== importDeclaration && otherUri !== undefined && UriUtils.equals(otherUri, uri) &&
+                    other.components.length === 0 && importDeclaration.components.length === 0;
             })
             : false;
         if (duplicate) {
-            accept('error', 'The same file is imported more than once.', {
+            accept('error', 'The same file is imported with more than one bare import.', {
                 node: importDeclaration,
                 property: 'path'
             });
@@ -156,9 +164,12 @@ export class ThinaiModelValidator {
         const names = new Map<string, Import | ImportComponent>();
         const localNames = new Set<string>();
         for (const node of AstUtils.streamAst(model)) {
-            if (isParameter(node) || isActor(node) || isJourney(node) || isSubdomain(node)) {
-                // Parameters are local to their operation, and strategic
-                // declarations have their own reference namespaces.
+            if (isParameter(node) || isActor(node) || isJourney(node) || isSubdomain(node) ||
+                nonPathDeclarationTypes.has(node.$type)) {
+                // Parameters are local to their operation, strategic
+                // declarations have their own reference namespaces, and
+                // fields/methods/enum values are terminal symbols rather than
+                // path roots.
                 continue;
             }
             if ('name' in node && typeof node.name === 'string') {
@@ -232,6 +243,11 @@ export class ThinaiModelValidator {
                 if (this.isStrategicDeclarationType(description.type)) {
                     // Strategic declarations have their own namespaces and are
                     // not aliased by component imports.
+                    continue;
+                }
+                if (nonPathDeclarationTypes.has(description.type)) {
+                    // Terminal field/method/enum-value names do not shadow an
+                    // alias used as a path root.
                     continue;
                 }
                 if (components.length === 0) {

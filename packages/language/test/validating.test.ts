@@ -3119,7 +3119,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).some(diagnostic =>
-            diagnostic.message === 'Using a shared-kernel declaration in specification text requires an imported context map that declares a shared-kernel relationship for this context.'
+            diagnostic.message === 'Using a shared-kernel declaration in specification text requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.'
         )).toBe(true);
     });
 
