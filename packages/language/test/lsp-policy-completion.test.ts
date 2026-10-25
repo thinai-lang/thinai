@@ -2,10 +2,22 @@ import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
 import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from 'thinai-language';
-import { CompletionItemKind } from 'vscode-languageserver';
+import { CompletionItemKind, type CodeAction, type TextEdit } from 'vscode-languageserver';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
 let services: ReturnType<typeof createThinaiServices>;
 let documents: LangiumDocument[] = [];
+
+function applyCodeAction(text: string, uri: string, action: CodeAction): string {
+    const edits: TextEdit[] = action.edit?.changes?.[uri] ?? [];
+    const document = TextDocument.create(uri, 'thinai', 0, text);
+    return edits
+        .slice()
+        .sort((left, right) => document.offsetAt(right.range.start) - document.offsetAt(left.range.start))
+        .reduce((current, edit) =>
+            current.slice(0, document.offsetAt(edit.range.start)) + edit.newText +
+            current.slice(document.offsetAt(edit.range.end)), text);
+}
 
 beforeAll(() => {
     services = createThinaiServices(EmptyFileSystem);
@@ -1062,6 +1074,110 @@ in bounded context A {
             : undefined;
         expect(newText).toContain('import "./contribution-types.tni"');
         expect(newText).not.toContain('{ A }');
+    });
+
+    test('applies a same-context contribution import and revalidates', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-contribution/catalog.tni'),
+            'bounded context A'
+        );
+        const contribution = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-contribution/types.tni'),
+            `import { A } from "./catalog.tni"
+in bounded context A {
+    value object V { raw: string }
+}`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-contribution/consumer.tni'),
+            `import { A } from "./catalog.tni"
+in bounded context A {
+    data object D {
+        x: V
+    }
+}`
+        );
+        documents = [catalog, contribution, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: consumer.textDocument.getText().length } },
+            context: { diagnostics: consumer.diagnostics ?? [] }
+        });
+        const action = actions?.find((candidate): candidate is CodeAction =>
+            'title' in candidate && candidate.title === "Import 'V' from './types.tni'"
+        );
+        expect(action).toBeDefined();
+
+        const fixedSource = applyCodeAction(
+            consumer.textDocument.getText(),
+            consumer.uri.toString(),
+            action!
+        );
+        await services.shared.workspace.LangiumDocuments.deleteDocument(consumer.uri);
+        documents = [catalog, contribution];
+        const fixed = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-contribution/consumer-fixed.tni'),
+            fixedSource
+        );
+        documents.push(fixed);
+        await services.shared.workspace.DocumentBuilder.build([catalog, contribution, fixed], { validation: true });
+
+        expect((fixed.diagnostics ?? []).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('applies an unowned actor import and revalidates', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-actor/target.tni'),
+            `bounded context C
+in bounded context C {
+    value object V { raw: string }
+}
+actor Customer`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-actor/consumer.tni'),
+            `import { C } from "./target.tni"
+journey J {
+    by Customer {
+        invoke C.App.run
+    }
+}
+in bounded context C {
+    application service App {
+        method run() {}
+    }
+}`
+        );
+        documents = [target, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const actions = await services.Thinai.lsp.CodeActionProvider?.getCodeActions(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: consumer.textDocument.getText().length } },
+            context: { diagnostics: consumer.diagnostics ?? [] }
+        });
+        const action = actions?.find((candidate): candidate is CodeAction =>
+            'title' in candidate && candidate.title === "Import 'Customer' from './target.tni'"
+        );
+        expect(action).toBeDefined();
+
+        const fixedSource = applyCodeAction(
+            consumer.textDocument.getText(),
+            consumer.uri.toString(),
+            action!
+        );
+        await services.shared.workspace.LangiumDocuments.deleteDocument(consumer.uri);
+        documents = [target];
+        const fixed = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/apply-actor/consumer-fixed.tni'),
+            fixedSource
+        );
+        documents.push(fixed);
+        await services.shared.workspace.DocumentBuilder.build([target, fixed], { validation: true });
+
+        expect((fixed.diagnostics ?? []).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
     test('uses a selective import for a target file with multiple components', async () => {
