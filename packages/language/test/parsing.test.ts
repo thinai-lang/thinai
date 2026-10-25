@@ -65,6 +65,29 @@ describe('Parsing tests', () => {
         )).toHaveLength(2);
     });
 
+    test('requires commas between enum values', async () => {
+        const missingComma = await parse(`bounded context Sample
+in bounded context Sample {
+    enum Status { Draft Placed }
+}`);
+        expect(missingComma.parseResult.parserErrors.length).toBeGreaterThan(0);
+
+        const inline = await parse(`bounded context Sample
+in bounded context Sample {
+    enum Status { Draft, Placed }
+}`);
+        expect(inline.parseResult.parserErrors).toEqual([]);
+
+        const multiline = await parse(`bounded context Sample
+in bounded context Sample {
+    enum Status {
+        Draft,
+        Placed
+    }
+}`);
+        expect(multiline.parseResult.parserErrors).toEqual([]);
+    });
+
     test('supports quoted identifiers for reserved words', async () => {
         const document = await parse(`
             bounded context Ordering

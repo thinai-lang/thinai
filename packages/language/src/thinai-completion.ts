@@ -7,6 +7,8 @@ import {
     AstUtils,
     CstUtils,
     GrammarUtils,
+    UriUtils,
+    isReference,
     stream
 } from 'langium';
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
@@ -23,16 +25,20 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    type Parameter,
     isAggregate,
     isApplicationService,
     isBoundedContext,
     isContextMap,
     isContextMapEndpoint,
+    isDomainEvent,
     isEnumType,
     isEntity,
     isFactory,
     isField,
     isImport,
+    isImportComponent,
+    isIntegrationEvent,
     isJourneyStep,
     isMethod,
     isMethodInvocation,
@@ -55,7 +61,8 @@ import {
     getComponentAliases,
     getExportedName,
     isInSharedKernel,
-    resolveAstNodeDescription
+    resolveAstNodeDescription,
+    resolveImportUri
 } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
@@ -158,15 +165,60 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     protected override getReferenceCandidates(refInfo: ReferenceInfo, context: CompletionContext) {
         const { container, property } = refInfo;
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        const typedPrefix = this.getTypedPrefix(context);
+        if (isParameter(container) && this.isAdditionalEventHandlerParameter(container)) {
+            // Event handlers take exactly one event parameter. Once the event
+            // parameter exists, further parameters are invalid; do not offer
+            // type candidates that would create an invalid signature.
+            return stream([]);
+        }
+        if (isImportComponent(container) && property === 'component') {
+            const importPath = this.findImportPathAtCursor(context);
+            if (importPath) {
+                const descriptions = scopeProvider.getImportableComponentsForPath(
+                    context.document,
+                    importPath,
+                    'ImportableComponent'
+                );
+                const targetUri = UriUtils.resolvePath(
+                    UriUtils.dirname(context.document.uri),
+                    importPath
+                ).toString();
+                const root = context.document.parseResult.value;
+                const alreadyImported = new Set<string>();
+                if (isModel(root)) {
+                    for (const declaration of root.imports) {
+                        const uri = resolveImportUri(context.document, declaration);
+                        if (uri?.toString() !== targetUri) {
+                            continue;
+                        }
+                        for (const component of declaration.components) {
+                            const name = component.component.ref?.name ?? component.component.$refText;
+                            if (typeof name === 'string' && name.length > 0) {
+                                alreadyImported.add(name);
+                            }
+                        }
+                    }
+                }
+                return this.dedupeCompletionCandidates(
+                    refInfo,
+                    stream(descriptions.filter(description =>
+                        !alreadyImported.has(description.name) &&
+                        !alreadyImported.has(description.name.split('.').at(-1) ?? description.name)
+                    )),
+                    typedPrefix
+                );
+            }
+        }
         if ((isJourneyStep(container) || isMethodInvocation(container)) &&
             (property === 'path' || property === 'target')) {
             return this.dedupeCompletionCandidates(refInfo, stream(
                 scopeProvider.getInvocationCompletionCandidates(refInfo, context.offset)
-            ));
+            ), typedPrefix);
         }
         const pathCandidates = scopeProvider.getPathCompletionCandidates(refInfo, context.offset);
         if (pathCandidates !== undefined) {
-            return this.dedupeCompletionCandidates(refInfo, stream(pathCandidates));
+            return this.dedupeCompletionCandidates(refInfo, stream(pathCandidates), typedPrefix);
         }
         if (isSpecificationTextPart(container) && property === 'targets') {
             const completedSegments = container.targets.filter(reference =>
@@ -176,26 +228,74 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
                 scopedReference,
                 scopeProvider.getScope(scopedReference).getAllElements()
-            ).toArray()));
+            ).toArray()), typedPrefix);
         }
         if (isSpecificationTextPart(container) && property === 'target') {
             return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
                 refInfo,
                 scopeProvider.getSpecificationRootCompletionCandidates(refInfo)
-            ).toArray()));
+            ).toArray()), typedPrefix);
         }
         return this.dedupeCompletionCandidates(refInfo, stream(scopeProvider.filterCompletionCandidates(
             refInfo,
             super.getReferenceCandidates(refInfo, context)
-        ).toArray()));
+        ).toArray()), typedPrefix);
     }
 
-    private dedupeCompletionCandidates(refInfo: ReferenceInfo, candidates: Stream<AstNodeDescription>): Stream<AstNodeDescription> {
+    private getTypedPrefix(context: CompletionContext): string {
+        const prefix = context.textDocument.getText().slice(context.tokenOffset, context.offset);
+        return normalizeIdentifierText(prefix);
+    }
+
+    private isAdditionalEventHandlerParameter(parameter: Parameter): boolean {
+        const method = parameter.$container;
+        if (!isMethod(method) ||
+            !(isApplicationService(method.$container) || isQueryService(method.$container) ||
+                isProjector(method.$container))) {
+            return false;
+        }
+        const index = method.parameters.indexOf(parameter);
+        return index > 0 && method.parameters.slice(0, index).some(candidate =>
+            isDomainEvent(candidate.type?.ref) || isIntegrationEvent(candidate.type?.ref)
+        );
+    }
+
+    /**
+     * Finds the import path for the import statement at the cursor. Completion
+     * contexts synthesize an incomplete `Import`, so the parsed import after the
+     * cursor is not always available from the completion AST.
+     */
+    private findImportPathAtCursor(context: CompletionContext): string | undefined {
+        const root = context.document.parseResult.value;
+        if (isModel(root)) {
+            const containing = root.imports.find(importDeclaration => {
+                const cstNode = importDeclaration.$cstNode;
+                return cstNode !== undefined && cstNode.offset <= context.offset && context.offset <= cstNode.end;
+            });
+            if (containing?.path) {
+                return containing.path;
+            }
+        }
+        const text = context.textDocument.getText();
+        const importStart = text.lastIndexOf('import', context.offset);
+        if (importStart < 0) {
+            return undefined;
+        }
+        const statement = text.slice(importStart);
+        const match = /\bfrom\s+(['"])([^'"]+)\1/u.exec(statement);
+        return match?.[2];
+    }
+
+    private dedupeCompletionCandidates(
+        refInfo: ReferenceInfo,
+        candidates: Stream<AstNodeDescription>,
+        typedPrefix = ''
+    ): Stream<AstNodeDescription> {
         const document = AstUtils.getDocument(refInfo.container);
         const model = document.parseResult.value;
         const aliases = isModel(model) ? getComponentAliases(model) : [];
         const journeyReference = AstUtils.getContainerOfType(refInfo.container, isJourneyStep) !== undefined;
-        const typedPrefix = refInfo.reference.$refText ?? '';
+        typedPrefix = normalizeIdentifierText(typedPrefix || refInfo.reference.$refText || '');
         const groups = new Map<string, AstNodeDescription[]>();
         const synthetic: AstNodeDescription[] = [];
         for (const description of candidates) {
@@ -218,6 +318,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             group.push(description);
             groups.set(key, group);
         }
+        const matchingGroups = [...groups.values()].filter(group =>
+            group.some(candidate => this.matchesCompletionPrefix(candidate.name, typedPrefix))
+        );
         const preservePathContinuation = (selected: AstNodeDescription, group: AstNodeDescription[]): AstNodeDescription => {
             if (!group.some(candidate =>
                 (candidate as AstNodeDescription & { thinaiPathContinuation?: boolean }).thinaiPathContinuation
@@ -229,11 +332,36 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 thinaiPathContinuation: true
             } as AstNodeDescription;
         };
+        const annotateCompletionSpelling = (
+            selected: AstNodeDescription,
+            group: AstNodeDescription[]
+        ): AstNodeDescription => {
+            const withContinuation = preservePathContinuation(selected, group);
+            if (typedPrefix.length === 0) {
+                return withContinuation;
+            }
+            const lowerPrefix = typedPrefix.toLowerCase();
+            const lastSegment = selected.name.split('.').at(-1) ?? selected.name;
+            const filterCandidate = group.find(candidate =>
+                candidate.name.toLowerCase().startsWith(lowerPrefix)
+            ) ?? group.find(candidate =>
+                (candidate.name.split('.').at(-1) ?? candidate.name).toLowerCase().startsWith(lowerPrefix)
+            );
+            const label = !selected.name.toLowerCase().startsWith(lowerPrefix) &&
+                lastSegment.toLowerCase().startsWith(lowerPrefix)
+                ? lastSegment
+                : selected.name;
+            return {
+                ...withContinuation,
+                thinaiCompletionLabel: label,
+                thinaiFilterText: label !== selected.name ? label : filterCandidate?.name ?? selected.name
+            } as AstNodeDescription;
+        };
         const preferred: AstNodeDescription[] = [];
         if (this.isQualifiedReference(refInfo)) {
-            for (const group of groups.values()) {
+            for (const group of matchingGroups) {
                 const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
-                preferred.push(preservePathContinuation(
+                preferred.push(annotateCompletionSpelling(
                     group.find(candidate => candidate.name === name) ?? group[0]!,
                     group
                 ));
@@ -256,7 +384,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const resolved = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
             return resolved === target;
         };
-        for (const group of groups.values()) {
+        for (const group of matchingGroups) {
             const first = group[0]!;
             const target = first.node ?? resolveAstNodeDescription(first, this.thinaiServices);
             if (!target) {
@@ -266,7 +394,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const resolving = group.filter(candidate => resolvesTo(candidate.name, target));
             if (resolving.length > 0) {
                 const name = this.chooseCompletionDescriptionName(resolving, journeyReference, typedPrefix);
-                preferred.push(preservePathContinuation(
+                preferred.push(annotateCompletionSpelling(
                     resolving.find(candidate => candidate.name === name) ?? resolving[0]!,
                     resolving
                 ));
@@ -274,13 +402,23 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 // Synthetic shape/result descriptions are generated on demand and
                 // are not necessarily present in the visible scope.
                 const name = this.chooseCompletionDescriptionName(group, journeyReference, typedPrefix);
-                preferred.push(preservePathContinuation(
+                preferred.push(annotateCompletionSpelling(
                     group.find(candidate => candidate.name === name) ?? first,
                     group
                 ));
             }
         }
         return stream([...preferred, ...synthetic]);
+    }
+
+    private matchesCompletionPrefix(name: string, typedPrefix: string): boolean {
+        if (typedPrefix.length === 0) {
+            return true;
+        }
+        const lowerPrefix = typedPrefix.toLowerCase();
+        const lowerName = name.toLowerCase();
+        return lowerName.startsWith(lowerPrefix) ||
+            (name.split('.').at(-1) ?? name).toLowerCase().startsWith(lowerPrefix);
     }
 
     private isQualifiedReference(refInfo: ReferenceInfo): boolean {
@@ -308,8 +446,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         journeyReference: boolean,
         typedPrefix: string
     ): string {
+        const matchesPrefix = (candidate: AstNodeDescription): boolean => {
+            if (typedPrefix.length === 0) {
+                return true;
+            }
+            const lowerPrefix = typedPrefix.toLowerCase();
+            return candidate.name.toLowerCase().startsWith(lowerPrefix) ||
+                (candidate.name.split('.').at(-1) ?? candidate.name).toLowerCase().startsWith(lowerPrefix);
+        };
         const matching = typedPrefix.length > 0
-            ? candidates.filter(candidate => candidate.name.startsWith(typedPrefix))
+            ? candidates.filter(matchesPrefix)
             : candidates;
         const pool = matching.length > 0 ? matching : candidates;
         const score = (candidate: AstNodeDescription): number => {
@@ -342,6 +488,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     ): CompletionValueItem {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
         item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
+        const spelling = nodeDescription as AstNodeDescription & {
+            thinaiCompletionLabel?: string;
+            thinaiFilterText?: string;
+        };
+        if (spelling.thinaiCompletionLabel) {
+            item.label = spelling.thinaiCompletionLabel;
+        }
+        if (spelling.thinaiFilterText) {
+            item.filterText = spelling.thinaiFilterText;
+        }
         let insertText = formatQualifiedName(nodeDescription.name);
         const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
         const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
@@ -353,11 +509,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             (this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider)
                 .isStructuralSpecificationPathTarget(target) &&
             this.shouldAppendPathDot(refInfo, context);
+        const typedPrefix = this.getTypedPrefix(context);
+        const typedRootContinuation = typedPrefix.length > 0 ||
+            target === undefined || (!isParameter(target) && !isMethod(target));
         if (target && (
             this.isJourneyPathContinuation(refInfo, target, context) ||
             readSourcePathContinuation ||
             structuralSpecificationContinuation ||
-            pathContinuation && this.shouldAppendPathDot(refInfo, context)
+            pathContinuation && typedRootContinuation && this.shouldAppendPathDot(refInfo, context)
         )) {
             insertText = `${insertText}.`;
         }
@@ -366,6 +525,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         if (item.textEdit) {
             item.textEdit = { ...item.textEdit, newText: insertText };
+        }
+        if (target && typedPrefix.length > 0) {
+            // Langium's default text-edit builder filters candidates with a fuzzy
+            // match against the item label. Thinai may intentionally display a
+            // short spelling while inserting a qualified path, so provide the edit
+            // explicitly and let `filterText` drive client-side filtering.
+            item.textEdit = {
+                range: {
+                    start: context.textDocument.positionAt(context.tokenOffset),
+                    end: context.position
+                },
+                newText: insertText
+            };
         }
         return item;
     }
@@ -550,9 +722,24 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
             : rawCompletionWithKeywords;
         const relationshipContinuationLabels = new Set(relationshipContinuations.map(item => item.label));
-        const emptyBlockReplacements = new Map(blockKeywords
-            .filter(item => this.isSiblingStatementCompletion(item))
-            .map(item => [item.label, item]));
+        const cursorLinePrefix = document.textDocument.getText().slice(
+            getLineStartOffset(document, document.textDocument.offsetAt(params.position)),
+            document.textDocument.offsetAt(params.position)
+        );
+        const lastOpeningBrace = sourceStructure.openBraceOffsets.at(-1) ?? -1;
+        const lineStart = getLineStartOffset(document, document.textDocument.offsetAt(params.position));
+        const afterOpeningBrace = lastOpeningBrace >= lineStart
+            ? cursorLinePrefix.slice(lastOpeningBrace - lineStart + 1)
+            : cursorLinePrefix;
+        const statementSource = afterOpeningBrace
+            .replace(/\/\*[\s\S]*?\*\//gu, '')
+            .replace(/\/\/.*$/gu, '')
+            .trim();
+        const emptyBlockReplacements = (statementSource.length === 0 || /^[\p{L}_]*$/u.test(statementSource))
+            ? new Map(blockKeywords
+                .filter(item => this.isSiblingStatementCompletion(item))
+                .map(item => [item.label, item]))
+            : new Map();
         const completionWithEmptyBlockEdits = completionWithKeywords
             ? {
                 ...completionWithKeywords,
@@ -666,6 +853,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const entityIdentifierAlreadyDeclared = isEntity(identifierOwner) &&
             identifierOwner.fields.some(field => field.identifier);
         const linePrefix = text.slice(getLineStartOffset(document, offset), offset);
+        const unresolvedOnLine = AstUtils.streamAst(root).some(node =>
+            AstUtils.streamReferences(node).some(info => {
+                const reference = info.reference;
+                if (!isReference(reference)) {
+                    return false;
+                }
+                const referenceNode = reference.$refNode;
+                return referenceNode !== undefined &&
+                    referenceNode.offset >= getLineStartOffset(document, offset) &&
+                    referenceNode.end === offset &&
+                    reference.$refText.length > 0 &&
+                    reference.ref === undefined;
+            })
+        );
         const identifierTypePosition = (
             activeField !== undefined && activeField.identifier && isEntity(activeField.$container) &&
             this.isTypeKeywordCompletionPosition(document, position)
@@ -681,8 +882,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string') {
                     return true;
                 }
-                if (insideImportComponents) {
+                if (unresolvedOnLine && item.textEdit?.newText.startsWith('\n')) {
+                    // Do not insert a new sibling statement while the current
+                    // statement still contains an unresolved reference.
                     return false;
+                }
+                if (insideImportComponents) {
+                    return item.label === 'as' && this.isImportAliasPosition(document, offset);
                 }
                 if (item.label === 'identifier' &&
                     (!isEntity(identifierOwner) || entityIdentifierAlreadyDeclared)) {
@@ -700,8 +906,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 if (item.label === 'reads') {
                     return false;
                 }
+                if ((item.label === 'map' || item.label === 'kernel') && sourceStructure.openBraces > 0) {
+                    return false;
+                }
+                if (item.label === 'object') {
+                    const currentLine = text.slice(getLineStartOffset(document, offset), offset).trimStart();
+                    const base = currentLine.startsWith('value') ? 'value'
+                        : currentLine.startsWith('data') ? 'data'
+                            : undefined;
+                    if (!base || !this.keywordContinuations.isCompoundKeywordAllowed(document, position, base)) {
+                        return false;
+                    }
+                }
                 if (item.label === 'reads from' && activeMethod && allowedMethodClauses &&
                     !allowedMethodClauses.has('reads from')) {
+                    return false;
+                }
+                if (item.label === 'reads from' &&
+                    /^(?:invariant|precondition|postcondition|behavior|when)\s+[\p{L}_]+\s*$/u.test(linePrefix.trim())) {
+                    // The text clause is still missing its quoted specification.
                     return false;
                 }
                 if (terminalKeywords !== undefined && !terminalKeywords.includes(item.label)) {
@@ -798,12 +1021,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 !Object.prototype.hasOwnProperty.call(phrases, item.label)) {
                 return [item];
             }
-            if (item.label === 'context' && this.isBoundedContextKeywordContext(document, position)) {
-                // `context` is the second word of `bounded context`; it must
-                // not be rewritten to the unrelated top-level phrase
-                // `context map` when a bounded-context header is being typed
-                // across a line break.
-                return [item];
+            if (!this.keywordContinuations.isCompoundKeywordAllowed(document, position, item.label)) {
+                return [];
+            }
+            if (this.isBoundedContextKeywordContext(document, position)) {
+                if (item.label === 'context') {
+                    // `context` is the second word of `bounded context`; it must
+                    // not be rewritten to the unrelated top-level phrase
+                    // `context map` when a bounded-context header is being typed
+                    // across a line break.
+                    return [item];
+                }
+                if (item.label === 'context map') {
+                    return [{
+                        ...item,
+                        label: 'context',
+                        insertText: 'context',
+                        textEdit: item.textEdit ? { ...item.textEdit, newText: 'context' } : item.textEdit
+                    }];
+                }
             }
             return phrases[item.label].map(phrase => ({
                 ...item,
@@ -892,9 +1128,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return target !== undefined && !usedTargets.has(target);
         }).toArray();
         const completionContext = this.getLangiumCompletionContext(document, position);
+        const typedPrefix = completionContext ? this.getTypedPrefix(completionContext) : '';
         return {
             active: true,
-            items: this.dedupeCompletionCandidates(context, stream(descriptions)).map(description => {
+            items: this.dedupeCompletionCandidates(context, stream(descriptions), typedPrefix).map(description => {
                 const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
                 const insertText = `${formatQualifiedName(description.name)}${this.isReadSourceStructuralTarget(target) ? '.' : ''}`;
                 const item: CompletionValueItem = {
@@ -947,13 +1184,27 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const typedRaw = listSource.split(',').at(-1)?.trim() ?? '';
         const typedPrefix = normalizeIdentifierText(typedRaw);
         const prefixStart = offset - typedRaw.length;
+        const completedSource = listSource.includes(',')
+            ? listSource.slice(0, listSource.lastIndexOf(','))
+            : '';
+        const exposedNames = new Set(completedSource.split(',')
+            .map(name => normalizeIdentifierText(name.trim()))
+            .filter(name => name.length > 0));
+        const exposedShortNames = new Set([...exposedNames].map(name => name.split('.').at(-1) ?? name));
         const existingItems = defaultCompletion?.items ?? [];
         const completionContext = this.getLangiumCompletionContext(document, position);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         return scopeProvider.getExposureDeclarationCandidates(exposure as Exposure)
             .filter(description => {
                 const detail = this.completionDetails.getCompletionDetail(description);
+                const fullName = normalizeIdentifierText(description.name);
+                const shortName = fullName.split('.').at(-1) ?? fullName;
+                const alreadyExposed = exposedNames.has(fullName) || exposedNames.has(shortName) ||
+                    exposedShortNames.has(shortName);
+                const exactCurrentSegment = typedPrefix.length > 0 &&
+                    (fullName === typedPrefix || shortName === typedPrefix);
                 return description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()) &&
+                    !alreadyExposed && !exactCurrentSegment &&
                     !existingItems.some(item => item.label === description.name && item.detail === detail);
             })
             .map(description => {
@@ -1242,11 +1493,40 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 const cstNode = node.$cstNode;
                 return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
             });
-        if (!importNode?.$cstNode) {
+        if (importNode?.$cstNode) {
+            const source = text.slice(importNode.$cstNode.offset, offset);
+            if (source.includes('{') && !source.includes('}')) {
+                return true;
+            }
+        }
+        // Incomplete imports are often absent from the parse tree. Fall back to
+        // the source text so top-level declaration keywords do not leak into an
+        // unclosed component list.
+        const importStart = text.lastIndexOf('import', offset);
+        if (importStart < 0) {
             return false;
         }
-        const source = text.slice(importNode.$cstNode.offset, offset);
-        return source.includes('{') && !source.includes('}');
+        const source = text.slice(importStart, offset);
+        const openBrace = source.indexOf('{');
+        return openBrace >= 0 && !source.slice(openBrace).includes('}');
+    }
+
+    private isImportAliasPosition(document: LangiumDocument, offset: number): boolean {
+        const text = document.textDocument.getText();
+        const importStart = text.lastIndexOf('import', offset);
+        if (importStart < 0) {
+            return false;
+        }
+        const source = text.slice(importStart, offset);
+        const lastSeparator = Math.max(source.lastIndexOf('{'), source.lastIndexOf(','));
+        if (lastSeparator < 0) {
+            return false;
+        }
+        const segment = source.slice(lastSeparator + 1);
+        const partialMatch = /(\S*)$/u.exec(segment);
+        const partialStart = partialMatch?.index ?? segment.length;
+        const beforePartial = segment.slice(0, partialStart).trim();
+        return beforePartial.length > 0 && !/\bas\b/u.test(beforePartial);
     }
 
     private isAfterTrailingComma(model: AstNode, text: string, offset: number): boolean {

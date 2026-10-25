@@ -7,8 +7,10 @@ import {
     type Scope,
     type Stream,
     type LangiumCoreServices,
+    type LangiumDocument,
     stream,
     DocumentState,
+    UriUtils,
 } from 'langium';
 import {
     type CollectionType,
@@ -20,6 +22,7 @@ import {
     type Entity,
     type Exposure,
     type Field,
+    type Import,
     type ImportComponent,
     type JourneyStep,
     type Method,
@@ -960,9 +963,28 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         if (container.$type === 'BoundedContextReference' && context.property === 'target' &&
             isSharedKernelRelationship(container.$container)) {
             const parent = container.$container;
-            return !parent.participants.some(participant =>
+            if (parent.participants.some(participant =>
                 participant !== container && participant.target?.ref === target
-            );
+            )) {
+                return false;
+            }
+            const contextMap = AstUtils.getContainerOfType(parent, isContextMap);
+            if (contextMap && isBoundedContext(target)) {
+                const selected = parent.participants
+                    .map(participant => participant.target?.ref)
+                    .filter((candidate): candidate is BoundedContext => isBoundedContext(candidate))
+                    .filter(candidate => candidate !== target);
+                const existingPairs = contextMap.relationships.flatMap(relationship =>
+                    getRelationshipPairSemantics(relationship)
+                );
+                for (const other of selected) {
+                    const key = JSON.stringify([other.name, target.name].sort());
+                    if (existingPairs.some(pair => pair.key === key && pair.kind === 'separateWays')) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
         return true;
     }
@@ -1431,7 +1453,8 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     isStructuralSpecificationPathTarget(target: AstNode): boolean {
         return this.isSpecificationPathContainer(target) || isAggregate(target) || isEntity(target) ||
-            isApplicationService(target) || isQueryService(target) || isDomainService(target);
+            isApplicationService(target) || isQueryService(target) || isDomainService(target) ||
+            isFactory(target) || isProjector(target);
     }
 
     private isSpecificationPathContainerVisible(context: ReferenceInfo, target: AstNode): boolean {
@@ -1694,17 +1717,29 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         });
     }
 
-    private getImportableComponents(component: ImportComponent, referenceType: string): AstNodeDescription[] {
-        const importDeclaration = component.$container;
+    getImportableComponentsForImport(importDeclaration: Import, referenceType: string): AstNodeDescription[] {
         const document = AstUtils.getDocument(importDeclaration);
         const resolvedUri = resolveImportUri(document, importDeclaration);
-        if (!resolvedUri) {
-            return [];
-        }
-        const uri = resolvedUri.toString();
+        return resolvedUri ? this.getImportableComponentsForUri(resolvedUri.toString(), referenceType) : [];
+    }
+
+    getImportableComponentsForPath(
+        document: LangiumDocument,
+        path: string,
+        referenceType: string
+    ): AstNodeDescription[] {
+        const resolvedUri = UriUtils.resolvePath(UriUtils.dirname(document.uri), path);
+        return this.getImportableComponentsForUri(resolvedUri.toString(), referenceType);
+    }
+
+    private getImportableComponentsForUri(uri: string, referenceType: string): AstNodeDescription[] {
         return this.indexManager.allElements(referenceType, new Set([uri]))
             .filter(description => ['BoundedContext', 'ContextMap', 'SharedKernel'].includes(description.type))
             .toArray();
+    }
+
+    private getImportableComponents(component: ImportComponent, referenceType: string): AstNodeDescription[] {
+        return this.getImportableComponentsForImport(component.$container, referenceType);
     }
 
 

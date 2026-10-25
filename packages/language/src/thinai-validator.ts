@@ -45,7 +45,8 @@ import type {
     Transition,
     TypeDeclaration,
     ValueObject,
-    SharedKernel
+    SharedKernel,
+    SpecificationTextPart
 } from './generated/ast.js';
 import {
     isAggregate,
@@ -111,6 +112,7 @@ import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiModelValidator } from './thinai-model-validator.js';
 import { ThinaiReadDependencyValidator } from './thinai-read-dependency-validator.js';
 import { formatCollectionType, getTypeReferences } from './thinai-type-utils.js';
+import { THINAI_KEYWORDS } from './thinai-constants.js';
 
 export function registerValidationChecks(services: ThinaiServices): void {
     const registry = services.validation.ValidationRegistry;
@@ -149,6 +151,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Repository: validator.checkRepository,
         SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
+        SpecificationTextPart: validator.checkSpecificationTextPart,
         ValueObject: validator.checkValueObject
     };
     registry.register(checks, validator);
@@ -538,6 +541,35 @@ export class ThinaiValidator {
             }
             names.add(value.name);
         }
+    }
+
+    checkSpecificationTextPart(part: SpecificationTextPart, accept: ValidationAcceptor): void {
+        const checkReference = (
+            reference: SpecificationTextPart['target'] | SpecificationTextPart['targets'][number],
+            property: 'target' | 'targets',
+            index?: number
+        ): void => {
+            if (!isReference(reference)) {
+                return;
+            }
+            const name = reference.$refText;
+            if (!THINAI_KEYWORDS.has(name)) {
+                return;
+            }
+            const referenceNode = reference.$refNode;
+            if (referenceNode?.text.trimStart().startsWith('`')) {
+                return;
+            }
+            accept(
+                'error',
+                `Reserved word '${name}' must be backtick-quoted in a specification reference, for example [[D.\`${name}\`]].`,
+                index === undefined
+                    ? { node: part, property }
+                    : { node: part, property, index }
+            );
+        };
+        checkReference(part.target, 'target');
+        part.targets.forEach((reference, index) => checkReference(reference, 'targets', index));
     }
 
     checkCollectionType(collection: CollectionType, accept: ValidationAcceptor): void {

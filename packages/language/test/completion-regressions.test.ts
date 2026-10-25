@@ -478,6 +478,36 @@ in bounded context Ordering {
         expect(typedLabels).not.toContain('Outer.Foreign');
     });
 
+    test('does not offer an already exposed declaration again', async () => {
+        const afterComma = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V, ${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+        value object U { raw: string }
+    }
+}`);
+        const afterCommaLabels = afterComma.completion?.items.map(item => item.label) ?? [];
+        expect(afterCommaLabels).toContain('W');
+        expect(afterCommaLabels).toContain('U');
+        expect(afterCommaLabels).not.toContain('V');
+
+        const exactCurrent = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V, W${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+        value object Weekly { raw: string }
+    }
+}`);
+        const exactLabels = exactCurrent.completion?.items.map(item => item.label) ?? [];
+        expect(exactLabels).not.toContain('W');
+        expect(exactLabels).not.toContain('V');
+        expect(exactLabels).toContain('Weekly');
+    });
+
     test('offers exposed sibling-module integration-event payload types', async () => {
         const completion = await build(`bounded context O
 in bounded context O {
@@ -1684,5 +1714,202 @@ in bounded context C {
             expect(labels, source).toContain('context');
             expect(labels, source).not.toContain('context map');
         }
+    });
+
+    test('completes typed canonical paths and duplicate short names', async () => {
+        const canonical = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Contracts {
+        exposes Money, Currency
+        value object Money { amount: number }
+        enum Currency { USD, EUR }
+    }
+    data object Quote { price: Co${marker} }
+}`);
+        const money = canonical.completion?.items.find(item => item.label === 'Contracts.Money');
+        expect(money?.textEdit?.newText).toBe('Contracts.Money');
+
+        const duplicates = await build(`bounded context C
+in bounded context C {
+    module M1 { exposes Id value object Id { raw: string } }
+    module M2 { exposes Id value object Id { raw: string } }
+    data object D { x: Id${marker} }
+}`);
+        const idItems = duplicates.completion?.items.filter(item => item.label === 'Id') ?? [];
+        expect(idItems.map(item => item.textEdit?.newText).sort()).toEqual(['M1.Id', 'M2.Id']);
+    });
+
+    test('appends a continuation dot to typed parameter and result roots', async () => {
+        const input = await build(`bounded context C
+in bounded context C {
+    data object D { status: string }
+    application service S {
+        method run(input: D) {
+            behavior "Use [[inp${marker}]].\"
+        }
+    }
+}`);
+        expect(input.completion?.items.find(item => item.label === 'input')?.textEdit?.newText).toBe('input.');
+
+        const result = await build(`bounded context C
+in bounded context C {
+    data object D { status: string }
+    application service S {
+        method run() returns D {
+            behavior "Use [[res${marker}]].\"
+        }
+    }
+}`);
+        expect(result.completion?.items.find(item => item.label === 'result')?.textEdit?.newText).toBe('result.');
+    });
+
+    test('does not expand compound keywords inside unrelated blocks', async () => {
+        const contextMap = await build(`bounded context A
+bounded context B
+context map M {
+    context ${marker}
+}`);
+        expect(contextMap.completion?.items.map(item => item.label) ?? []).not.toContain('map');
+
+        const entity = await build(`bounded context C
+in bounded context C {
+    aggregate A {
+        root entity A {
+            value ${marker}
+        }
+    }
+}`);
+        expect(entity.completion?.items.map(item => item.label) ?? []).not.toContain('object');
+
+        const method = await build(`bounded context C
+in bounded context C {
+    application service S {
+        method run() {
+            query ${marker}
+        }
+    }
+}`);
+        expect(method.completion?.items.map(item => item.label) ?? [])
+            .not.toEqual(expect.arrayContaining(['repository', 'service']));
+
+        const shared = await build(`bounded context C
+in bounded context C {
+    application service S {
+        method run() {
+            shared ${marker}
+        }
+    }
+}`);
+        expect(shared.completion?.items.map(item => item.label) ?? []).not.toContain('kernel');
+    });
+
+    test('filters shared-kernel participants that conflict with separate ways', async () => {
+        const conflict = await build(`bounded context A
+bounded context B
+shared kernel K {
+    value object V { raw: string }
+}
+context map M {
+    separateWays A -x- B
+    sharedKernel K {
+        participants: [A, ${marker}]
+    }
+}`, true);
+        expect(conflict.completion?.items.map(item => item.label) ?? []).not.toContain('B');
+
+        const compatible = await build(`bounded context A
+bounded context B
+shared kernel K {
+    value object V { raw: string }
+}
+context map M {
+    sharedKernel K {
+        participants: [A, ${marker}]
+    }
+}`, true);
+        expect(compatible.completion?.items.map(item => item.label) ?? []).toContain('B');
+    });
+
+    test('does not offer DataObjects for an extra event-handler parameter', async () => {
+        const handler = await build(`bounded context C
+in bounded context C {
+    data object D { x: string }
+    event E
+    application service S {
+        method handle(source: E, extra: ${marker}) {}
+    }
+}`, true);
+        expect(handler.completion?.items.map(item => item.label) ?? []).not.toContain('D');
+    });
+
+    test('completes importable components when the import path follows the cursor', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-component-audit/target.tni'),
+            `bounded context Ordering
+in bounded context Ordering {
+    value object V { raw: string }
+}`
+        );
+        documents.push(target);
+        await services.shared.workspace.DocumentBuilder.build([target], { validation: false });
+
+        for (const [sourceText, expected] of [
+            ['import { __completion_position__ } from "./target.tni"', true],
+            ['import { Ord__completion_position__ } from "./target.tni"', true],
+            ['import { Ordering, __completion_position__ } from "./target.tni"', false]
+        ] as const) {
+            const offset = sourceText.indexOf(marker);
+            const text = sourceText.replace(marker, '');
+            const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/import-component-audit/consumer-${fileIndex++}.tni`),
+                text
+            );
+            documents.push(consumer);
+            await services.shared.workspace.DocumentBuilder.build([consumer], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+                textDocument: { uri: consumer.uri.toString() },
+                position: consumer.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            expect(labels.includes('Ordering'), sourceText).toBe(expected);
+        }
+    });
+
+    test('offers a bare import quick fix for an unowned actor', async () => {
+        const target = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/actor-quickfix/target.tni'),
+            `bounded context C
+in bounded context C {
+    value object V { raw: string }
+}
+actor Customer`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/actor-quickfix/consumer.tni'),
+            `import { C } from "./target.tni"
+journey J {
+    by Customer {
+        invoke C.App.run
+    }
+}
+in bounded context C {
+    application service App {
+        method run() {}
+    }
+}`
+        );
+        documents.push(target, consumer);
+        await services.shared.workspace.DocumentBuilder.build([target, consumer], { validation: true });
+
+        const diagnostic = consumer.diagnostics?.find(candidate =>
+            candidate.severity === 1 && String(candidate.message).includes("Could not resolve reference to Actor named 'Customer'")
+        );
+        expect(diagnostic).toBeDefined();
+        const actions = await Promise.resolve(services.Thinai.lsp.CodeActionProvider?.getCodeActions(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            range: diagnostic!.range,
+            context: { diagnostics: consumer.diagnostics ?? [] }
+        }));
+        expect(actions?.map(action => action.title)).toContain("Import 'Customer' from './target.tni'");
     });
 });

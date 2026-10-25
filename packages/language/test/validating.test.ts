@@ -3872,6 +3872,44 @@ in bounded context Ordering {
         expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
+    test('requires backticks for reserved-word specification references', async () => {
+        const unquoted = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object D {
+                    \`value\`: string
+                }
+                application service S {
+                    method run(input: D) {
+                        behavior "Use [[D.value]] and [[input.value]]."
+                    }
+                }
+            }
+        `);
+
+        const reservedMessages = semanticDiagnostics(unquoted)
+            .map(diagnostic => String(diagnostic.message))
+            .filter(message => message.includes("Reserved word 'value' must be backtick-quoted"));
+        expect(reservedMessages).toHaveLength(2);
+
+        const quoted = await parse(`
+            bounded context Ordering
+            in bounded context Ordering {
+                data object D {
+                    \`value\`: string
+                }
+                application service S {
+                    method run(input: D) {
+                        behavior "Use [[D.\`value\`]] and [[input.\`value\`]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(quoted)
+            .map(diagnostic => String(diagnostic.message))
+            .filter(message => message.includes('must be backtick-quoted'))).toEqual([]);
+    });
+
     test('allows exposed nested declarations through structural paths', async () => {
         const document = await parse(`
             bounded context Ordering

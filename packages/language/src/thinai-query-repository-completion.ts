@@ -82,6 +82,9 @@ export class ThinaiQueryRepositoryCompletion {
         const lineStart = getLineStartOffset(document, offset);
         const currentLinePrefix = text.slice(lineStart, offset);
         const partialLinePhrase = this.getReadsFromPrefix(currentLinePrefix);
+        if (partialLinePhrase && currentLinePrefix.slice(0, partialLinePhrase.start).trim().length > 0) {
+            return [];
+        }
         let editStart: number;
         let newText: string;
         if (/^[\t ]*$/u.test(currentLinePrefix)) {
@@ -125,7 +128,11 @@ export class ThinaiQueryRepositoryCompletion {
         const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset);
         const partial = this.getReadsFromPrefix(prefix);
-        if (!partial) {
+        // A method clause must start its own statement. Allow the clause directly
+        // after an opening brace on the same line, but not after other tokens such
+        // as `invokes r` or `behavior r`.
+        const statementStart = Math.max(0, prefix.lastIndexOf('{') + 1);
+        if (!partial || prefix.slice(statementStart, partial.start).trim().length > 0) {
             return [];
         }
         const method = AstUtils.streamAst(root)

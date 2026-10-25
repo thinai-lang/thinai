@@ -598,7 +598,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
      * are also valid standalone links.
      */
     private hasNavigableShapeMembers(target: AstNode): boolean {
-        if (!isField(target)) {
+        if (!isField(target) && !isParameter(target) && !isMethod(target)) {
             return false;
         }
         return this.getShapeTypes(target).some(type => {

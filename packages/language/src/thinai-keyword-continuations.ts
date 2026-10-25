@@ -1,24 +1,31 @@
-import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
+import { AstUtils, CstUtils, type AstNode, type LangiumDocument } from 'langium';
 import { type CompletionItem, type Position } from 'vscode-languageserver';
 import {
     type TransitionChange,
     isApplicationService,
     isBoundedContext,
+    isBoundedContextPart,
+    isContextMap,
+    isContextMapEndpoint,
     isDomainService,
     isEntity,
     isEnumType,
     isField,
-    isMethod,
-    isProjector,
-    isQueryService,
-    isSubdomain,
     isImport,
+    isMethod,
+    isModel,
+    isModule,
+    isProjector,
+    isQueryRepository,
+    isQueryService,
+    isRepository,
+    isSharedKernelRelationship,
+    isSubdomain,
     isTransition,
-    isValueObject,
-    isModule
+    isValueObject
 } from './generated/ast.js';
 import { canDeclareProjects, canDeclareTransition, getEventEmissionMode } from './thinai-operation-utils.js';
-import { getSiblingCompletionKeywords } from './thinai-layout.js';
+import { getSiblingCompletionKeywords, isBlockNodeType } from './thinai-layout.js';
 import { isInSharedKernel } from './thinai-scope-utils.js';
 import { hasReferenceText } from './thinai-ast-utils.js';
 import { THINAI_IDENTIFIER_SOURCE, THINAI_QUALIFIED_IDENTIFIER_SOURCE } from './thinai-identifiers.js';
@@ -48,36 +55,68 @@ export class ThinaiKeywordContinuations {
         const text = document.textDocument.getText();
         const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset);
-        const continuations: ReadonlyArray<readonly [RegExp, string[]]> = [
-            [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context']],
-            [/\bbounded\s+([\p{L}_]*)$/iu, ['context']],
-            [/\bshared\s+([\p{L}_]*)$/iu, ['kernel']],
-            [/\bapplication\s+([\p{L}_]*)$/iu, ['service']],
-            [/\broot\s+([\p{L}_]*)$/iu, ['entity']],
-            [/\bvalue\s+([\p{L}_]*)$/iu, ['object']],
-            [/\bread\s+([\p{L}_]*)$/iu, ['model']],
-            [/\bdata\s+([\p{L}_]*)$/iu, ['object']],
-            [/\bdomain\s+([\p{L}_]*)$/iu, ['service']],
-            [/\bquery\s+([\p{L}_]*)$/iu, ['repository', 'service']],
-            [/\bintegration\s+([\p{L}_]*)$/iu, ['event']],
-            [/\bdepends\s+([\p{L}_]*)$/iu, ['on']],
-            [/\bcontext\s+([\p{L}_]*)$/iu, ['map']],
-            [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'), ['core', 'supporting', 'generic']],
-            [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from']],
-            [new RegExp(`\\bquery\\s+repository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['serves']],
-            [new RegExp(`\\brepository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['manages']],
-            [new RegExp(`\\breads\\s+from\\s+${qualifiedIdentifierSource}(?:\\s*,\\s*${qualifiedIdentifierSource})*\\s+([\\p{L}_]*)$`, 'iu'), ['when']],
-            [new RegExp(`\\bsharedKernel\\s+${qualifiedIdentifierSource}\\s+\\{\\s*([\\p{L}_]*)$`, 'iu'), ['participants']],
-            [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier']],
-            [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner']],
-            [new RegExp(`\\b(?:customer|supplier|partner)\\s+${qualifiedIdentifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'), ['integrationPatterns']]
+        const beforeCurrentLine = text.slice(0, lineStart).trimEnd();
+        const previousLine = beforeCurrentLine.slice(beforeCurrentLine.lastIndexOf('\n') + 1).trim();
+        const currentPartial = prefix.trim();
+        if (/^(?:in\s+)?bounded$/iu.test(previousLine) &&
+            currentPartial.length > 0 && currentPartial.length < 'context'.length &&
+            'context'.startsWith(currentPartial) &&
+            /^[\p{L}_]*$/u.test(currentPartial)) {
+            return [this.callbacks.createKeywordCompletionItem(
+                document,
+                position,
+                'context',
+                'Keyword continuation',
+                offset - currentPartial.length,
+                'context'
+            )];
+        }
+        const container = this.getContinuationContainer(document, offset);
+        const allowsSibling = (phrase: string): boolean => this.containerAllowsSibling(container, phrase);
+        const allowsAnySibling = (...phrases: string[]): boolean => phrases.some(allowsSibling);
+        const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean]> = [
+            [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context'], () =>
+                isModel(container) || (isBoundedContext(container) || isBoundedContextPart(container)) &&
+                !this.hasOpenedBody(container)],
+            [/\bbounded\s+([\p{L}_]*)$/iu, ['context'], () =>
+                isModel(container) || isBoundedContext(container) && !this.hasOpenedBody(container)],
+            [/\bshared\s+([\p{L}_]*)$/iu, ['kernel'], () => isModel(container)],
+            [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => isModel(container) || allowsSibling('application service')],
+            [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => isModel(container) || allowsSibling('root entity')],
+            [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => isModel(container) || allowsSibling('value object')],
+            [/\bread\s+([\p{L}_]*)$/iu, ['model'], () => isModel(container) || allowsSibling('read model')],
+            [/\bdata\s+([\p{L}_]*)$/iu, ['object'], () => isModel(container) || allowsSibling('data object')],
+            [/\bdomain\s+([\p{L}_]*)$/iu, ['service'], () => isModel(container) || allowsSibling('domain service')],
+            [/\bquery\s+([\p{L}_]*)$/iu, ['repository', 'service'], () =>
+                isModel(container) || allowsAnySibling('query repository', 'query service')],
+            [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => isModel(container) || allowsSibling('integration event')],
+            [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () =>
+                isModel(container) || isModule(container) ||
+                /^\s*module\s+\S+\s+depends(?:\s+\S*)?$/iu.test(prefix)],
+            [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container)],
+            [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'),
+                ['core', 'supporting', 'generic'], () => isSubdomain(container) ||
+                    new RegExp(`^\\s*subdomain\\s+${identifierSource}\\s+kind(?:\\s+[\\p{L}_]*)?$`, 'iu').test(prefix)],
+            [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from'], () => isImport(container) || isModel(container)],
+            [new RegExp(`\\bquery\\s+repository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
+                ['serves'], () => isModel(container) || isQueryRepository(container)],
+            [new RegExp(`\\brepository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
+                ['manages'], () => isModel(container) || isRepository(container)],
+            [new RegExp(`\\breads\\s+from\\s+${qualifiedIdentifierSource}(?:\\s*,\\s*${qualifiedIdentifierSource})*\\s+([\\p{L}_]*)$`, 'iu'),
+                ['when'], () => isModel(container) || isMethod(container)],
+            [new RegExp(`\\bsharedKernel\\s+${qualifiedIdentifierSource}\\s+\\{\\s*([\\p{L}_]*)$`, 'iu'),
+                ['participants'], () => isModel(container) || isSharedKernelRelationship(container)],
+            [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier'], () => isModel(container) || isContextMap(container)],
+            [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner'], () => isModel(container) || isContextMap(container)],
+            [new RegExp(`\\b(?:customer|supplier|partner)\\s+${qualifiedIdentifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
+                ['integrationPatterns'], () => isModel(container) || isContextMapEndpoint(container) || isContextMap(container)]
         ];
 
         const match = this.getTransitionRequiredKeywordMatch(prefix) ??
             this.getTransitionContinuationMatch(document, position) ??
             continuations
-            .map(([pattern, keywords]) => ({ match: pattern.exec(prefix), keywords }))
-            .find(candidate => candidate.match !== null);
+            .map(([pattern, keywords, allowed]) => ({ match: pattern.exec(prefix), keywords, allowed }))
+            .find(candidate => candidate.match !== null && candidate.allowed());
         if (!match?.match) {
             const importFrom = this.getImportFromCompletion(document, position);
             return importFrom ? [importFrom] : [];
@@ -103,6 +142,101 @@ export class ThinaiKeywordContinuations {
                 start,
                 `${needsLeadingSpace ? ' ' : ''}${keyword}`
             ));
+    }
+
+    private containerAllowsSibling(container: AstNode | undefined, phrase: string): boolean {
+        return container !== undefined &&
+            getSiblingCompletionKeywords(container.$type, isModule(container) && isInSharedKernel(container))
+                .includes(phrase);
+    }
+
+    private hasOpenedBody(container: AstNode | undefined): boolean {
+        return container?.$cstNode?.text.includes('{') === true;
+    }
+
+    /** True when a partial compound keyword may be expanded in the cursor's scope. */
+    isCompoundKeywordAllowed(document: LangiumDocument, position: Position, base: string): boolean {
+        const offset = document.textDocument.offsetAt(position);
+        const container = this.getContinuationContainer(document, offset);
+        const text = document.textDocument.getText();
+        const lineStart = getLineStartOffset(document, offset);
+        const prefix = text.slice(lineStart, offset);
+        switch (base) {
+            case 'in':
+                return isModel(container) ||
+                    (isBoundedContext(container) || isBoundedContextPart(container)) &&
+                    !this.hasOpenedBody(container);
+            case 'bounded':
+                return isModel(container) ||
+                    isBoundedContext(container) && !this.hasOpenedBody(container);
+            case 'context':
+            case 'shared':
+                return isModel(container);
+            case 'application':
+                return isModel(container) || this.containerAllowsSibling(container, 'application service');
+            case 'root':
+                return isModel(container) || this.containerAllowsSibling(container, 'root entity');
+            case 'value':
+                return isModel(container) || this.containerAllowsSibling(container, 'value object');
+            case 'read':
+                return isModel(container) || this.containerAllowsSibling(container, 'read model');
+            case 'data':
+                return isModel(container) || this.containerAllowsSibling(container, 'data object');
+            case 'domain':
+                return isModel(container) || this.containerAllowsSibling(container, 'domain service');
+            case 'query':
+                return isModel(container) || this.containerAllowsSibling(container, 'query repository') ||
+                    this.containerAllowsSibling(container, 'query service');
+            case 'integration':
+                return isModel(container) || this.containerAllowsSibling(container, 'integration event');
+            case 'depends':
+                return isModel(container) || isModule(container) ||
+                    /\bmodule\s+\S*\s*$/iu.test(prefix) ||
+                    /^\s*depends(?:\s+\S*)?$/iu.test(prefix);
+            case 'reads':
+                return isMethod(container);
+            default:
+                return true;
+        }
+    }
+
+    private getContinuationContainer(document: LangiumDocument, offset: number): AstNode | undefined {
+        const root = document.parseResult.value;
+        const cstRoot = root?.$cstNode;
+        if (!cstRoot) {
+            return root;
+        }
+        const text = document.textDocument.getText();
+        // Prefer the nearest unclosed brace block. Parser recovery can attach a
+        // token to an outer declaration, but the source braces still identify the
+        // method or block the cursor is actually inside.
+        const unclosed = AstUtils.streamAst(root)
+            .filter(node => isBlockNodeType(node.$type) && node.$cstNode !== undefined)
+            .map(node => {
+                const cstNode = node.$cstNode!;
+                const openIndex = cstNode.text.indexOf('{');
+                return { node, openOffset: openIndex >= 0 ? cstNode.offset + openIndex : -1 };
+            })
+            .filter(candidate => candidate.openOffset >= 0 && candidate.openOffset < offset &&
+                !text.slice(candidate.openOffset, offset).includes('}'))
+            .toArray()
+            .sort((left, right) => right.openOffset - left.openOffset)[0];
+        if (unclosed) {
+            return unclosed.node;
+        }
+        const leaf = CstUtils.findLeafNodeAtOffset(cstRoot, Math.min(offset, cstRoot.end)) ??
+            CstUtils.findLeafNodeBeforeOffset(cstRoot, offset);
+        let node = leaf?.astNode;
+        while (node && !isModel(node)) {
+            const cstNode = node.$cstNode;
+            const containsCursor = cstNode !== undefined &&
+                cstNode.offset <= offset && offset <= cstNode.end;
+            if (containsCursor && isBlockNodeType(node.$type)) {
+                return node;
+            }
+            node = node.$container;
+        }
+        return node ?? root;
     }
 
     private getImportFromCompletion(document: LangiumDocument, position: Position): CompletionItem | undefined {

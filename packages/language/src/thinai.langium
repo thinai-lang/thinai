@@ -144,7 +144,7 @@ ValueObject:
     '{' (constructors+=Constructor | methods+=Method | fields+=Field)* '}' ;
 
 EnumType:
-    'enum' name=ID '{' values+=EnumValue (','? values+=EnumValue)* '}' ;
+    'enum' name=ID '{' values+=EnumValue (',' values+=EnumValue)* '}' ;
 
 EnumValue:
     name=ID;

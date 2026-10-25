@@ -14,12 +14,20 @@ import {
 import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
+    isBoundedContext,
     isImportableComponent,
     isModel,
+    isSharedKernel,
     type Import,
     type ImportableComponent
 } from './generated/ast.js';
-import { formatIdentifier, resolveAstNodeDescription, resolveImportUri, toImportPath } from './thinai-scope-utils.js';
+import {
+    formatIdentifier,
+    getOwningContextName,
+    resolveAstNodeDescription,
+    resolveImportUri,
+    toImportPath
+} from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getNewline } from './thinai-text-utils.js';
 
@@ -136,21 +144,38 @@ export class ThinaiCodeActionProvider {
         for (const description of this.services.shared.workspace.IndexManager.allElements()) {
             if (UriUtils.equals(description.documentUri, document.uri) ||
                 description.name !== unresolved.name && !description.name.endsWith(`.${unresolved.name}`) ||
-                !reflection.isSubtype(description.type, targetType) ||
-                scopeProvider.filterCompletionCandidates(unresolved.info, [description]).toArray().length === 0) {
+                !reflection.isSubtype(description.type, targetType)) {
+                continue;
+            }
+            const targetNode = resolveAstNodeDescription(description, this.services);
+            const visibleAfterImport = scopeProvider
+                .filterCompletionCandidates(unresolved.info, [description])
+                .toArray().length > 0;
+            // Cross-context types remain private without an authorized
+            // relationship, so do not offer an import that the language would
+            // reject. Unowned strategic declarations (actors, subdomains) and
+            // similar non-type targets are importable.
+            if (!visibleAfterImport && reflection.isSubtype(description.type, 'TypeDeclaration')) {
                 continue;
             }
 
             const uriKey = description.documentUri.toString();
             const existingImport = importsByUri.get(uriKey)?.find(importDeclaration => importDeclaration.components.length > 0);
             const importPath = toImportPath(UriUtils.dirname(document.uri), description.documentUri);
-            const targetNode = resolveAstNodeDescription(description, this.services);
             const component = this.getImportableComponent(targetNode);
             if (importsByUri.has(uriKey)) {
                 if (!existingImport) {
                     continue;
                 }
-                if (!component || existingImport.components.some(selection => selection.component.ref === component)) {
+                if (!component) {
+                    // Unowned strategic declarations (actors, subdomains,
+                    // journeys) and members whose owning component cannot be
+                    // inferred are still visible through a bare import. A bare
+                    // import is valid alongside selective imports.
+                    candidates.set(uriKey, { importPath });
+                    continue;
+                }
+                if (existingImport.components.some(selection => selection.component.ref === component)) {
                     continue;
                 }
                 const key = `${uriKey}#${component.$cstNode?.offset ?? component.name}`;
@@ -176,6 +201,27 @@ export class ThinaiCodeActionProvider {
     }
 
     private getImportableComponent(node: import('langium').AstNode | undefined): ImportableComponent | undefined {
-        return node ? AstUtils.getContainerOfType(node, isImportableComponent) : undefined;
+        if (!node) {
+            return undefined;
+        }
+        const ancestor = AstUtils.getContainerOfType(node, isImportableComponent);
+        if (ancestor) {
+            return ancestor;
+        }
+        // Members of a contribution block have no canonical `BoundedContext`
+        // ancestor. Infer the component from the owning context name and the
+        // target document's declarations instead.
+        const contextName = getOwningContextName(node);
+        if (!contextName) {
+            return undefined;
+        }
+        const model = AstUtils.getDocument(node).parseResult.value;
+        if (!isModel(model)) {
+            return undefined;
+        }
+        const declaration = model.declarations.find(candidate =>
+            (isBoundedContext(candidate) || isSharedKernel(candidate)) && candidate.name === contextName
+        );
+        return isBoundedContext(declaration) || isSharedKernel(declaration) ? declaration : undefined;
     }
 }

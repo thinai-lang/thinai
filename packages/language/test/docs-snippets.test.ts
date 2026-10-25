@@ -12,6 +12,7 @@ interface Snippet {
 }
 
 const readmePath = fileURLToPath(new URL('../README.md', import.meta.url));
+const syspromptPath = fileURLToPath(new URL('../../../thinai-workspace.sysprompt.md', import.meta.url));
 
 function readThinaiSnippets(markdown: string): Snippet[] {
     const snippets: Snippet[] = [];
@@ -60,13 +61,32 @@ describe('README snippets', () => {
                 snippet.text
             )
         );
-        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         for (const document of documents) {
             const parserErrors = document.parseResult.parserErrors;
             expect(parserErrors, document.uri.toString()).toEqual([]);
-            const linkingErrors = (document.diagnostics ?? []).filter(diagnostic => diagnostic.severity === 1);
-            expect(linkingErrors, document.uri.toString()).toEqual([]);
+            const semanticErrors = (document.diagnostics ?? []).filter(diagnostic => diagnostic.severity === 1);
+            expect(semanticErrors, document.uri.toString()).toEqual([]);
+        }
+    });
+
+    test('complete sysprompt snippets parse, link, and validate', async () => {
+        const snippets = readThinaiSnippets(await readFile(syspromptPath, 'utf8'))
+            .filter(snippet => !snippet.fragment);
+        expect(snippets.length).toBeGreaterThan(0);
+        documents = snippets.map(snippet =>
+            services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/sysprompt-${snippet.fileName}`),
+                snippet.text
+            )
+        );
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        for (const document of documents) {
+            expect(document.parseResult.parserErrors, document.uri.toString()).toEqual([]);
+            const semanticErrors = (document.diagnostics ?? []).filter(diagnostic => diagnostic.severity === 1);
+            expect(semanticErrors, document.uri.toString()).toEqual([]);
         }
     });
 });

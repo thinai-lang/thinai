@@ -66,6 +66,9 @@ in bounded context Ordering {
 }
 ```
 
+Enum values must be separated by commas. Values may share a line or each start
+a new line; the formatter preserves the comma-separated form.
+
 ```thinai
 // ordering-events.tni
 import "./ordering.tni"
@@ -353,8 +356,9 @@ owner-qualified path, such as `[[Order.Order.customerId]]` or
 `[[Order.Order.ensureOwner]]`. Operation inputs and results use their named
 roots, such as `[[input.orderId]]` and `[[result.status]]`; the canonical form is
 required for the current result binding. Where a method's result shape is
-visible, a method path may also continue through it directly, such as
-`[[Command.status]]`, as a compatibility convenience. That convenience does not make a
+visible, a qualified method path may also continue through it directly, such as
+`[[Context.Service.method.status]]`; inside the enclosing entity or value
+object, a bare `method.field` path is also accepted. That convenience does not make a
 current command's `result` binding available early; the timeline rule applies to
 the binding and to future operation paths. The name `result` is reserved for the operation result on methods
 that declare a result or are application-service commands; it cannot be used as

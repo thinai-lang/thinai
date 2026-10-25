@@ -14,3 +14,13 @@
 - Preserve context-relative module paths inside aliased contributions.
 - Allow multiple component imports from one file and relax alias collisions with terminal member names.
 - Align context-map local authorization docs and messages with the implementation.
+- Complete import components even when the import path follows the cursor, and omit already imported components.
+- Complete typed canonical paths, aliases, and duplicate short names with correct filter text.
+- Append continuation dots for typed parameter and method-result specification roots.
+- Suppress compound-keyword, `reads from`, and event-handler parameter completions outside their valid contexts.
+- Omit shared-kernel participants that conflict with existing separate-ways relationships.
+- Offer bare import quick fixes for unowned strategic declarations such as actors.
+- Align sysprompt, README, and evaluations with line-break, domain-service, and enum rules.
+- Require commas between enum values and enforce backtick-quoted reserved words in specification references.
+- Deduplicate exposure completions already present earlier in the same `exposes` clause.
+- Validate complete sysprompt snippets and mark fragment examples explicitly.
