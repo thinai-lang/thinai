@@ -7,3 +7,11 @@ When changing the Thinai grammar, references, or language services, treat comple
 - Cover complete and incomplete constructs, partial keyword and reference prefixes, operators, and optional clauses or blocks where applicable.
 - Add or update LSP completion tests for suggestion labels, kinds, text-edit ranges, and spacing. Verify that invalid alternatives are excluded while valid continuations remain available.
 - Keep completion behavior independent of formatting, and keep valid within-statement suggestions available before formatting normalizes indentation. When a completion inserts a line break, preserve the document's newline style and use the active editor's resolved tab size and spaces/tabs setting.
+
+## Keyword-policy layering
+
+- `thinai-layout.ts` is the source of truth for which sibling keywords may appear in each container. Keep new container keyword rules there rather than in individual completion providers.
+- `thinai-keyword-continuations.ts` owns partial and compound keyword continuations, including the active-block check that prevents a phrase such as `context map` or `value object` from being suggested inside an unrelated block.
+- Completion providers apply cursor-specific filtering and edit/indentation behavior on top of those policies. Do not duplicate sibling keyword lists in a provider.
+
+A future consolidation of this policy must preserve this layering and remain behavior-preserving; add characterization tests before moving code.
