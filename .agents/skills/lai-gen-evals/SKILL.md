@@ -22,7 +22,7 @@ You may also use the `lai` and `langium` skills for deeper understanding of the 
 ## Prerequisites
 
 1. **`lai init` completed** — a `lai.config.jsonc` exists and an `evals/` directory has been created. If not, run `lai init` first.
-2. **`evals/utils.ts` configured** — the `generateResponse()` function must be wired to an LLM provider (OpenAI, Anthropic, Ollama, etc.). Check that the placeholder `throw` has been replaced.
+2. **`evals/utils.ts` configured** — the `generateResponse()` function must be wired to an LLM provider (for example, an OpenAI-compatible provider). Check that the placeholder `throw` has been replaced.
 3. **A language descriptor and system prompt** — generate these first with the `lai-gen-descriptor` and `lai-gen-sysprompt` skills if they don't exist.
 4. **A working Langium grammar** with generated TypeScript artifacts and a `create<Name>Services` function.
 

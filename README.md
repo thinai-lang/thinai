@@ -50,7 +50,15 @@ export EVAL_LLM_API_KEY="your-api-key"
 
 `EVAL_LLM_BASE_URL` and `EVAL_LLM_API_KEY` can be omitted when the API uses the
 SDK's default endpoint or does not require authentication. The checked-in
-Thinai system prompt is used. Install the Langium AI CLI if needed, then run:
+Thinai system prompt is used. Some OpenAI-compatible gateways require a stable
+session header. Set both variables for such a gateway:
+
+```bash
+export EVAL_LLM_SESSION_HEADER="<header-name>"
+export EVAL_LLM_SESSION_ID="<stable-session-id>"
+```
+
+Install the Langium AI CLI if needed, then run:
 
 ```bash
 npm install -g langium-ai

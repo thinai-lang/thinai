@@ -37,7 +37,7 @@ Interactive setup that:
 - Creates `lai.config.jsonc` with detected paths
 - Sets up an `evals/` directory with starter template files (`utils.ts` and `basic.eval.ts`)
 
-Your LLM provider (OpenAI, Anthropic, Ollama, etc.) is not configured here — it's wired up in `evals/utils.ts` by implementing `generateResponse()`. Pass `-y`/`--yes` to skip all prompts and use defaults (non-interactive/CI).
+Your LLM provider (for example, an OpenAI-compatible provider) is not configured here — it's wired up in `evals/utils.ts` by implementing `generateResponse()`. Pass `-y`/`--yes` to skip all prompts and use defaults (non-interactive/CI).
 
 ### Reinitializing Parts of the Setup
 

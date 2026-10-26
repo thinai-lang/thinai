@@ -6,7 +6,7 @@ user-invocable: true
 
 # Generate MCP Server
 
-This guide instructs an agent on how to generate a Model Context Protocol (MCP) server for an arbitrary Langium-based DSL. The generated server exposes a `validate` tool that accepts DSL source code and returns diagnostics (errors, warnings, hints, information) by running the input through the DSL's actual Langium parser and validator. Any MCP-compatible client (Claude Code, Cursor, VS Code, etc.) can then validate DSL code on the fly.
+This guide instructs an agent on how to generate a Model Context Protocol (MCP) server for an arbitrary Langium-based DSL. The generated server exposes a `validate` tool that accepts DSL source code and returns diagnostics (errors, warnings, hints, information) by running the input through the DSL's actual Langium parser and validator. Any MCP-compatible client can then validate DSL code on the fly.
 
 You may also use the `lai` and `langium` skills to achieve a better understanding of langium-ai and the Langium-based DSL in question.
 

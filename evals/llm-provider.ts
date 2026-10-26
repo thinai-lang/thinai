@@ -21,11 +21,20 @@ export class OpenAICompatibleProvider implements LLMProvider {
         }
 
         const baseURL = options.baseURL ?? process.env.EVAL_LLM_BASE_URL;
+        const sessionHeader = process.env.EVAL_LLM_SESSION_HEADER;
+        const sessionId = process.env.EVAL_LLM_SESSION_ID;
+        if (sessionHeader && !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(sessionHeader)) {
+            throw new Error('EVAL_LLM_SESSION_HEADER is not a valid HTTP header name.');
+        }
+        const defaultHeaders = sessionHeader && sessionId
+            ? { [sessionHeader]: sessionId }
+            : undefined;
         this.client = options.client ?? new OpenAI({
             ...(baseURL ? { baseURL } : {}),
+            ...(defaultHeaders ? { defaultHeaders } : {}),
             // The SDK requires a non-empty key even when the configured API does not use authentication.
             apiKey: options.apiKey ?? process.env.EVAL_LLM_API_KEY ?? API_KEY_PLACEHOLDER,
-            timeout: 120_000,
+            timeout: 180_000,
             maxRetries: 0
         });
     }

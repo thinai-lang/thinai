@@ -30,3 +30,6 @@
 - Run CI on Linux, Windows, and macOS; document ASCII-only identifiers.
 - Add a Language Tour example and expand Order Fulfillment coverage for quoting, guards, shared-kernel services, nested re-exports, and journey result links.
 - Validate and format every example directory in tests.
+- Support session-header gateways in evaluations and increase the eval request timeout.
+- Clarify evaluation prompts for strategic structures, mirroring, and integration-pattern labels.
+- Reach full passing scores across the evaluation suite.
