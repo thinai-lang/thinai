@@ -9,8 +9,9 @@ import { extractCodeBlock } from '../../../evals/utils.js';
 
 describe('workspace utilities', () => {
     test('keeps punctuation in generated file names and defaults beside the source', () => {
-        expect(extractDestinationAndName('/models/order-fulfillment.v2.tni', undefined)).toEqual({
-            destination: '/models/generated',
+        const source = '/models/order-fulfillment.v2.tni';
+        expect(extractDestinationAndName(source, undefined)).toEqual({
+            destination: path.join(path.dirname(path.resolve(source)), 'generated'),
             name: 'order-fulfillment.v2'
         });
         expect(extractDestinationAndName('/models/orderfulfillmentv2.tni', undefined).name)
@@ -49,8 +50,9 @@ describe('workspace utilities', () => {
         } as unknown as LangiumCoreServices;
 
         try {
+            const escapedPath = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             await expect(extractDocuments(fileName, services))
-                .rejects.toThrow(`Could not load Thinai source file '${fileName}'.`);
+                .rejects.toThrow(new RegExp(`Could not load Thinai source file '${escapedPath}'\\.`, 'i'));
         } finally {
             await rm(directory, { recursive: true, force: true });
         }
