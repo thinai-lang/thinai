@@ -2,7 +2,7 @@
     "name": "vscode-thinai",
     "publisher": "thinai-lang",
     "description": "Thinai language support for VS Code",
-    "version": "0.0.1",
+    "version": "0.1.0-alpha.1",
     "license": "MIT",
     "displayName": "Thinai",
     "icon": "./icon.png",
@@ -59,7 +59,7 @@
     },
     "dependencies": {
         "langium": "~4.4.0",
-        "thinai-language": "0.0.1",
+        "thinai-language": "0.1.0-alpha.1",
         "vscode-languageclient": "~10.1.0",
         "vscode-languageserver": "~10.1.0"
     },

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.1 - 2026-10-27
 
 - Scope duplicate declarations to each document's import-connected model.
 - Separate strategic declaration namespaces so a subdomain may share a name with its bounded context.

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.1 - 2026-10-27
 
 - Scope duplicate declaration names to each import-connected model.
 - Separate actor, journey, and subdomain namespaces from path declarations.
