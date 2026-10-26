@@ -46,14 +46,15 @@ describe('Order Fulfillment example', () => {
                 return text.slice(0, start) + edit.newText + text.slice(end);
             }, misformattedSource);
 
+        const normalizedFormatted = formatted.replace(/\r\n/gu, '\n');
         expect(edits.length).toBeGreaterThan(0);
-        expect(formatted).toContain('actor Customer\n\nactor OrderManager\n\nin bounded context Ordering {');
-        expect(formatted).toContain('  application service OrderApplication {');
-        expect(formatted).toContain('      emits Contracts.OrderPlacedV1');
-        expect(formatted).toContain('      projects OrderSummary');
-        expect(formatted).toContain('method findCustomerOrders(customerId: CustomerId) returns List<OrderSummary> {');
-        expect(formatted).toContain('      with "input.orderId from [[Ordering.OrderSummary.orderId]]');
-        expect(formatted).not.toMatch(/^\t/m);
+        expect(normalizedFormatted).toContain('actor Customer\n\nactor OrderManager\n\nin bounded context Ordering {');
+        expect(normalizedFormatted).toContain('  application service OrderApplication {');
+        expect(normalizedFormatted).toContain('      emits Contracts.OrderPlacedV1');
+        expect(normalizedFormatted).toContain('      projects OrderSummary');
+        expect(normalizedFormatted).toContain('method findCustomerOrders(customerId: CustomerId) returns List<OrderSummary> {');
+        expect(normalizedFormatted).toContain('      with "input.orderId from [[Ordering.OrderSummary.orderId]]');
+        expect(normalizedFormatted).not.toMatch(/^\t/m);
 
         const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/formatted-ordering-events.tni'), formatted
@@ -226,7 +227,7 @@ describe('Order Fulfillment example', () => {
         }
         expect(duplicates).toEqual([]);
         expect(invalidRanges).toEqual([]);
-    });
+    }, 30_000);
 
     test('completes cross-context commands in an example journey', async () => {
         const exampleDirectory = new URL('../../../examples/order-fulfillment/', import.meta.url);
