@@ -726,10 +726,67 @@ in bounded context O {
     }
 }`);
         const identifierLabels = identifierType.completion?.items.map(item => item.label) ?? [];
+        expect(identifierLabels).toContain('Id');
         expect(identifierLabels).not.toContain('string');
+        expect(identifierLabels).not.toContain('integer');
+        expect(identifierLabels).not.toContain('decimal');
         expect(identifierLabels).not.toContain('List');
         expect(identifierLabels).not.toContain('Set');
         expect(identifierLabels).not.toContain('Map');
+    });
+
+    test('offers identifier completion from partial entity keyword prefixes', async () => {
+        for (const prefix of ['id', 'iden', 'ident', 'identi']) {
+            const result = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            ${prefix}${marker}
+        }
+        value object Id { raw: string }
+    }
+}`);
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            expect(labels, prefix).toContain('identifier');
+            const identifierItem = result.completion?.items.find(item => item.label === 'identifier');
+            expect(identifierItem?.detail, prefix)
+                .toBe('Entity identifier; type must be a value object declared in the same aggregate.');
+        }
+    });
+
+    test('does not offer identifier completion outside an entity or after it is declared', async () => {
+        const contexts = [
+            `aggregate A {
+    value object V {
+        ident${marker}
+    }
+}`,
+            `data object D {
+    ident${marker}
+}`,
+            `read model R {
+    ident${marker}
+}`
+        ];
+        for (const context of contexts) {
+            const result = await build(`bounded context O
+in bounded context O {
+    ${context}
+}`);
+            expect(result.completion?.items.map(item => item.label), context).not.toContain('identifier');
+        }
+
+        const duplicate = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            ident${marker}
+        }
+        value object Id { raw: string }
+    }
+}`);
+        expect(duplicate.completion?.items.map(item => item.label)).not.toContain('identifier');
     });
 
     test('does not offer values already selected in list contexts', async () => {

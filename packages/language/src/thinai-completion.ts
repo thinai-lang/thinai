@@ -977,6 +977,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 }
                 return true;
             })
+                .map(item => item.label === 'identifier'
+                    ? { ...item, detail: 'Entity identifier; type must be a value object declared in the same aggregate.' }
+                    : item)
         };
     }
 

@@ -69,7 +69,7 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
     },
     Entity: {
         properties: new Set(['constructors', 'methods', 'fields']),
-        completionKeywords: ['constructor', 'method'],
+        completionKeywords: ['constructor', 'method', 'identifier'],
         statement: { block: 'required' }
     },
     EnumType: { statement: { block: 'required' } },
