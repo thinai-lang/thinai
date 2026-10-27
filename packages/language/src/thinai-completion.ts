@@ -898,10 +898,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     reference.ref === undefined;
             })
         );
+        const incompleteIdentifierField = AstUtils.streamAst(root)
+            .filter(isField)
+            .filter(field => field.$cstNode !== undefined &&
+                field.$cstNode.range.end.line === position.line)
+            .find(field => field.identifier && isEntity(field.$container) &&
+                this.isInIncompleteTypePosition(field, document, position));
         const identifierTypePosition = (
             activeField !== undefined && activeField.identifier && isEntity(activeField.$container) &&
             this.isTypeKeywordCompletionPosition(document, position)
-        ) || (
+        ) || incompleteIdentifierField !== undefined || (
             isEntity(innermostBlock) &&
             identifierTypePattern.test(linePrefix)
         );
@@ -977,7 +983,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 }
                 return true;
             })
-                .map(item => item.label === 'identifier'
+                .map(item => item.kind === CompletionItemKind.Keyword && item.label === 'identifier'
                     ? { ...item, detail: 'Entity identifier; type must be a value object declared in the same aggregate.' }
                     : item)
         };

@@ -789,6 +789,79 @@ in bounded context O {
         expect(duplicate.completion?.items.map(item => item.label)).not.toContain('identifier');
     });
 
+    test('does not apply the identifier keyword hint to declared items named identifier', async () => {
+        const result = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            \`identifier\`: Status
+            method run() {
+                transition ${marker}
+            }
+        }
+        value object Id { raw: string }
+        enum Status { One, Two }
+    }
+}`);
+        const field = result.completion?.items.find(item => item.label === 'identifier');
+        expect(field?.kind).toBe(CompletionItemKind.Field);
+        expect(field?.detail).toContain('Field ');
+        expect(field?.detail).not.toContain('Entity identifier');
+    });
+
+    test('filters primitive types for identifier fields split across lines', async () => {
+        for (const source of [
+            `bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier
+            id: ${marker}
+        }
+        value object Id { raw: string }
+    }
+}`,
+            `bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id:
+                ${marker}
+        }
+        value object Id { raw: string }
+    }
+}`
+        ]) {
+            const result = await build(source);
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            expect(labels).toContain('Id');
+            for (const primitive of ['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map']) {
+                expect(labels, primitive).not.toContain(primitive);
+            }
+        }
+    });
+
+    test('keeps type completion for unrelated fields after an incomplete identifier field', async () => {
+        const result = await build(`bounded context O
+in bounded context O {
+    aggregate A {
+        root entity E {
+            identifier id:
+        }
+        value object Id { raw: string }
+    }
+    data object D {
+        amount: ${marker}
+    }
+}`);
+        const labels = result.completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('string');
+        expect(labels).toContain('integer');
+        expect(labels).toContain('decimal');
+        expect(labels).toContain('Id');
+    });
+
     test('does not offer values already selected in list contexts', async () => {
         const dependency = await build(`bounded context O
 in bounded context O {
