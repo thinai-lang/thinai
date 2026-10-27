@@ -28,6 +28,16 @@ The model demonstrates root and child entity identities and transitions, constru
 | Customer-supplier, partnership, separate-ways, and shared-kernel relationships; all integration-pattern labels | `context-map.tni` |
 | Shared-kernel value objects, enum, domain services, nested modules, and multiple exposures | `common-types.tni` |
 | Nested-module re-export and qualified nested module types | `common-types.tni`, `ordering.tni` |
+| Sibling-module exposure and dependency | `shipping.tni`, `../language-tour/modules.tni` |
+| Exposed-method invocation across modules | `../language-tour/modules.tni` |
+| Local identifier mirror | `shipping.tni` |
+| Module-private identifier mirror | `../language-tour/modules.tni` |
+| Context-level value-object constructor and method | `../language-tour/syntax.tni` |
+| Entity and aggregate-owned value-object constructors and methods, and factory methods | `ordering.tni`, `shipping.tni` |
+| Application-, domain-, query-, and projector method kinds | `ordering.tni`, `ordering-events.tni`, `shipping.tni`, `../language-tour/sharing.tni` |
+| Authorized cross-context integration-event consumption | `shipping.tni`, `ordering-events.tni` |
+| Cross-context journey command invocation | `cross-context-journey.tni` |
+| Authorized cross-context query read | `../language-tour/sharing.tni` |
 | Shared-kernel domain-service invocation | `ordering.tni` |
 | Backtick-quoted identifiers, triple-quoted specifications, and escaped markers | `ordering.tni` |
 | Guarded multi-event emissions and guarded `reads from` clauses | `ordering-events.tni` |

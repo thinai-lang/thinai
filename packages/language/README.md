@@ -339,6 +339,58 @@ type path, including aggregate or entity containers, or through a field path on
 the result contract. Journeys are model-level timelines and do not require either
 form of module exposure merely to invoke an application-service command.
 
+### Visibility at a Glance
+
+Context-level declarations are public within their bounded context or shared
+kernel. A module exposes only its direct child modules and declarations. Fields,
+parameters, and enum values inherit visibility from their declaration.
+
+**Within a bounded context or shared kernel**
+
+| Target declaration | From its own module | From another module | From outside all modules |
+|---|---|---|---|
+| Context-level declaration | ✓ | ✓ | ✓ |
+| Declaration in a top-level module | ✓ | exposure + `depends on` | exposure |
+| Declaration in a nested module | ✓ | exposure at each level + `depends on` from a non-enclosing module | exposure at each level |
+
+`exposure` means the owning module lists the declaration in `exposes`.
+`exposure at each level` means every enclosing module exposes the next module or
+declaration. A parent module that exposes a child module may use the child's
+public API without a redundant `depends on`. Sibling modules require both
+exposure and `depends on`. A dependency makes a module reachable but does not
+expose its declarations, and every enclosing module must still expose a nested
+module. Exposing a nested module re-exports its public API but not its
+dependencies.
+
+**Across bounded contexts**
+
+| To use | Required mechanism |
+|---|---|
+| Context-level IntegrationEvent | Import the producer context and an authorizing customer-supplier or partnership relationship. |
+| Module-nested IntegrationEvent | Expose the event and every enclosing module, import the producer context, and use an authorizing relationship. |
+| IntegrationEvent payload type or field | An exposed, authorized IntegrationEvent. Any method in the consumer context may link the payload shape. |
+| DomainEvent | Not visible across bounded contexts. |
+| Shared-kernel type, service, or declaration | Import the shared kernel and declare a `sharedKernel` relationship that includes both contexts. Module-nested declarations must also be exposed. |
+| Published query result | A module-exposed query service with a primitive or public DataObject result, a customer-supplier or partnership relationship, and an imported context. Link the result type or field, not the query operation. |
+| Value object, data object, read model, or enum as a signature type | Not directly. Use a local `mirrors` identifier for identity, an IntegrationEvent payload, or a shared-kernel type; read published query result contracts for cross-context read data. |
+| Application-service command in a journey | Journeys are model-level timelines; invoking a command does not require module exposure or a context map. |
+| Query service | Must be module-exposed; a context-level query service is local and journey-visible only. |
+| Repository, factory, domain service, aggregate, or entity | Not directly. Go through a local service, a shared kernel, or a published contract. |
+
+A `mirrors` identifier may name an identifier value object that is private to
+its module, because the local mirror is the sanctioned cross-context identifier
+use. A `separateWays` relationship authorizes neither event consumption nor
+query reads, and a `sharedKernel` relationship authorizes neither.
+
+**Specification path segments**
+
+| Segment | Requirement |
+|---|---|
+| Structural container (bounded context, context map, shared kernel, aggregate, entity, service, projector, factory) | May be traversed without exposing the segment. |
+| Module | Must be accessible; nested modules must be exposed at each level or reached through an authorized contract path. |
+| Data-bearing non-terminal (value object, data object, read model, enum, or field) | Must be reachable through the same module, the public module API, an authorized shared kernel, or an authorized event or published-query contract. |
+| Terminal declaration | Must satisfy the declaration, contract, or journey visibility rule that applies to it. |
+
 ## Behavior and Journeys
 
 Use `invariant`, `precondition`, `postcondition`, and `behavior` for descriptive

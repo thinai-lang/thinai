@@ -7,7 +7,19 @@ in bounded context SyntaxTour {
     reason?: string
   }
 
+  // Context-level value objects may declare constructors and methods.
   value object Money {
+    constructor(amount: number, currency: string) {
+      invariant "The amount is not negative."
+      behavior "Normalize the amount and currency before storing them."
+    }
+
+    method add(other: Money) returns Money {
+      precondition "Both amounts use the same currency."
+      behavior "Return a new amount based on [[Money.amount]] and [[other.amount]]."
+      postcondition "The result uses the same currency."
+    }
+
     amount: number
     currency: string
   }

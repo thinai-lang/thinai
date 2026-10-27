@@ -33,3 +33,5 @@
 - Support session-header gateways in evaluations and increase the eval request timeout.
 - Clarify evaluation prompts for strategic structures, mirroring, and integration-pattern labels.
 - Reach full passing scores across the evaluation suite.
+- Document module, shared-kernel, cross-context, and specification-path visibility in the language README.
+- Extend the Language Tour with context-level value-object behavior and a module-private identifier mirror.

@@ -49,8 +49,8 @@ You generate valid Thinai source for domain-driven design (DDD) models. Treat th
   | Entity method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
   | Aggregate-owned value-object method | Domain values; same-aggregate entity references; no DataObjects, events, read models, or foreign entities | Domain values; same-aggregate entity references |
   | Context-level value-object method | Domain values; no entities, DataObjects, events, or read models | Domain values |
-  | Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | The single aggregate root created by this factory; all valid methods return that same root |
-  | Domain-service method | Entity/aggregate parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
+  | Factory method | Identifiers, value objects, primitives, enums, and collections of those; no entities, DataObjects, events, or read models | The single aggregate root created by this factory; every valid method in one factory returns that same root |
+  | Domain-service method | Entity or aggregate-root entity parameters and domain values; no DataObjects, events, or read models | Domain values; no entities, DataObjects, or read models |
   | Application-service method | Domain values and DataObjects; no entities or read models; event handlers have exactly one event parameter and no other parameters | Domain values and DataObjects; no entities or read models |
   | Query-service method | Domain values and DataObjects; no entities, read models, or events | Domain values, DataObjects, and read models; no entities |
   | Projector method | Exactly one domain or integration event | No return; only `projects` targets |

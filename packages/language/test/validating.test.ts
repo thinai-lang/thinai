@@ -2885,6 +2885,62 @@ context map Fulfillment {
         expect(visibilityErrors).toHaveLength(1);
     });
 
+    test('requires a dependency for a type in a sibling module', async () => {
+        const missingDependency = await parse(`
+            bounded context C
+            in bounded context C {
+                module Types {
+                    exposes Code
+                    value object Code { raw: string }
+                }
+                module Consumer {
+                    value object UsesCode {
+                        code: Code
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(missingDependency).map(diagnostic => String(diagnostic.message)))
+            .toContain('This module reference requires a dependency on a module that exposes the target declaration.');
+
+        const missingExposure = await parse(`
+            bounded context E
+            in bounded context E {
+                module Types {
+                    value object Code { raw: string }
+                }
+                module Consumer depends on Types {
+                    value object UsesCode {
+                        code: Code
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(missingExposure).map(diagnostic => String(diagnostic.message)))
+            .toContain('This module reference requires a dependency on a module that exposes the target declaration.');
+
+        const valid = await parse(`
+            bounded context D
+            in bounded context D {
+                module Types {
+                    exposes Code
+                    value object Code { raw: string }
+                }
+                module Consumer depends on Types {
+                    value object UsesCode {
+                        code: Code
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
     test('exposes declarations only, not their fields or enum values', async () => {
         const document = await parse(`
             bounded context Ordering
