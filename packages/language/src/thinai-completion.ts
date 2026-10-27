@@ -1002,6 +1002,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return typed.length === 0 || 'serves'.startsWith(typed) ? ['serves'] : [];
         }
         if (isContextMapEndpoint(block)) {
+            const cstNode = block.$cstNode;
+            if (!cstNode || !cstNode.text.includes('{')) {
+                return undefined;
+            }
             return block.integrationPatterns.length === 0 ? ['integrationPatterns'] : [];
         }
         if (isSharedKernelRelationship(block)) {

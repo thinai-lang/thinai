@@ -267,7 +267,19 @@ export class ThinaiReferencePolicy {
                 getOwningContextName(source) !== getOwningContextName(target)) {
                 return false;
             }
-            return isModuleAccessibleFrom(source, getOwningModule(target));
+            const targetModule = getOwningModule(target);
+            if (targetModule === undefined) {
+                return true;
+            }
+            const sourceModule = getOwningModule(source);
+            if (sourceModule === targetModule) {
+                return true;
+            }
+            // A method is a declared API member, not a structural container.
+            // Reaching it from another module requires the owning module to
+            // expose it, just like a terminal method reference.
+            return isExposedByModule(targetModule, target) &&
+                isModuleAccessibleFrom(source, targetModule);
         }
         const journeyStep = AstUtils.getContainerOfType(source, isJourneyStep);
         if (journeyStep) {
@@ -311,16 +323,47 @@ export class ThinaiReferencePolicy {
                 !this.hasSharedKernelRelationship(source, targetSharedKernel)) {
                 return false;
             }
-            // Even inside one shared kernel, modules keep their exposure and
-            // dependency boundaries.
-            return isPublicApiDeclaration(target) && isModuleAccessibleFrom(source, targetModule);
+            // Across shared kernels, only the full public API is a contract.
+            // Inside one shared kernel, ordinary module exposure/dependency
+            // rules apply, including a direct dependency on a nested module.
+            return this.isDeclarationVisibleThroughModule(
+                source,
+                target,
+                sourceSharedKernel !== targetSharedKernel
+            );
         }
         if (getOwningContextName(source) !== getOwningContextName(target)) {
             // Cross-context data shapes are reachable only through the event
             // and published-query contracts checked above.
             return false;
         }
-        return isPublicApiDeclaration(target) && isModuleAccessibleFrom(source, targetModule);
+        return this.isDeclarationVisibleThroughModule(source, target, false);
+    }
+
+    /**
+     * Resolves a declaration through its owning module. From another module in
+     * the same context, exposure by the owning module plus a direct dependency
+     * (or an exposing ancestor) is sufficient; from outside all modules or
+     * across contexts, the complete public exposure chain is required.
+     */
+    private isDeclarationVisibleThroughModule(
+        source: AstNode,
+        target: AstNode,
+        requirePublicChain: boolean
+    ): boolean {
+        const targetModule = getOwningModule(target);
+        if (targetModule === undefined) {
+            return true;
+        }
+        if (getOwningModule(source) === targetModule) {
+            return true;
+        }
+        if (requirePublicChain) {
+            return isPublicApiDeclaration(target) &&
+                isModuleAccessibleFrom(source, targetModule);
+        }
+        return isExposedByModule(targetModule, target) &&
+            isModuleAccessibleFrom(source, targetModule);
     }
 
     private getTerminalSpecificationTarget(source: AstNode): AstNode | undefined {

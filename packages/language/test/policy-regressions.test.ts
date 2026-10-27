@@ -555,4 +555,105 @@ bounded context Consumer`
             "Import alias 'Shared' conflicts with an imported declaration."
         );
     });
+
+    test('rejects unaliased component names that collide with local path roots', async () => {
+        const docs = await build({
+            'contexts.tni': `bounded context Ordering`,
+            'consumer.tni': `import { Ordering } from "./contexts.tni"
+bounded context C
+in bounded context C {
+    value object Ordering {
+        raw: string
+    }
+}`
+        });
+        expect(errors(docs['consumer.tni']!)).toContain(
+            "Import component name 'Ordering' conflicts with a declaration in this file."
+        );
+    });
+
+    test('requires method exposure for non-terminal specification path segments', async () => {
+        const docs = await build({
+            'a.tni': `bounded context C
+in bounded context C {
+    module A {
+        exposes Service, Result
+        data object Result {
+            amount: number
+        }
+        application service Service {
+            method privateHelper() returns Result {
+                behavior "Return the result."
+            }
+        }
+    }
+    module B depends on A {
+        application service Consumer {
+            method run() {
+                behavior "Use [[A.Service.privateHelper.amount]]."
+            }
+        }
+    }
+}`
+        });
+        expect(errors(docs['a.tni']!)).toContain(
+            'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+        );
+
+        const source = docs['a.tni']!.textDocument.getText();
+        const offset = source.indexOf('privateHelper.') + 'privateHelper.'.length;
+        const items = await completion(docs['a.tni']!, offset);
+        expect(items?.items.map(item => item.label) ?? []).not.toContain('amount');
+    });
+
+    test('allows an exposed method as a non-terminal specification path segment', async () => {
+        const docs = await build({
+            'a.tni': `bounded context C
+in bounded context C {
+    module A {
+        exposes Service, Result, publicHelper
+        data object Result {
+            amount: number
+        }
+        application service Service {
+            method publicHelper() returns Result {
+                behavior "Return the result."
+            }
+        }
+    }
+    module B depends on A {
+        application service Consumer {
+            method run() {
+                behavior "Use [[A.Service.publicHelper.amount]]."
+            }
+        }
+    }
+}`
+        });
+        expect(errors(docs['a.tni']!)).toEqual([]);
+    });
+
+    test('allows a direct dependency on an exposed private nested module in specification paths', async () => {
+        const docs = await build({
+            'a.tni': `bounded context C
+in bounded context C {
+    module Outer {
+        module Inner {
+            exposes V
+            value object V {
+                raw: string
+            }
+        }
+    }
+    module Sibling depends on Outer.Inner {
+        application service App {
+            method run() {
+                behavior "Use [[Inner.V.raw]]."
+            }
+        }
+    }
+}`
+        });
+        expect(errors(docs['a.tni']!)).toEqual([]);
+    });
 });

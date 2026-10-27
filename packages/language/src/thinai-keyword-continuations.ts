@@ -6,7 +6,6 @@ import {
     isBoundedContext,
     isBoundedContextPart,
     isContextMap,
-    isContextMapEndpoint,
     isDomainService,
     isEntity,
     isEnumType,
@@ -19,7 +18,7 @@ import {
     isQueryRepository,
     isQueryService,
     isRepository,
-    isSharedKernelRelationship,
+    isSharedKernel,
     isSubdomain,
     isTransition,
     isValueObject
@@ -81,35 +80,35 @@ export class ThinaiKeywordContinuations {
             [/\bbounded\s+([\p{L}_]*)$/iu, ['context'], () =>
                 isModel(container) || isBoundedContext(container) && !this.hasOpenedBody(container)],
             [/\bshared\s+([\p{L}_]*)$/iu, ['kernel'], () => isModel(container)],
-            [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => isModel(container) || allowsSibling('application service')],
-            [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => isModel(container) || allowsSibling('root entity')],
-            [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => isModel(container) || allowsSibling('value object')],
-            [/\bread\s+([\p{L}_]*)$/iu, ['model'], () => isModel(container) || allowsSibling('read model')],
-            [/\bdata\s+([\p{L}_]*)$/iu, ['object'], () => isModel(container) || allowsSibling('data object')],
-            [/\bdomain\s+([\p{L}_]*)$/iu, ['service'], () => isModel(container) || allowsSibling('domain service')],
+            [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('application service')],
+            [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => allowsSibling('root entity')],
+            [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('value object')],
+            [/\bread\s+([\p{L}_]*)$/iu, ['model'], () => allowsSibling('read model')],
+            [/\bdata\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('data object')],
+            [/\bdomain\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('domain service')],
             [/\bquery\s+([\p{L}_]*)$/iu, ['repository', 'service'], () =>
-                isModel(container) || allowsAnySibling('query repository', 'query service')],
-            [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => isModel(container) || allowsSibling('integration event')],
-            [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () =>
-                isModel(container) || isModule(container) ||
-                /^\s*module\s+\S+\s+depends(?:\s+\S*)?$/iu.test(prefix)],
+                allowsAnySibling('query repository', 'query service')],
+            [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => allowsSibling('integration event')],
+            [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () => this.isModuleDeclarationOwner(container)],
             [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container)],
             [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'),
                 ['core', 'supporting', 'generic'], () => isSubdomain(container) ||
                     new RegExp(`^\\s*subdomain\\s+${identifierSource}\\s+kind(?:\\s+[\\p{L}_]*)?$`, 'iu').test(prefix)],
             [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from'], () => isImport(container) || isModel(container)],
             [new RegExp(`\\bquery\\s+repository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
-                ['serves'], () => isModel(container) || isQueryRepository(container)],
+                ['serves'], () => this.isRepositoryOwner(container, true)],
             [new RegExp(`\\brepository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
-                ['manages'], () => isModel(container) || isRepository(container)],
+                ['manages'], () => this.isRepositoryOwner(container, false)],
             [new RegExp(`\\breads\\s+from\\s+${qualifiedIdentifierSource}(?:\\s*,\\s*${qualifiedIdentifierSource})*\\s+([\\p{L}_]*)$`, 'iu'),
-                ['when'], () => isModel(container) || isMethod(container)],
+                ['when'], () => this.isReadClauseOwner(container)],
             [new RegExp(`\\bsharedKernel\\s+${qualifiedIdentifierSource}\\s+\\{\\s*([\\p{L}_]*)$`, 'iu'),
-                ['participants'], () => isModel(container) || isSharedKernelRelationship(container)],
-            [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier'], () => isModel(container) || isContextMap(container)],
-            [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner'], () => isModel(container) || isContextMap(container)],
+                ['participants'], () => this.isWithinContextMap(container)],
+            [/\bcustomer\s+[^\n]*?->\s*([\p{L}_]*)$/iu, ['supplier'], () =>
+                this.isWithinContextMap(container)],
+            [/\bpartner\s+[^\n]*?<->\s*([\p{L}_]*)$/iu, ['partner'], () =>
+                this.isWithinContextMap(container)],
             [new RegExp(`\\b(?:customer|supplier|partner)\\s+${qualifiedIdentifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
-                ['integrationPatterns'], () => isModel(container) || isContextMapEndpoint(container) || isContextMap(container)]
+                ['integrationPatterns'], () => this.isWithinContextMap(container)]
         ];
 
         const match = this.getTransitionRequiredKeywordMatch(prefix) ??
@@ -150,6 +149,47 @@ export class ThinaiKeywordContinuations {
                 .includes(phrase);
     }
 
+    private isWithinContextMap(node: AstNode | undefined): boolean {
+        return node !== undefined &&
+            AstUtils.getContainerOfType(node, isContextMap) !== undefined;
+    }
+
+    private isModuleMemberOwner(module: AstNode): boolean {
+        const parent = module.$container;
+        return isBoundedContextPart(parent) || isSharedKernel(parent) || isModule(parent);
+    }
+
+    private isModuleDeclarationOwner(container: AstNode | undefined): boolean {
+        if (!container) {
+            return false;
+        }
+        return isBoundedContextPart(container) || isSharedKernel(container) ||
+            isModule(container) && this.isModuleMemberOwner(container);
+    }
+
+    private isRepositoryOwner(container: AstNode | undefined, query: boolean): boolean {
+        if (!container) {
+            return false;
+        }
+        const repository = query ? isQueryRepository(container) : isRepository(container);
+        if (repository) {
+            const parent = container.$container;
+            return isBoundedContextPart(parent) ||
+                isModule(parent) && !isInSharedKernel(parent);
+        }
+        return isBoundedContextPart(container) ||
+            isModule(container) && !isInSharedKernel(container);
+    }
+
+    private isReadClauseOwner(container: AstNode | undefined): boolean {
+        if (!container || !isMethod(container)) {
+            return false;
+        }
+        const owner = container.$container;
+        return isApplicationService(owner) || isQueryService(owner) ||
+            isProjector(owner) || isDomainService(owner);
+    }
+
     private hasOpenedBody(container: AstNode | undefined): boolean {
         return container?.$cstNode?.text.includes('{') === true;
     }
@@ -158,9 +198,6 @@ export class ThinaiKeywordContinuations {
     isCompoundKeywordAllowed(document: LangiumDocument, position: Position, base: string): boolean {
         const offset = document.textDocument.offsetAt(position);
         const container = this.getContinuationContainer(document, offset);
-        const text = document.textDocument.getText();
-        const lineStart = getLineStartOffset(document, offset);
-        const prefix = text.slice(lineStart, offset);
         switch (base) {
             case 'in':
                 return isModel(container) ||
@@ -173,28 +210,26 @@ export class ThinaiKeywordContinuations {
             case 'shared':
                 return isModel(container);
             case 'application':
-                return isModel(container) || this.containerAllowsSibling(container, 'application service');
+                return this.containerAllowsSibling(container, 'application service');
             case 'root':
-                return isModel(container) || this.containerAllowsSibling(container, 'root entity');
+                return this.containerAllowsSibling(container, 'root entity');
             case 'value':
-                return isModel(container) || this.containerAllowsSibling(container, 'value object');
+                return this.containerAllowsSibling(container, 'value object');
             case 'read':
-                return isModel(container) || this.containerAllowsSibling(container, 'read model');
+                return this.containerAllowsSibling(container, 'read model');
             case 'data':
-                return isModel(container) || this.containerAllowsSibling(container, 'data object');
+                return this.containerAllowsSibling(container, 'data object');
             case 'domain':
-                return isModel(container) || this.containerAllowsSibling(container, 'domain service');
+                return this.containerAllowsSibling(container, 'domain service');
             case 'query':
-                return isModel(container) || this.containerAllowsSibling(container, 'query repository') ||
+                return this.containerAllowsSibling(container, 'query repository') ||
                     this.containerAllowsSibling(container, 'query service');
             case 'integration':
-                return isModel(container) || this.containerAllowsSibling(container, 'integration event');
+                return this.containerAllowsSibling(container, 'integration event');
             case 'depends':
-                return isModel(container) || isModule(container) ||
-                    /\bmodule\s+\S*\s*$/iu.test(prefix) ||
-                    /^\s*depends(?:\s+\S*)?$/iu.test(prefix);
+                return this.isModuleDeclarationOwner(container);
             case 'reads':
-                return isMethod(container);
+                return this.isReadClauseOwner(container);
             default:
                 return true;
         }

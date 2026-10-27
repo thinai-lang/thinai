@@ -180,8 +180,9 @@ export class ThinaiModelValidator {
         for (const importDeclaration of model.imports) {
             const declarations: Array<{ name: string; node: ImportComponent; property: string }> = [];
             for (const component of importDeclaration.components) {
+                const declaredName = component.alias ?? component.component.$refText;
                 declarations.push({
-                    name: component.alias ?? component.component.$refText,
+                    name: declaredName,
                     node: component,
                     property: component.alias ? 'alias' : 'component'
                 });
@@ -189,6 +190,12 @@ export class ThinaiModelValidator {
                     accept('error', `Import alias '${component.alias}' conflicts with a declaration in this file.`, {
                         node: component,
                         property: 'alias'
+                    });
+                }
+                if (!component.alias && localNames.has(declaredName)) {
+                    accept('error', `Import component name '${declaredName}' conflicts with a declaration in this file.`, {
+                        node: component,
+                        property: 'component'
                     });
                 }
                 if (component.alias && importedNames.has(component.alias)) {

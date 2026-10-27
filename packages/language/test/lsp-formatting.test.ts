@@ -68,6 +68,50 @@ describe('LSP formatting', () => {
         })).toEqual([]);
     });
 
+    test('removes spaces inside parameter and constructor lists', async () => {
+        const source = `bounded context Formatting
+in bounded context Formatting {
+    application service App {
+        method run( amount : string , count : number ) { }
+    }
+    value object Id {
+        constructor( raw : string ) { }
+        raw: string
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/parameter-spacing.tni'), source
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const formatter = services.Thinai.lsp.Formatter!;
+        const edits = await formatter.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('method run(amount: string, count: number) {');
+        expect(formatted).toContain('constructor(raw: string) {');
+
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/parameter-spacing-formatted.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await formatter.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
+    });
+
     test('dedents and formats multiline specification text with CR and CRLF line endings', async () => {
         const lines = [
             'bounded context Formatting',

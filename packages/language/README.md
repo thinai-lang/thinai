@@ -1,14 +1,18 @@
 # Thinai Language
 
-<p><img src="../extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
+<p><img src="https://raw.githubusercontent.com/thinai-lang/thinai/main/packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
 Thinai is a domain-specific modeling language for expressing DDD structures,
 relationships, and behavioral intent in a shared, navigable model. It models
 strategic and tactical DDD, aggregates, application services, events, and journeys.
 Thinai uses braces for blocks and does not use semicolon terminators.
 
+> **Alpha:** This is the first Thinai alpha. Language rules and tooling may
+> change between alpha releases; review the language guides and release notes
+> before relying on it in production.
+
 For topic-based introductions, see the [Thinai language guides](https://thinai-lang.github.io/)
-and the [complete Order Fulfillment example](../../examples/order-fulfillment/README.md).
+and the [complete Order Fulfillment example](https://github.com/thinai-lang/thinai/blob/main/examples/order-fulfillment/README.md).
 
 ## File Model
 
@@ -68,6 +72,11 @@ in bounded context Ordering {
 
 Enum values must be separated by commas. Values may share a line or each start
 a new line; the formatter preserves the comma-separated form.
+
+Non-empty blocks start their first statement on the line after `{`. Put child
+declarations and statements on separate lines. Comma-separated lists such as
+parameters, exposure declarations, `projects` targets, transition changes, and
+enum values may stay inline.
 
 ```thinai
 // ordering-events.tni
@@ -212,8 +221,10 @@ Use value objects or identifiers inside entity, value-object, factory, and
 domain-service methods and constructors; DataObjects belong at application and
 query boundaries.
 Multiple application services may invoke the same aggregate. A top-level
-`journey` sequences user-invoked application-service commands across bounded
-contexts. Its order is descriptive; background event handoffs stay with the
+`journey` sequences non-event application-service commands across bounded
+contexts. Any application-service method without an event parameter is treated
+as a command; a method with an event parameter is an event handler. Its order is
+descriptive; background event handoffs stay with the
 contexts' event declarations and handlers.
 
 An incoming integration event can invoke a local command method:
@@ -298,16 +309,19 @@ referenced through a local context alias.
 Shared value objects belong in an explicit `shared kernel`. Context maps record
 which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
-declarations such as value objects, enums, events, services, modules, and
-methods; fields and enum values inherit visibility from their declaration.
+declarations the module owns that the grammar allows it to expose: aggregates,
+entities, value objects, data objects, read models, enums, events, services,
+projectors, repositories, factories, modules, and methods. Fields and enum
+values inherit visibility from their declaration.
 A qualified specification path may traverse structural containers without
 exposing each segment: bounded contexts, context maps, shared kernels, modules,
 aggregates, entities, services, projectors, and factories. Data-bearing
 declarations (value objects, data objects, read models, enums, and fields) are
 different: using one as a non-terminal path segment exposes its shape, so the
-source must be in the same module, reach it through the public module API, share
-its shared kernel through an authorized relationship, or traverse an authorized
-event or published-query contract. The terminal declaration is still checked
+source must be in the same module, reach it through the public module API or a
+direct dependency, share its shared kernel through an authorized relationship,
+or traverse an authorized event or published-query contract. The terminal
+declaration is still checked
 against the applicable visibility rule. Module exposure and context-level
 visibility make a declaration part of a published contract; they do not make
 another bounded context's value object, data object, read model, or enum
@@ -351,16 +365,18 @@ parameters, and enum values inherit visibility from their declaration.
 |---|---|---|---|
 | Context-level declaration | ✓ | ✓ | ✓ |
 | Declaration in a top-level module | ✓ | exposure + `depends on` | exposure |
-| Declaration in a nested module | ✓ | exposure at each level + `depends on` from a non-enclosing module | exposure at each level |
+| Declaration in a nested module | ✓ | exposure by its owning module + a dependency or exposing-ancestor route | exposure at each level |
 
 `exposure` means the owning module lists the declaration in `exposes`.
-`exposure at each level` means every enclosing module exposes the next module or
-declaration. A parent module that exposes a child module may use the child's
-public API without a redundant `depends on`. Sibling modules require both
-exposure and `depends on`. A dependency makes a module reachable but does not
-expose its declarations, and every enclosing module must still expose a nested
-module. Exposing a nested module re-exports its public API but not its
-dependencies.
+A direct `depends on` the nested module is enough when that module exposes the
+declaration; its parent need not expose it. A parent module that exposes a child
+module may use the child's public API without a redundant `depends on`. Sibling
+modules require both exposure and `depends on`. A dependency does not itself
+expose a declaration. From outside all modules, `exposure at each level` means
+every enclosing module exposes the next module or declaration; cross-context
+access and shared-kernel access from another kernel always require that full
+public exposure chain. Exposing a nested module re-exports its public API but not
+its dependencies.
 
 **Across bounded contexts**
 
@@ -387,8 +403,9 @@ query reads, and a `sharedKernel` relationship authorizes neither.
 | Segment | Requirement |
 |---|---|
 | Structural container (bounded context, context map, shared kernel, aggregate, entity, service, projector, factory) | May be traversed without exposing the segment. |
-| Module | Must be accessible; nested modules must be exposed at each level or reached through an authorized contract path. |
-| Data-bearing non-terminal (value object, data object, read model, enum, or field) | Must be reachable through the same module, the public module API, an authorized shared kernel, or an authorized event or published-query contract. |
+| Module | Must be accessible through the public module API or a direct dependency; cross-context contract paths may reach private nested modules only when authorized. |
+| Method (non-terminal) | Must be exposed by its owning module unless the source is in that module; context-level methods are public within their context. |
+| Data-bearing non-terminal (value object, data object, read model, enum, or field) | Must be exposed by its owning module and reachable through the same module, a direct dependency or exposing ancestor, the public module API, an authorized shared kernel, or an authorized event or published-query contract. |
 | Terminal declaration | Must satisfy the declaration, contract, or journey visibility rule that applies to it. |
 
 ## Behavior and Journeys
@@ -426,8 +443,10 @@ formatter indents continuation text and aligns the closing delimiter with its
 specification clause. Existing multiline single- and double-quoted strings
 remain accepted for compatibility.
 
-Journeys are top-level, actor-led timelines of user-invoked application-service
-commands that may cross bounded contexts. Declare each `actor` once at model
+Journeys are top-level, actor-led timelines of non-event application-service
+commands that may cross bounded contexts. Any application-service method
+without an event parameter is treated as a command; a method with an event
+parameter is an event handler. Declare each `actor` once at model
 scope, then reference it in a `by Actor { ... }` block. Each actor may have at
 most one `by` block per journey. A step names at least a service or context
 segment before the command; bare command names are not valid journey syntax. A journey does not
@@ -543,4 +562,4 @@ spaces.
 
 ## License
 
-Thinai is released under the [MIT License](../../LICENSE).
+Thinai is released under the [MIT License](https://github.com/thinai-lang/thinai/blob/main/LICENSE).

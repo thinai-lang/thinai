@@ -9,3 +9,6 @@
 - Improve completion for published contract paths and reserved result parameters.
 - Avoid auto-closing brackets inside strings and comments, and preserve backtick-delimited words.
 - Improve keyword highlighting for integration patterns and shared-kernel participants.
+- Reject invalid collection-typed event payloads and private method specification paths.
+- Avoid invalid member-keyword completion at model scope and normalize parameter spacing.
+- Reject unaliased import component names that collide with local path roots.

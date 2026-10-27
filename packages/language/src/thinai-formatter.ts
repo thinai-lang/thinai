@@ -244,7 +244,7 @@ export class ThinaiFormatter extends AbstractFormatter {
 
         formatter.keywords(':').prepend(Formatting.noSpace()).append(Formatting.oneSpace());
         formatter.keywords('.').surround(Formatting.noSpace());
-        formatter.keywords('(').prepend(Formatting.noSpace());
+        formatter.keywords('(').prepend(Formatting.noSpace()).append(Formatting.noSpace());
         formatter.keywords(')').prepend(Formatting.noSpace());
         formatter.keyword('?').prepend(Formatting.noSpace());
         for (const keyword of keywordPairs) {

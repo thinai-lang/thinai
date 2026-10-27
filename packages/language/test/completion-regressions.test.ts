@@ -1586,6 +1586,33 @@ context map M { sharedKernel Common { participants: [${marker}, Shipping] } }`);
         expect(participant.completion?.items.map(item => item.label)).toContain('Ordering');
     });
 
+    test('does not offer member declaration continuations at model scope', async () => {
+        const cases: Array<[string, string]> = [
+            ['value', 'object'],
+            ['application', 'service'],
+            ['integration', 'event'],
+            ['query', 'repository'],
+            ['query', 'service'],
+            ['data', 'object'],
+            ['read', 'model'],
+            ['domain', 'service']
+        ];
+        for (const [base, continuation] of cases) {
+            const result = await build(`bounded context C
+${base} ${marker}`);
+            expect(
+                result.completion?.items.map(item => item.label) ?? [],
+                `${base} at model scope`
+            ).not.toContain(continuation);
+        }
+
+        const valid = await build(`bounded context C
+in bounded context C {
+    value ${marker}
+}`);
+        expect(valid.completion?.items.map(item => item.label)).toContain('object');
+    });
+
     test('completes transition from and to on a new line', async () => {
         const from = await build(`bounded context C
 in bounded context C {

@@ -1778,8 +1778,8 @@ export class ThinaiValidator {
         }
         const integrationEvent = isIntegrationEvent(event);
         const visited = new Set<AstNode>();
-        const checkModuleDependency = (referenceInfo: ReferenceInfo, type: AstNode | undefined): void => {
-            if (!integrationEvent || !type) {
+        const checkModuleDependency = (field: Field, type: AstNode): void => {
+            if (!integrationEvent) {
                 return;
             }
             const eventModule = getOwningModule(event);
@@ -1795,13 +1795,30 @@ export class ThinaiValidator {
             }
             if (!isModulePubliclyVisible(eventModule, targetModule)) {
                 accept('error', 'This module reference requires a dependency on a module that exposes the target declaration.', {
-                    node: referenceInfo.container,
-                    property: referenceInfo.property,
-                    index: referenceInfo.index
+                    node: field,
+                    property: 'type'
                 });
             }
         };
-        const visit = (type: AstNode | undefined, field: Field): void => {
+        function visitReferences(field: Field, direct: boolean): void {
+            // Collection element/value references live on the CollectionType
+            // node, not on the Field itself, so getTypeReferences is required
+            // here; AstUtils.streamReferences(field) would miss them entirely.
+            for (const reference of getTypeReferences(field.type, field.collection)) {
+                const type = reference.ref;
+                if (!type) {
+                    continue;
+                }
+                // Only direct payload field types must be visible from the
+                // event's own module. Nested shapes follow the outer payload
+                // type's dependencies.
+                if (direct) {
+                    checkModuleDependency(field, type);
+                }
+                visit(type, field);
+            }
+        };
+        function visit(type: AstNode | undefined, field: Field): void {
             if (!type || visited.has(type)) {
                 return;
             }
@@ -1835,28 +1852,12 @@ export class ThinaiValidator {
             }
             if (isValueObject(type)) {
                 for (const nestedField of type.fields) {
-                    for (const nestedReference of AstUtils.streamReferences(nestedField)) {
-                        if (nestedReference.property?.endsWith('Path') ||
-                            !isReference(nestedReference.reference)) {
-                            continue;
-                        }
-                        visit(nestedReference.reference.ref, nestedField);
-                    }
+                    visitReferences(nestedField, false);
                 }
             }
         };
         for (const field of event.fields) {
-            for (const referenceInfo of AstUtils.streamReferences(field)) {
-                if (referenceInfo.property?.endsWith('Path') ||
-                    !isReference(referenceInfo.reference)) {
-                    continue;
-                }
-                // Only direct payload field types must be visible from the
-                // event's own module. Nested shapes follow the outer payload
-                // type's dependencies.
-                checkModuleDependency(referenceInfo, referenceInfo.reference.ref);
-                visit(referenceInfo.reference.ref, field);
-            }
+            visitReferences(field, true);
         }
     }
 

@@ -1925,6 +1925,98 @@ in bounded context Ordering {
         expect(messages).not.toContain('This module reference requires a dependency on a module that exposes the target declaration.');
     });
 
+    test('rejects entities and aggregate-owned types inside event payload collections', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    value object Line { raw: string }
+                    entity Item { identifier id: ItemId }
+                    value object ItemId { raw: string }
+                }
+                integration event IntegrationPayload {
+                    lines: List<Order.Line>
+                    items: Set<Order.Item>
+                }
+                event DomainPayload {
+                    items: List<Order.Item>
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain('An integration-event payload must not expose types owned by an aggregate.');
+        expect(messages).toContain('Event payloads must not expose entity instances; use stable value data instead.');
+    });
+
+    test('rejects aggregate-owned and private types inside nested event payload collections', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    value object Line { raw: string }
+                }
+                module Contracts {
+                    exposes IntegrationPayload, Payload
+                    value object Payload {
+                        lines: List<Order.Line>
+                    }
+                    integration event IntegrationPayload {
+                        payload: Payload
+                    }
+                }
+            }
+        `);
+
+        const messages = semanticDiagnostics(document).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain('An integration-event payload must not expose types owned by an aggregate.');
+    });
+
+    test('rejects private module types inside event payload collections', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                module Outer {
+                    module Inner {
+                        exposes Payload
+                        value object Payload { raw: string }
+                    }
+                }
+                module Contracts depends on Outer.Inner {
+                    exposes E
+                    integration event E {
+                        items: List<Inner.Payload>
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => String(diagnostic.message))).toContain(
+            'Integration-event payload types must be public contract types exposed by their module and all enclosing modules; context-level types are public.'
+        );
+    });
+
+    test('allows public value-object collections in event payloads', async () => {
+        const document = await parse(`
+            bounded context Shop
+            in bounded context Shop {
+                value object PayloadLine { raw: string }
+                integration event IntegrationPayload {
+                    lines: List<PayloadLine>
+                }
+                event DomainPayload {
+                    lines: Map<string, List<PayloadLine>>
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
     test('rejects entities hidden in a nested integration-event payload value object', async () => {
         const document = await parse(`
             bounded context Shop

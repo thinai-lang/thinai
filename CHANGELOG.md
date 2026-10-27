@@ -35,3 +35,9 @@
 - Reach full passing scores across the evaluation suite.
 - Document module, shared-kernel, cross-context, and specification-path visibility in the language README.
 - Extend the Language Tour with context-level value-object behavior and a module-private identifier mirror.
+- Reject entities, aggregate-owned types, and private module types inside collection-typed event payloads.
+- Require method exposure for non-terminal specification path segments and align nested-module path visibility.
+- Avoid invalid member-keyword completions at model scope.
+- Normalize parameter-list parentheses in the formatter.
+- Reject unaliased import component names that collide with local path roots.
+- Document the CLI import-closure validation scope and alpha limitations.

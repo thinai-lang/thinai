@@ -9,6 +9,9 @@ This extension provides language support for `.tni` files:
 - document formatting
 - semantic highlighting and selection ranges
 
+> **Alpha:** This is the first Thinai alpha. Language rules and extension
+> behavior may change between alpha releases.
+
 ## Getting started
 
 Open a folder containing `.tni` files, or create a new file with the `.tni`

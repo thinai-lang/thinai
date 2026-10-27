@@ -2185,29 +2185,29 @@ in bounded context ${name} {
             ['bounded c', 'context'],
             ['in bounded c', 'context'],
             ['shared k', 'kernel'],
-            ['application s', 'service'],
-            ['domain s', 'service'],
-            ['query r', 'repository'],
-            ['query s', 'service'],
-            ['read m', 'model'],
-            ['data o', 'object'],
-            ['value o', 'object'],
+            ['bounded context X\nin bounded context X { application s', 'service'],
+            ['bounded context X\nin bounded context X { domain s', 'service'],
+            ['bounded context X\nin bounded context X { query r', 'repository'],
+            ['bounded context X\nin bounded context X { query s', 'service'],
+            ['bounded context X\nin bounded context X { read m', 'model'],
+            ['bounded context X\nin bounded context X {\n    data o', 'object'],
+            ['bounded context X\nin bounded context X {\n    value o', 'object'],
             ['bounded context X\nin bounded context X { aggregate A { root e', 'entity'],
-            ['integration e', 'event'],
-            ['depends o', 'on'],
+            ['bounded context X\nin bounded context X { integration e', 'event'],
+            ['bounded context X\nin bounded context X { module M depends o', 'on'],
             ['context m', 'map'],
             ['import { Foo } f', 'from'],
-            ['repository Orders { m', 'manages'],
-            ['query repository Orders { s', 'serves'],
+            ['bounded context X\nin bounded context X { repository Orders { m', 'manages'],
+            ['bounded context X\nin bounded context X { query repository Orders { s', 'serves'],
             ['bounded context X\nin bounded context X { application service A { method run() { reads f', 'reads from'],
             ['bounded context X\nin bounded context X { application service A { method run() { reads from OrderRepository w', 'when'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status f', 'from'],
             ['bounded context Ordering\nin bounded context Ordering { aggregate Order { enum Status { Draft, Placed } root entity Order { status: Status method place() { transition status from Draft t', 'to'],
-            ['sharedKernel Common { p', 'participants'],
-            ['customer Ordering -> s', 'supplier'],
-            ['partner Ordering <-> p', 'partner'],
-            ['customer Ordering { i', 'integrationPatterns'],
-            ['customer Alpha -> supplier Beta { i', 'integrationPatterns']
+            ['shared kernel Common\nbounded context Ordering\nbounded context Shipping\ncontext map M { sharedKernel Common { p', 'participants'],
+            ['bounded context Ordering\nbounded context Shipping\ncontext map M { customer Ordering -> s', 'supplier'],
+            ['bounded context Ordering\nbounded context Shipping\ncontext map M { partner Ordering <-> p', 'partner'],
+            ['bounded context Ordering\ncontext map M { customer Ordering { i', 'integrationPatterns'],
+            ['bounded context Alpha\nbounded context Beta\ncontext map M { customer Alpha -> supplier Beta { i', 'integrationPatterns']
         ] as const;
 
         for (const [index, [source, expected]] of cases.entries()) {
@@ -2216,9 +2216,7 @@ in bounded context ${name} {
                 URI.file(`/workspace/partial-keyword-${index}.tni`), text
             );
             documents.push(document);
-            if (expected === 'from' || expected === 'to' || expected === 'reads from') {
-                await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
-            }
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(source.length)
@@ -4032,14 +4030,10 @@ bounded context Alpha
     test('does not offer unrelated header continuations inside a method body', async () => {
         const source = `bounded context Alpha
 in bounded context Alpha {
-  aggregate A {
-    root entity E {
-      method m() {
-        r
-      }
-      identifier id: Id
+  application service A {
+    method m() {
+      r
     }
-    value object Id { raw: string }
   }
 }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
@@ -4050,7 +4044,7 @@ in bounded context Alpha {
 
         const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
             textDocument: { uri: document.uri.toString() },
-            position: document.textDocument.positionAt(source.indexOf('        r') + '        r'.length)
+            position: document.textDocument.positionAt(source.indexOf('      r') + '      r'.length)
         });
         const labels = completion?.items.map(item => item.label) ?? [];
         expect(labels).not.toContain('realizes');
