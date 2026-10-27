@@ -2,6 +2,7 @@
 
 ## 0.1.0-alpha.1 - 2026-10-27
 
+- Replace the generic `number` primitive with `integer` for whole numbers and add `decimal` for exact base-10 values.
 - Scope duplicate declaration names to each import-connected model.
 - Separate actor, journey, and subdomain namespaces from path declarations.
 - Keep map specification paths value-oriented; map keys are not implicitly navigable.

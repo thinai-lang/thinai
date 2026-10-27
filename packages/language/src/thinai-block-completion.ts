@@ -183,7 +183,7 @@ export class ThinaiBlockCompletion {
         if (sibling === null) {
             const allowedContinuations = new Set(extraAllowedKeywords);
             const inTypePosition = this.callbacks.isTypeKeywordCompletionPosition(document, position);
-            const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
+            const typeKeywords = new Set(['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
             return {
                 isIncomplete: completion?.isIncomplete ?? false,
                 items: completion?.items.filter(item =>

@@ -52,7 +52,7 @@ in bounded context Ordering {
 
   data object OrderLineDetails {
     sku: string
-    quantities: Map<string, List<Set<number>>>
+    quantities: Map<string, List<Set<integer>>>
   }
 
   data object DeliveryAddress {

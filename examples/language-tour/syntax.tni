@@ -3,13 +3,13 @@ bounded context SyntaxTour
 
 in bounded context SyntaxTour {
   value object Adjustment {
-    `value`: number
+    `value`: decimal
     reason?: string
   }
 
   // Context-level value objects may declare constructors and methods.
   value object Money {
-    constructor(amount: number, currency: string) {
+    constructor(amount: decimal, currency: string) {
       invariant "The amount is not negative."
       behavior "Normalize the amount and currency before storing them."
     }
@@ -20,14 +20,14 @@ in bounded context SyntaxTour {
       postcondition "The result uses the same currency."
     }
 
-    amount: number
+    amount: decimal
     currency: string
   }
 
   data object TourInput {
     adjustments: List<Adjustment>
     labels: Set<string>
-    matrix: Map<string, List<Set<number>>>
+    matrix: Map<string, List<Set<integer>>>
     prices: List<Money>
     note?: string
   }

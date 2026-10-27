@@ -70,7 +70,7 @@ in bounded context Ordering {
       lines: List<OrderLine>
       items: List<OrderItem>
       labels: Set<string>
-      quantities: Map<string, number>
+      quantities: Map<string, integer>
       characteristics: Map<string, List<Set<string>>>
       createdAt: instant
       externalReference?: Common.SharedContracts.Identifiers.ExternalId
@@ -95,7 +95,7 @@ in bounded context Ordering {
 
     value object OrderLine {
       sku: string
-      quantity: number
+      quantity: integer
     }
 
     entity OrderItem {
@@ -141,12 +141,12 @@ in bounded context Ordering {
   }
 
   value object PriceAdjustment {
-    `value`: number
+    `value`: decimal
     reason: string
   }
 
   domain service OrderPricing {
-    method calculateTotal(amount: number, adjustments?: List<PriceAdjustment>) returns number {
+    method calculateTotal(amount: decimal, adjustments?: List<PriceAdjustment>) returns decimal {
       precondition "The amount is non-negative."
       invokes Common.CurrencyConversion.convert
       behavior "Apply each [[PriceAdjustment.`value`]] adjustment, then calculate the total."

@@ -94,7 +94,7 @@ in bounded context Sample {
             in bounded context Ordering {
                 data object D {
                     \`value\`: string
-                    \`event\`: number
+                    \`event\`: integer
                 }
                 application service S {
                     method \`run\`(input: D) returns string
@@ -467,7 +467,7 @@ bounded context Ordering`);
                     }
                     identifier id: OrderId
                 }
-                value object OrderLine { quantity: number }
+                value object OrderLine { quantity: integer }
                 value object OrderId { raw: string }
                 enum OrderStatus { Draft }
             }

@@ -53,7 +53,7 @@ in bounded context Ordering {
 
     value object OrderLine {
       sku: string
-      quantity: number
+      quantity: integer
     }
 
     enum OrderStatus {
@@ -516,11 +516,15 @@ Built-in collections are
 its value type: for `Map<K, V>`, `[[field.name]]` resolves a field of `V`, not
 `K`. Map keys are identity, not navigable data; wrap key data in a value or data
 object if it must be referenced.
-Primitive types include `string`, `number`, `boolean`, `date`, `time`, and
-`instant`. Use `date` for a calendar date, `time` for a wall-clock time without
-a date or time zone, and `instant` for an exact point on the global timeline.
-`time` does not represent an elapsed duration; model richer temporal concepts,
-such as a time-zone-aware appointment, with a value object.
+Primitive types include `string`, `boolean`, `integer`, `decimal`, `date`,
+`time`, and `instant`. Use `integer` for counts and other whole numbers, and
+`decimal` for money, prices, rates, and exact fractional business values.
+Neither numeric type encodes precision, scale, currency, or units; model those
+with a value object. There is no generic `number` primitive; choose `integer` or
+`decimal` based on the domain value. Use `date` for a calendar date, `time` for
+a wall-clock time without a date or time zone, and `instant` for an exact point
+on the global timeline. `time` does not represent an elapsed duration; model richer temporal
+concepts, such as a time-zone-aware appointment, with a value object.
 Use `initial State` only on a non-optional enum field of an entity; it marks the
 starting point of that entity's state graph, not a default for arbitrary data.
 A transition on that field must start from a state that is reachable from the

@@ -579,7 +579,7 @@ in bounded context C {
     module A {
         exposes Service, Result
         data object Result {
-            amount: number
+            amount: decimal
         }
         application service Service {
             method privateHelper() returns Result {
@@ -613,7 +613,7 @@ in bounded context C {
     module A {
         exposes Service, Result, publicHelper
         data object Result {
-            amount: number
+            amount: decimal
         }
         application service Service {
             method publicHelper() returns Result {

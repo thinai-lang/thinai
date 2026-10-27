@@ -2,12 +2,12 @@
 // published query contract, and an authorized cross-context query read.
 shared kernel Shared {
   value object Money {
-    amount: number
+    amount: decimal
     currency: string
   }
 
   domain service Rates {
-    method convert(amount: number, rate: number) returns number {
+    method convert(amount: decimal, rate: decimal) returns decimal {
       behavior "Convert [[amount]] at [[rate]]."
     }
   }
@@ -37,7 +37,7 @@ in bounded context Source {
   }
 
   application service SourceApp {
-    method convert(amount: number, rate: number) {
+    method convert(amount: decimal, rate: decimal) {
       invokes Shared.Rates.convert
     }
   }

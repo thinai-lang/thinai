@@ -185,11 +185,11 @@ describe('LSP policy completion', () => {
                 root entity Order { identifier id: OrderId }
                 value object OrderId { raw: string }
             }
-            value object Price { amount: number }
+            value object Price { amount: decimal }
             enum OrderStatus { Draft, Placed }
             event OrderPlaced
             read model OrderSummary { status: OrderStatus }
-            domain service Pricing { method calculate() returns number }
+            domain service Pricing { method calculate() returns decimal }
             factory OrderFactory { method create() returns Order }
             projector OrderProjector {
                 method project(source: OrderPlaced) { projects OrderSummary }
@@ -641,7 +641,7 @@ describe('LSP policy completion', () => {
     test('filters foreign read models and events from projector and emit completions', async () => {
         const producer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/foreign-projections.tni'),
-            'bounded context Ordering in bounded context Ordering { read model OrderSummary { total: number } integration event OrderPlacedV1 }'
+            'bounded context Ordering in bounded context Ordering { read model OrderSummary { total: decimal } integration event OrderPlacedV1 }'
         );
         const text = `import "./foreign-projections.tni"
             bounded context Shipping in bounded context Shipping {
@@ -829,7 +829,7 @@ describe('LSP policy completion', () => {
                 root entity Order { identifier id: OrderId }
                 value object OrderId { raw: string }
             }
-            domain service Policy { method calculate() returns number }
+            domain service Policy { method calculate() returns decimal }
             query service Queries { method find() returns string }
             factory OrderFactory { method create() returns Order }
             domain service Pricing {
@@ -868,7 +868,7 @@ describe('LSP policy completion', () => {
     test('completes shared-kernel domain services only for participating contexts', async () => {
         const shared = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/completion-shared-kernel.tni'),
-            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number } }'
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: decimal) returns decimal } }'
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/completion-shared-contexts.tni'),
@@ -883,7 +883,7 @@ describe('LSP policy completion', () => {
             import { SharedPolicies } from "./completion-shared-map.tni"
             in bounded context Ordering {
                 application service OrderApplication {
-                    method normalize(amount: number) returns number { invokes Common.PricingPolicy.norm }
+                    method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.norm }
                 }
             }`;
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(

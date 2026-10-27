@@ -138,7 +138,7 @@ const enumDeclaration = {
 const nonPropertyKeywordPrefix = '(?!(?:integrationPatterns|participants)\\s*:)';
 const additionalScopes = [
     enumDeclaration,
-    { name: 'storage.type.thinai', match: '\\b(?:string|number|boolean|date|time|instant|List|Set|Map)\\b' },
+    { name: 'storage.type.thinai', match: '\\b(?:string|boolean|integer|decimal|date|time|instant|List|Set|Map)\\b' },
     { name: 'constant.language.thinai', match: '\\b(?:core|supporting|generic)\\b' },
     { name: 'keyword.operator.relationship.thinai', match: '<->|->|-x-' },
     {

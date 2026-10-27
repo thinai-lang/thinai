@@ -905,7 +905,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             isEntity(innermostBlock) &&
             identifierTypePattern.test(linePrefix)
         );
-        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
+        const typeKeywords = new Set(['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
         const validInitialCompletion = this.isValidInitialCompletion(offset, activeField, innermostBlock);
         return {
             ...completion,
@@ -1316,7 +1316,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const allowed = new Set(['exposes', 'domain', 'domain service', 'depends', 'depends on', 'on', 'module', 'value', 'value object', 'enum']);
-        const typeKeywords = new Set(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
+        const typeKeywords = new Set(['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map']);
         const inTypePosition = this.isTypeKeywordCompletionPosition(document, position);
         return {
             ...completion,

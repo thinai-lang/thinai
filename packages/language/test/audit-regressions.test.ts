@@ -78,7 +78,7 @@ describe('Audit regressions', () => {
             const source = `bounded context C
 in bounded context C {
     read model Summary {
-        total: number
+        total: decimal
     }
     query repository Q { ${prefix} }
 }
@@ -97,7 +97,7 @@ in bounded context C {
         const partial = `bounded context C
 in bounded context C {
     read model Summary {
-        total: number
+        total: decimal
     }
     query repository Q { serves Summ }
 }
@@ -192,7 +192,7 @@ in bounded context C {
         await services.shared.workspace.DocumentBuilder.build([fieldDocument], { validation: false });
         const fieldOffset = fieldSource.indexOf('`value`: ') + '`value`: '.length;
         const fieldLabels = await completionLabels(fieldDocument, fieldOffset);
-        expect(fieldLabels).toEqual(expect.arrayContaining(['string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map']));
+        expect(fieldLabels).toEqual(expect.arrayContaining(['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map']));
         expect(fieldLabels).not.toContain('constructor');
         expect(fieldLabels).not.toContain('method');
 
@@ -209,7 +209,7 @@ in bounded context C {
         await services.shared.workspace.DocumentBuilder.build([parameterDocument], { validation: false });
         const parameterOffset = parameterSource.indexOf('`value`: ') + '`value`: '.length;
         const parameterLabels = await completionLabels(parameterDocument, parameterOffset);
-        expect(parameterLabels).toEqual(expect.arrayContaining(['string', 'number', 'List', 'Map', 'V']));
+        expect(parameterLabels).toEqual(expect.arrayContaining(['string', 'boolean', 'integer', 'decimal', 'List', 'Map', 'V']));
     });
 
     test('quoted path segments still receive invocation completion', async () => {
@@ -392,7 +392,7 @@ in bounded context C {
         value object J { raw: string }
     }
     read model S {
-        total: number
+        total: decimal
     }
     query repository Q {
         serves S

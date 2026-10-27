@@ -183,12 +183,12 @@ describe('Thinai language concept evaluations', () => {
 
     evaluation('models optional fields, collection types, and domain services', async (context: EvalContext) => {
         const generated = await generateAndValidate(
-            'Generate a valid single-file Thinai Inventory bounded context. Do not use semicolons and put each sibling declaration and method-body statement on its own line. Declare aggregate Stock with root entity Stock and separate fields identifier id: StockId, quantities: Map<string, number>, and labels: Set<string>. Add sibling value object StockId with raw: string and enum StockState { Available, Reserved }. Declare data object StockSearch with separate fields sku?: string, warehouseIds: List<string>, and filters: Map<string, List<string>>. Add domain service AvailabilityPolicy with method canReserve(stockId: StockId, quantity: number) returns boolean whose behavior explains the reservation rule; domain-service methods must not take DataObjects. Keep every declaration at its grammar-defined scope, use `?` only for optional fields, and ensure all references resolve.',
+            'Generate a valid single-file Thinai Inventory bounded context. Do not use semicolons and put each sibling declaration and method-body statement on its own line. Declare aggregate Stock with root entity Stock and separate fields identifier id: StockId, quantities: Map<string, integer>, and labels: Set<string>. Add sibling value object StockId with raw: string and enum StockState { Available, Reserved }. Declare data object StockSearch with separate fields sku?: string, warehouseIds: List<string>, and filters: Map<string, List<string>>. Add domain service AvailabilityPolicy with method canReserve(stockId: StockId, quantity: integer) returns boolean whose behavior explains the reservation rule; domain-service methods must not take DataObjects. Keep every declaration at its grammar-defined scope, use `?` only for optional fields, and ensure all references resolve.',
             context
         );
         const features = featureScore(generated.code, [
             'domain service AvailabilityPolicy', 'returns boolean',
-            'sku?: string', 'Set<string>', 'Map<string, number>',
+            'sku?: string', 'Set<string>', 'Map<string, integer>',
             'Map<string, List<string>>', 'warehouseIds: List<string>', 'data object StockSearch'
         ]);
         return {

@@ -760,8 +760,8 @@ in bounded context Ordering {
                         raw: string
                     }
                     value object Money {
-                        constructor(amount: number, currency: string)
-                        amount: number
+                        constructor(amount: decimal, currency: string)
+                        amount: decimal
                         currency: string
                     }
                 }
@@ -786,10 +786,10 @@ in bounded context Ordering {
                     value object OrderId { raw: string }
                     value object Money {
                         constructor(input: PlaceOrderInput)
-                        amount: number
+                        amount: decimal
                     }
                 }
-                data object PlaceOrderInput { amount: number }
+                data object PlaceOrderInput { amount: decimal }
             }
         `);
 
@@ -845,7 +845,7 @@ in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
-                    entity OrderLine { quantity: number }
+                    entity OrderLine { quantity: integer }
                 }
             }
         `);
@@ -1157,8 +1157,8 @@ in bounded context Ordering {
     test('allows application services to invoke a pure domain service and aggregate root directly', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
-                value object PriceRequest { subtotal: number }
-                value object PriceQuote { total: number }
+                value object PriceRequest { subtotal: decimal }
+                value object PriceQuote { total: decimal }
                 aggregate Order {
                     root entity Order {
                         method place(quote: PriceQuote) returns PriceQuote
@@ -1540,7 +1540,7 @@ in bounded context Ordering {
             query service Queries {
                 method find() returns string { emits OrderPlaced }
             }
-            domain service Pricing { method calculate() returns number }
+            domain service Pricing { method calculate() returns decimal }
             projector OrderProjector {
                 method project(source: OrderPlaced) { invokes Pricing.calculate }
                 method returnValue(source: OrderPlaced) returns string { projects OrderSummary }
@@ -2712,12 +2712,12 @@ in bounded context Ordering {
     test('allows shared-kernel domain services but rejects data objects in shared-kernel modules', async () => {
         const valid = await parse(`
             shared kernel SharedValid {
-                value object Money { amount: number }
+                value object Money { amount: decimal }
                 domain service PricingPolicy {
-                    method normalize(money: Money) returns number
+                    method normalize(money: Money) returns decimal
                 }
                 module Policies {
-                    domain service TaxPolicy { method rate(amount: number) returns number }
+                    domain service TaxPolicy { method rate(amount: decimal) returns decimal }
                 }
             }
         `);
@@ -2737,12 +2737,12 @@ in bounded context Ordering {
         const coLocated = await parse(`
             bounded context Ordering in bounded context Ordering {
                 application service OrderApplication {
-                    method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
+                    method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
                 }
             }
             bounded context Shipping
             shared kernel Common {
-                domain service PricingPolicy { method normalize(amount: number) returns number }
+                domain service PricingPolicy { method normalize(amount: decimal) returns decimal }
             }
             context map SharedPolicies {
                 sharedKernel Common { participants: [Ordering, Shipping] }
@@ -2754,7 +2754,7 @@ in bounded context Ordering {
     test('allows application services to invoke an imported shared-kernel service for participating contexts', async () => {
         const shared = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-kernel.tni'),
-            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number } }'
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: decimal) returns decimal } }'
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-contexts.tni'),
@@ -2771,7 +2771,7 @@ in bounded context Ordering {
              import { SharedPolicies } from "./shared-policy-map.tni"
              in bounded context Ordering {
                  application service OrderApplication {
-                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
+                     method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
                  }
              }`
         );
@@ -2782,7 +2782,7 @@ in bounded context Ordering {
              import { SharedPolicies } from "./shared-policy-map.tni"
              in bounded context Shipping {
                  application service ShippingApplication {
-                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
+                     method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
                  }
              }`
         );
@@ -2798,7 +2798,7 @@ in bounded context Ordering {
     test('rejects shared-kernel service calls without an imported relationship', async () => {
         const shared = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/unlinked-shared-policy-kernel.tni'),
-            'shared kernel Common { domain service PricingPolicy { method normalize(amount: number) returns number } }'
+            'shared kernel Common { domain service PricingPolicy { method normalize(amount: decimal) returns decimal } }'
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/unlinked-shared-policy-contexts.tni'),
@@ -2810,7 +2810,7 @@ in bounded context Ordering {
              import { Common } from "./unlinked-shared-policy-kernel.tni"
              in bounded context Ordering {
                  application service OrderApplication {
-                     method normalize(amount: number) returns number { invokes Common.PricingPolicy.normalize }
+                     method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
                  }
              }`
         );
@@ -3249,7 +3249,7 @@ context map Fulfillment {
                 module Private {
                     value object Code { raw: string }
                     domain service PricingPolicy {
-                        method normalize(amount: number) returns number
+                        method normalize(amount: decimal) returns decimal
                     }
                 }
             }
@@ -3801,7 +3801,7 @@ in bounded context Ordering {
             bounded context Ordering
             bounded context Shipping
             in bounded context Ordering {
-                domain service PrivatePricing { method calculate() returns number }
+                domain service PrivatePricing { method calculate() returns decimal }
                 application service PrivateCommands { method run() }
                 module PrivateModule { value object Code { raw: string } }
             }
@@ -4078,6 +4078,72 @@ in bounded context Ordering {
                 application service S {
                     method run(input: D) {
                         behavior "Use [[D.\`value\`]] and [[input.\`value\`]]."
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(quoted)
+            .map(diagnostic => String(diagnostic.message))
+            .filter(message => message.includes('must be backtick-quoted'))).toEqual([]);
+    });
+
+    test('accepts integer and decimal primitives in every type position', async () => {
+        const document = await parse(`
+            bounded context Measurements
+            in bounded context Measurements {
+                value object Money {
+                    constructor(amount: decimal, quantities: List<integer>) {
+                        invariant "The amount is not negative."
+                    }
+                    method convert(rate: decimal) returns decimal {
+                        behavior "Convert [[amount]] at [[rate]]."
+                    }
+                    method history() returns Map<string, List<Set<decimal>>> {
+                        behavior "Return the decimal history."
+                    }
+                    amount: decimal
+                    quantities: Map<string, List<integer>>
+                }
+            }
+        `);
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('treats integer and decimal as reserved primitive keywords', async () => {
+        const unquoted = await parse(`
+            bounded context Types
+            in bounded context Types {
+                value object V {
+                    \`decimal\`: decimal
+                    \`integer\`: integer
+                }
+                application service S {
+                    method run(input: V) {
+                        behavior "Use [[V.decimal]] and [[V.integer]]."
+                    }
+                }
+            }
+        `);
+
+        const reservedMessages = semanticDiagnostics(unquoted)
+            .map(diagnostic => String(diagnostic.message))
+            .filter(message => message.includes('must be backtick-quoted'));
+        expect(reservedMessages).toHaveLength(2);
+        expect(reservedMessages.some(message => message.includes("'decimal'"))).toBe(true);
+        expect(reservedMessages.some(message => message.includes("'integer'"))).toBe(true);
+
+        const quoted = await parse(`
+            bounded context Types
+            in bounded context Types {
+                value object V {
+                    \`decimal\`: decimal
+                    \`integer\`: integer
+                }
+                application service S {
+                    method run(input: V) {
+                        behavior "Use [[V.\`decimal\`]] and [[V.\`integer\`]]."
                     }
                 }
             }
@@ -4572,7 +4638,7 @@ in bounded context Ordering {
             bounded context C
             in bounded context C {
                 value object Money {
-                    amount: number
+                    amount: decimal
                     method plus(other: Money) returns Money
                 }
                 application service App {

@@ -554,11 +554,11 @@ in bounded context Ordering {
                 parameters: [
                     { $type: 'Parameter', name: 'id', primitive: 'string', optional: false },
                     { $type: 'Parameter', name: 'source', type: { ref: domainEvent, $refText: 'OrderPlaced' }, optional: true },
-                    { $type: 'Parameter', name: 'ids', collection: { kind: 'List', elementPrimitive: 'number' }, optional: false }
+                    { $type: 'Parameter', name: 'ids', collection: { kind: 'List', elementPrimitive: 'integer' }, optional: false }
                 ],
                 returnType: { ref: typeNode('ValueObject', 'OrderId'), $refText: 'OrderId' }
             } as unknown as AstNode
-        } as AstNodeDescription)).toBe('Method find(id: string, source?: event OrderPlaced, ids: List<number>) returns OrderId');
+        } as AstNodeDescription)).toBe('Method find(id: string, source?: event OrderPlaced, ids: List<integer>) returns OrderId');
         expect(getDetail({
             type: 'Method',
             name: 'summarize',
@@ -574,8 +574,8 @@ in bounded context Ordering {
         expect(getDetail({
             type: 'Method',
             name: 'count',
-            node: { $type: 'Method', name: 'count', parameters: [], returnPrimitive: 'number' } as unknown as AstNode
-        } as AstNodeDescription)).toBe('Method count() returns number');
+            node: { $type: 'Method', name: 'count', parameters: [], returnPrimitive: 'integer' } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Method count() returns integer');
         expect(getDetail({
             type: 'Method',
             name: 'clear',
@@ -585,8 +585,8 @@ in bounded context Ordering {
         expect(getDetail({
             type: 'Field',
             name: 'items',
-            node: { $type: 'Field', name: 'items', collection: { kind: 'List', elementPrimitive: 'number' } } as unknown as AstNode
-        } as AstNodeDescription)).toBe('Field items: List<number>');
+            node: { $type: 'Field', name: 'items', collection: { kind: 'List', elementPrimitive: 'integer' } } as unknown as AstNode
+        } as AstNodeDescription)).toBe('Field items: List<integer>');
         expect(getDetail({
             type: 'Field',
             name: 'status',
@@ -625,7 +625,7 @@ in bounded context Ordering {
             `bounded context Ordering
 in bounded context Ordering {
     value object Money {
-        amount: number
+        amount: decimal
     }
 }`
         );
@@ -641,7 +641,7 @@ in bounded context Ordering {
             path: services.Thinai.workspace.AstNodeLocator.getAstNodePath(field!)
         } as AstNodeDescription;
         const details = new ThinaiCompletionDetails(services.Thinai);
-        expect(details.getCompletionDetail(description)).toBe('Field Ordering.Money.amount: number');
+        expect(details.getCompletionDetail(description)).toBe('Field Ordering.Money.amount: decimal');
     });
 
     test('suggests workspace files inside import paths', async () => {
@@ -1836,7 +1836,7 @@ in bounded context ${name} {
             query service OrderQueries {
                 method findOrder() returns string { emits OrderPlaced ${marker} }
             }
-            domain service Pricing { method calculate() returns number }
+            domain service Pricing { method calculate() returns decimal }
             projector OrderProjector {
                 method onOrderPlaced(source: OrderPlaced) { invokes Pricing.calculate ${marker} }
             }
@@ -3477,7 +3477,7 @@ bounded context Billing realizes Payments`;
         ]));
         for (const unsupported of [
             'aggregate', 'application service', 'data object', 'entity', 'repository',
-            'string', 'number', 'boolean', 'date', 'time', 'instant', 'List', 'Set', 'Map'
+            'string', 'number', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant', 'List', 'Set', 'Map'
         ]) {
             expect(labels).not.toContain(unsupported);
         }
@@ -3578,6 +3578,18 @@ bounded context Billing realizes Payments`;
                 expectedPrimitive: 'instant'
             },
             {
+                name: 'partial integer field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { count: int${marker} } } }`,
+                expectedPrefix: 'int',
+                expectedPrimitive: 'integer'
+            },
+            {
+                name: 'partial decimal field type',
+                before: `bounded context Sample\nin bounded context Sample { aggregate Order { root entity Order { amount: dec${marker} } } }`,
+                expectedPrefix: 'dec',
+                expectedPrimitive: 'decimal'
+            },
+            {
                 name: 'method parameter type',
                 before: `bounded context Sample\nin bounded context Sample { application service App { method run(amount: ${marker}) } }`,
                 expectedPrefix: ''
@@ -3652,11 +3664,13 @@ bounded context Billing realizes Payments`;
                     newText: expectedPrimitive
                 }
             });
-            expect(completion?.items.map(item => item.label), completionCase.name).toEqual(
+            const labels = completion?.items.map(item => item.label) ?? [];
+            expect(labels, completionCase.name).toEqual(
                 expect.arrayContaining(completionCase.expectedPrefix
                     ? [expectedPrimitive]
-                    : ['string', 'number', 'boolean', 'date', 'time', 'instant'])
+                    : ['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant'])
             );
+            expect(labels, completionCase.name).not.toContain('number');
         }
     });
 

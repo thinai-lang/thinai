@@ -60,7 +60,7 @@ in bounded context Ordering {
 in bounded context Ordering {
     module Contracts {
         exposes Money, Currency
-        value object Money { amount: number }
+        value object Money { amount: decimal }
         enum Currency { USD, EUR }
     }
     data object Quote { price: Contracts.${marker} }
@@ -343,7 +343,7 @@ in bounded context Ordering {
         const result = await build(`bounded context Ordering
 in bounded context Ordering {
     module Api {
-        value object Money { amount: number }
+        value object Money { amount: decimal }
     }
     application service App {
         method run() {
@@ -653,7 +653,7 @@ in bounded context O {
         value object Id { raw: string }
     }
     value object Holder { item: A.E }
-    value object Money { amount: number }
+    value object Money { amount: decimal }
     domain service D {
         method use(items: List<${marker}>) returns string
     }
@@ -937,7 +937,7 @@ context map M { customer Consumer -> supplier Api }`;
     test('collects only terminal type references from collection types', async () => {
         const source = `bounded context Ordering
 in bounded context Ordering {
-    module Shared { value object Money { amount: number } }
+    module Shared { value object Money { amount: decimal } }
     data object Quote {
         direct: Shared.Money
         collection: List<Shared.Money>
@@ -1091,7 +1091,7 @@ in bounded context Ordering {
         data object Result { status: string }
     }
     application service App { method place() returns Contracts.Result }
-    read model Summary { total: number }
+    read model Summary { total: decimal }
     query service Queries { method find() returns Summary }
 }
 actor Customer
@@ -1748,7 +1748,7 @@ in bounded context C {
 in bounded context Ordering {
     module Contracts {
         exposes Money, Currency
-        value object Money { amount: number }
+        value object Money { amount: decimal }
         enum Currency { USD, EUR }
     }
     data object Quote { price: Co${marker} }

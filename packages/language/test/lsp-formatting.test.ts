@@ -17,7 +17,7 @@ afterEach(async () => {
 
 describe('LSP formatting', () => {
     test('formats nested Thinai declarations using the editor indentation options', async () => {
-        const source = 'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id:OrderId items:Map<string,number> } } enum OrderStatus { Draft,Placed } } actor Customer';
+        const source = 'bounded context Ordering in bounded context Ordering { aggregate Order { root entity Order { identifier id:OrderId items:Map<string, integer> } } enum OrderStatus { Draft,Placed } } actor Customer';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/formatting.tni'), source
         );
@@ -46,7 +46,7 @@ describe('LSP formatting', () => {
             '  aggregate Order {',
             '    root entity Order {',
             '      identifier id: OrderId',
-            '      items: Map<string, number>',
+            '      items: Map<string, integer>',
             '    }',
             '  }',
             '',
@@ -72,7 +72,7 @@ describe('LSP formatting', () => {
         const source = `bounded context Formatting
 in bounded context Formatting {
     application service App {
-        method run( amount : string , count : number ) { }
+        method run( amount : string , count : integer ) { }
     }
     value object Id {
         constructor( raw : string ) { }
@@ -99,7 +99,7 @@ in bounded context Formatting {
                 return text.slice(0, start) + edit.newText + text.slice(end);
             }, source);
 
-        expect(formatted).toContain('method run(amount: string, count: number) {');
+        expect(formatted).toContain('method run(amount: string, count: integer) {');
         expect(formatted).toContain('constructor(raw: string) {');
 
         const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
@@ -422,7 +422,7 @@ in bounded context Ordering {
     });
 
     test('normalizes import, reference, constructor, and enum separators', async () => {
-        const source = 'import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second:number){}method combine(first:string,second:number){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
+        const source = 'import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second: integer){}method combine(first:string,second: integer){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/list-formatting.tni'), source
         );
@@ -445,8 +445,8 @@ in bounded context Ordering {
         expect(formatted).toContain('import { One as First, Two } from "things.tni"');
         expect(formatted).toContain('bounded context Example realizes Core, Supporting');
         expect(formatted).toContain('in bounded context Example {');
-        expect(formatted).toContain('constructor(first: string, second: number) {}');
-        expect(formatted).toContain('method combine(first: string, second: number) {}');
+        expect(formatted).toContain('constructor(first: string, second: integer) {}');
+        expect(formatted).toContain('method combine(first: string, second: integer) {}');
         expect(formatted).toContain('Draft,\n      Placed');
         expect(formatted).toContain('module Data depends on First, Second {}');
     });

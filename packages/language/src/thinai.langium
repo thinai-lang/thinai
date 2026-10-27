@@ -315,7 +315,7 @@ StringLiteral returns string:
     | SINGLE_STRING_START SINGLE_STRING_TEXT? SINGLE_STRING_END;
 
 PrimitiveType returns string:
-    'string' | 'number' | 'boolean' | 'date' | 'time' | 'instant';
+    'string' | 'boolean' | 'integer' | 'decimal' | 'date' | 'time' | 'instant';
 
 SubdomainKind returns string:
     'core' | 'supporting' | 'generic';

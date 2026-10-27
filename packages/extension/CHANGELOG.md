@@ -2,6 +2,7 @@
 
 ## 0.1.0-alpha.1 - 2026-10-27
 
+- Replace the generic `number` primitive with `integer` for whole numbers and add `decimal` for exact base-10 values.
 - Scope duplicate declarations to each document's import-connected model.
 - Separate strategic declaration namespaces so a subdomain may share a name with its bounded context.
 - Treat map specification paths as value-oriented; map keys are no longer implicitly navigable.

@@ -42,7 +42,7 @@ The model demonstrates root and child entity identities and transitions, constru
 | Backtick-quoted identifiers, triple-quoted specifications, and escaped markers | `ordering.tni` |
 | Guarded multi-event emissions and guarded `reads from` clauses | `ordering-events.tni` |
 | Prior-command result binding in a journey | `cross-context-journey.tni` |
-| `string`, `number`, `boolean`, `date`, `time`, and `instant`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
+| `string`, `boolean`, `integer`, `decimal`, `date`, `time`, and `instant`; `List`, `Set`, `Map`, and nested collection types | `ordering.tni`, `ordering-events.tni` |
 | Nested data objects, optional fields/parameters, identifiers, enum initial states, constructors, and mirrored value objects | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
 | Application/domain/query services, repositories, factories, projectors, read models, events, and exposed integration contracts | `ordering.tni`, `ordering-events.tni`, `shipping.tni` |
 | All behavior clauses, multiple emits/projects targets, guarded and grouped transitions, enum-value links | `ordering.tni`, `ordering-events.tni` |
