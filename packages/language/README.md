@@ -338,9 +338,9 @@ re-export. Direct dependencies on nested modules remain valid. A module may use
 its own exposed nested module's public API without a redundant dependency; use
 `depends on` when the nested module itself is not exposed by its parent, while
 still exposing every declaration you reference. A module may expose only
-its direct child modules and declarations, so deep re-export requires each level
-to expose the next; terminal declarations must still be exposed by their owning
-module. Exposing a query service publishes the operations whose result is a
+declarations it owns, including methods and members of its own aggregates, plus
+its direct child modules. Deep re-export requires each level to expose the next;
+terminal declarations must still be exposed by their owning module. Exposing a query service publishes the operations whose result is a
 primitive or a public DataObject (context-level or exposed by its module); operations returning read models,
 value objects, enums, or unexposed module-nested data objects remain local. Cross-context
 consumers require a module-exposed query service with a primitive or public
@@ -356,7 +356,8 @@ form of module exposure merely to invoke an application-service command.
 ### Visibility at a Glance
 
 Context-level declarations are public within their bounded context or shared
-kernel. A module exposes only its direct child modules and declarations. Fields,
+kernel. A module exposes only declarations it owns, including methods and
+aggregate members, plus its direct child modules. Fields,
 parameters, and enum values inherit visibility from their declaration.
 
 **Within a bounded context or shared kernel**

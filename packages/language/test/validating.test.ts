@@ -3296,6 +3296,35 @@ context map Fulfillment {
         expect(warnings).toContain("Command 'run' is invoked more than once in this journey; references resolve to the nearest prior invocation.");
     });
 
+    test('allows modules to expose owned aggregate members and methods', async () => {
+        const document = await parse(`
+            bounded context Alpha
+            in bounded context Alpha {
+                module Api {
+                    exposes Order.Order, Order.Order.place
+                    aggregate Order {
+                        root entity Order {
+                            method place()
+                            identifier id: OrderId
+                        }
+                        value object OrderId {
+                            raw: string
+                        }
+                    }
+                }
+                module Consumer depends on Api {
+                    domain service Inspector {
+                        method inspect(order: Order.Order)
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic =>
+            diagnostic.severity === DiagnosticSeverity.Error
+        )).toEqual([]);
+    });
+
     test('warns when an exposed command publishes private contract types', async () => {
         const document = await parse(`
             bounded context Alpha
