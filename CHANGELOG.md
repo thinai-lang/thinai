@@ -2,6 +2,9 @@
 
 ## 0.1.0-alpha.1 - 2026-10-27
 
+- Add stable model export, context slices, impact reports, validation, and a read-only MCP server to the CLI.
+- Add an agent workflow skill and documentation for model-first coding.
+- Add declaration hover and verify find-all-references, document symbols, and references in the language server.
 - Replace the generic `number` primitive with `integer` for whole numbers and add `decimal` for exact base-10 values.
 - Scope duplicate declaration names to each import-connected model.
 - Separate actor, journey, and subdomain namespaces from path declarations.

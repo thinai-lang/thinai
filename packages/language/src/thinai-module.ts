@@ -14,6 +14,7 @@ import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 import { ThinaiFormatter } from './thinai-formatter.js';
+import { ThinaiHoverProvider } from './thinai-hover-provider.js';
 import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 
 /**
@@ -65,6 +66,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),
         CompletionProvider: services => new ThinaiCompletionProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
+        HoverProvider: services => new ThinaiHoverProvider(services),
         SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)
     },
     validation: {

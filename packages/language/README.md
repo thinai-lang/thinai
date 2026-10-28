@@ -73,6 +73,15 @@ in bounded context Ordering {
 Enum values must be separated by commas. Values may share a line or each start
 a new line; the formatter preserves the comma-separated form.
 
+## Model export and agent tooling
+
+The language package exports `exportThinaiModel`, `createContextSlice`, and
+`computeImpact` for building model graphs, task-scoped context slices, and
+impact reports. The [CLI](../cli/README.md) exposes them through `inspect`,
+`context`, `impact`, `validate`, and `mcp` commands. See the
+[agent workflow guide](../../docs/agent-workflow.md) for the model-first coding
+workflow.
+
 Non-empty blocks start their first statement on the line after `{`. Put child
 declarations and statements on separate lines. Comma-separated lists such as
 parameters, exposure declarations, `projects` targets, transition changes, and

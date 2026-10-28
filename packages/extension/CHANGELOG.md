@@ -2,6 +2,7 @@
 
 ## 0.1.0-alpha.1 - 2026-10-27
 
+- Add declaration hover and verify find-all-references, document symbols, and references.
 - Replace the generic `number` primitive with `integer` for whole numbers and add `decimal` for exact base-10 values.
 - Scope duplicate declarations to each document's import-connected model.
 - Separate strategic declaration namespaces so a subdomain may share a name with its bounded context.

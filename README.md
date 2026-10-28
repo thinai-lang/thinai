@@ -17,6 +17,8 @@ formatting, and import quick fixes for `.tni` files.
   for a complete multi-file model.
 - Use the [Language Tour](./examples/language-tour/README.md) to see individual
   syntax, module, and sharing features without following the full domain model.
+- See the [agent workflow guide](./docs/agent-workflow.md) for model-first
+  coding with CLI, MCP, and LSP.
 - See the [Thinai language package](./packages/language/README.md),
   [CLI](./packages/cli/README.md), and
   [VS Code extension development guide](./packages/extension/langium-quickstart.md).
@@ -27,6 +29,13 @@ imports from the repository root:
 
 ```bash
 node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
+```
+
+Inspect the model graph or request an agent context slice:
+
+```bash
+node packages/cli/bin/cli.js inspect examples/order-fulfillment/shipping.tni
+node packages/cli/bin/cli.js context examples/order-fulfillment/shipping.tni Aggregate:Shipping.Shipment --format md
 ```
 
 ## Development

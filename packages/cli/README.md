@@ -2,8 +2,9 @@
 
 <p><img src="https://raw.githubusercontent.com/thinai-lang/thinai/main/packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
-The Thinai CLI reads a `.tni` model and its imported files, then generates a
-JavaScript summary of the declarations.
+The Thinai CLI reads a `.tni` model and its imported files. It can generate a
+JavaScript summary, export the model graph, produce task-scoped context slices,
+report model impact, validate models, and run a read-only MCP server.
 
 > **Alpha:** This is the first Thinai alpha. CLI behavior and output may change
 > between alpha releases.
@@ -15,9 +16,32 @@ with the Order Fulfillment example:
 node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
 ```
 
-Run `node packages/cli/bin/cli.js --help` to see the available command and
-options. The CLI is implemented in TypeScript and uses the Thinai language
-package to parse and validate models.
+## Agent and model inspection commands
+
+```bash
+# Full model graph as JSON
+node packages/cli/bin/cli.js inspect path/to/model.tni --out model.json
+
+# One aggregate or context and its visible dependencies
+node packages/cli/bin/cli.js context path/to/model.tni Aggregate:Ordering.Order --format md
+
+# Model elements that reference a declaration
+node packages/cli/bin/cli.js impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json
+
+# Validate the source file and its transitive imports
+node packages/cli/bin/cli.js validate path/to/model.tni
+
+# Start a read-only MCP server over stdio
+node packages/cli/bin/cli.js mcp path/to/model.tni
+```
+
+The exported model uses the stable `thinai-model-v1` schema. Element IDs are
+canonical and kind-prefixed, for example `Aggregate:Ordering.Order` and
+`Field:Ordering.Order.Order.id`.
+
+Run `node packages/cli/bin/cli.js --help` to see all commands and options. The
+CLI is implemented in TypeScript and uses the Thinai language package to parse
+and validate models.
 
 ## Validation scope
 
@@ -32,6 +56,8 @@ import-connected model, including importers.
 - [bin/cli.js](bin/cli.js) — executable entry point.
 - [src/main.ts](src/main.ts) — command definition and generation action.
 - [src/generator.ts](src/generator.ts) — JavaScript summary generation.
+- [src/model.ts](src/model.ts) — model export, context, impact, and validation actions.
+- [src/mcp.ts](src/mcp.ts) — read-only MCP server.
 - [src/util.ts](src/util.ts) — model document and destination utilities.
 
 Langium provides the parser and generation utilities used by this project. For

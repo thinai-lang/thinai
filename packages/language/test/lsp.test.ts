@@ -492,6 +492,53 @@ in bounded context Ordering {
         expect(declaredTypes.get('Authorization')).toBe('class');
     });
 
+    test('provides references, document symbols, and declaration hover', async () => {
+        const text = `bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+            method place() {
+                emits OrderPlaced
+            }
+        }
+        value object OrderId {
+            raw: string
+        }
+    }
+    event OrderPlaced
+}
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/lsp-agent-features.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const uri = document.uri.toString();
+        const orderIdOffset = text.indexOf('OrderId');
+
+        const references = await services.Thinai.lsp.ReferencesProvider?.findReferences(document, {
+            textDocument: { uri },
+            position: document.textDocument.positionAt(orderIdOffset),
+            context: { includeDeclaration: true }
+        });
+        expect(references?.length).toBeGreaterThanOrEqual(2);
+
+        const symbols = await services.Thinai.lsp.DocumentSymbolProvider?.getSymbols(document, {
+            textDocument: { uri }
+        });
+        expect(symbols?.map(symbol => symbol.name)).toEqual(expect.arrayContaining([
+            'Ordering', 'Order', 'OrderPlaced'
+        ]));
+
+        const hover = await services.Thinai.lsp.HoverProvider?.getHoverContent(document, {
+            textDocument: { uri },
+            position: document.textDocument.positionAt(text.indexOf('id: OrderId') + 4)
+        });
+        expect(JSON.stringify(hover?.contents)).toContain('ValueObject');
+        expect(JSON.stringify(hover?.contents)).toContain('Ordering.Order.OrderId');
+    });
+
     test('maps all Thinai symbols to standard completion and symbol kinds', () => {
         const provider = new ThinaiNodeKindProvider();
         const mappings: Array<[string, CompletionItemKind, SymbolKind]> = [

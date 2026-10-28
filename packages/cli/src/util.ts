@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import { URI } from 'langium';
 import { isModel, resolveImportUri, type Model } from 'thinai-language';
 
-export async function extractDocuments(fileName: string, services: LangiumCoreServices): Promise<LangiumDocument<Model>[]> {
+export async function loadDocuments(fileName: string, services: LangiumCoreServices): Promise<LangiumDocument<Model>[]> {
     await validateFileName(fileName, services);
 
     const rootUri = URI.file(path.resolve(fileName));
@@ -45,7 +45,11 @@ export async function extractDocuments(fileName: string, services: LangiumCoreSe
 
     const loadedDocuments = [...documents.values()];
     await services.shared.workspace.DocumentBuilder.build(loadedDocuments, { validation: true });
+    return loadedDocuments;
+}
 
+export async function extractDocuments(fileName: string, services: LangiumCoreServices): Promise<LangiumDocument<Model>[]> {
+    const loadedDocuments = await loadDocuments(fileName, services);
     const validationErrors = loadedDocuments.flatMap(document =>
         (document.diagnostics ?? [])
             .filter(diagnostic => diagnostic.severity === 1)
