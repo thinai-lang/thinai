@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-alpha.2 - 2026-10-30
+
+- Point package metadata, READMEs, and support links at the public documentation, examples, and issue tracker.
+- Publish the VS Code extension through Marketplace trusted publishing as a pre-release.
+
 ## 0.1.0-alpha.1 - 2026-10-27
 
 - Add stable model export, context slices, impact reports, validation, and a read-only MCP server to the CLI.

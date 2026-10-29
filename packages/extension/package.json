@@ -59,7 +59,7 @@
     },
     "dependencies": {
         "langium": "~4.4.0",
-        "thinai-language": "0.1.0-alpha.1",
+        "thinai-language": "0.1.0-alpha.2",
         "vscode-languageclient": "~10.1.0",
         "vscode-languageserver": "~10.1.0"
     },
