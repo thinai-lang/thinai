@@ -29,11 +29,14 @@ jobs:
         run: |
           # Marketplace only accepts major.minor.patch. A semver prerelease tag
           # such as 0.1.0-alpha.1 is published as 0.1.0 with the pre-release flag.
+          # vsce validates the manifest before applying a version argument, so the
+          # package version has to change first.
           version=$(node -p "require('./package.json').version")
           base=${version%%-*}
           flags=""
           if [ "$base" != "$version" ]; then
             flags="--pre-release"
+            npm pkg set version="$base"
           fi
           echo "Publishing $base (from $version) with flags: ${flags:-none}"
-          npx @vscode/vsce publish "$base" --oidc $flags
+          npx @vscode/vsce publish --oidc $flags
