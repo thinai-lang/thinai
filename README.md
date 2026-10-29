@@ -10,6 +10,13 @@ Thinai's VS Code language support provides completion, navigation, diagnostics,
 references, document symbols, hover, formatting, and import quick fixes for
 `.tni` files.
 
+## Support
+
+Report bugs, documentation problems, and feature requests in the public
+[issue tracker](https://github.com/thinai-lang/issues). The source repository is
+private during the alpha. Report security vulnerabilities privately through
+GitHub advisories, not in a public issue.
+
 ## Get started
 
 - Explore the [language guides](https://thinai-lang.github.io/) for strategic and
