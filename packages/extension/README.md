@@ -4,7 +4,8 @@ Thinai is a domain-specific language for modeling domain-driven design (DDD).
 This extension provides language support for `.tni` files:
 
 - completion for declarations, paths, specifications, and imports
-- go-to-definition and import quick fixes
+- go-to-definition, find-all-references, document symbols, and hover
+- import quick fixes
 - validation and diagnostics
 - document formatting
 - semantic highlighting and selection ranges

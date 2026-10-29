@@ -7,7 +7,8 @@ Describe subdomains, bounded contexts, aggregates, services, events, and user
 journeys in a shared model that is easy to navigate and evolve across files.
 
 Thinai's VS Code language support provides completion, navigation, diagnostics,
-formatting, and import quick fixes for `.tni` files.
+references, document symbols, hover, formatting, and import quick fixes for
+`.tni` files.
 
 ## Get started
 

@@ -559,8 +559,9 @@ Identifiers are ASCII-only, including quoted names; quoted names may contain
 spaces and hyphens but not non-ASCII letters.
 
 The language server provides keyword and cross-reference completion,
-navigation, diagnostics, import-path completion, document formatting, and quick
-fixes for unresolved declarations that can be imported. Formatting uses the
+navigation, references, document symbols, hover, diagnostics, import-path
+completion, document formatting, and quick fixes for unresolved declarations
+that can be imported. Formatting uses the
 editor's indentation options; the VS Code extension defaults Thinai files to two
 spaces.
 
