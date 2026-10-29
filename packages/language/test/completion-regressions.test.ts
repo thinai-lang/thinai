@@ -478,6 +478,22 @@ in bounded context Ordering {
         expect(typedLabels).not.toContain('Outer.Foreign');
     });
 
+    test('keeps exposure completion responses JSON-serializable', async () => {
+        const result = await build(`bounded context O
+in bounded context O {
+    module M {
+        exposes ${marker}
+        value object V {
+            raw: string
+        }
+    }
+}`);
+        expect(() => JSON.stringify(result.completion)).not.toThrow();
+        const item = result.completion?.items.find(candidate => candidate.label === 'V');
+        expect(item).toBeDefined();
+        expect(item).not.toHaveProperty('nodeDescription');
+    });
+
     test('does not offer an already exposed declaration again', async () => {
         const afterComma = await build(`bounded context Ordering
 in bounded context Ordering {

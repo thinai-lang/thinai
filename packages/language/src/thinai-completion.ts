@@ -597,16 +597,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const completion = this.dedupeCompletionItems(
             await this.getCompletionInternal(document, params, cancelToken)
         );
-        return completion && indentation
+        const serializable = completion
+            ? { ...completion, items: completion.items.map(toSerializableCompletionItem) }
+            : completion;
+        return serializable && indentation
             ? {
-                ...completion,
+                ...serializable,
                 items: applyConfiguredIndentationToCompletions(
-                    completion.items,
+                    serializable.items,
                     indentation.tabSize,
                     indentation.insertSpaces
                 )
             }
-            : completion;
+            : serializable;
     }
 
     /**
@@ -2034,4 +2037,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }));
     }
 
+}
+
+
+/**
+ * Langium completion values may carry an AstNodeDescription with a live AST
+ * node. That object is useful internally, but it contains CST parent links and
+ * cannot be serialized by an LSP client. Only keep valid CompletionItem fields.
+ */
+function toSerializableCompletionItem(item: CompletionItem): CompletionItem {
+    const value = item as CompletionItem & { nodeDescription?: unknown; node?: unknown };
+    if (!('nodeDescription' in value) && !('node' in value)) {
+        return item;
+    }
+    const { nodeDescription: _nodeDescription, node: _node, ...rest } = value;
+    return rest;
 }
