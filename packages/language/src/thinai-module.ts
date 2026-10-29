@@ -1,7 +1,21 @@
-import { type Module, inject } from 'langium';
-import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
+import { type Module, createGrammarConfig, inject } from 'langium';
+import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices, type PartialLangiumSharedServices } from 'langium/lsp';
 import { ThinaiGeneratedModule, ThinaiGeneratedSharedModule } from './generated/module.js';
 import { ThinaiValidator, registerValidationChecks } from './thinai-validator.js';
+import { ThinaiScopeComputation } from './thinai-scope-computation.js';
+import { ThinaiScopeProvider } from './thinai-scope-provider.js';
+import { ThinaiDocumentBuilder } from './thinai-document-builder.js';
+import { ThinaiCompletionProvider } from './thinai-completion.js';
+import { ThinaiCodeActionProvider } from './thinai-code-actions.js';
+import { ThinaiValueConverter } from './thinai-value-converter.js';
+import { ThinaiTokenBuilder } from './thinai-token-builder.js';
+import { createThinaiParser, ThinaiParserErrorMessageProvider } from './thinai-parser.js';
+import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
+import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
+import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
+import { ThinaiFormatter } from './thinai-formatter.js';
+import { ThinaiHoverProvider } from './thinai-hover-provider.js';
+import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -18,14 +32,45 @@ export type ThinaiAddedServices = {
  */
 export type ThinaiServices = LangiumServices & ThinaiAddedServices
 
+export const ThinaiSharedModule: Module<LangiumSharedServices, PartialLangiumSharedServices> = {
+    lsp: {
+        NodeKindProvider: () => new ThinaiNodeKindProvider()
+    },
+    workspace: {
+        DocumentBuilder: services => new ThinaiDocumentBuilder(services)
+    }
+};
+
 /**
  * Dependency injection module that overrides Langium default services and contributes the
  * declared custom services. The Langium defaults can be partially specified to override only
  * selected services, while the custom services must be fully specified.
  */
 export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & ThinaiAddedServices> = {
+    references: {
+        ScopeComputation: services => new ThinaiScopeComputation(services),
+        ScopeProvider: services => new ThinaiScopeProvider(services)
+    },
+    parser: {
+        GrammarConfig: services => ({
+            ...createGrammarConfig(services),
+            nameRegexp: THINAI_NAME_CHARACTER_REGEXP
+        }),
+        TokenBuilder: () => new ThinaiTokenBuilder(),
+        ValueConverter: () => new ThinaiValueConverter(),
+        ParserErrorMessageProvider: () => new ThinaiParserErrorMessageProvider(),
+        LangiumParser: services => createThinaiParser(services)
+    },
+    lsp: {
+        Formatter: () => new ThinaiFormatter(),
+        CodeActionProvider: services => new ThinaiCodeActionProvider(services),
+        CompletionProvider: services => new ThinaiCompletionProvider(services),
+        DefinitionProvider: services => new ThinaiDefinitionProvider(services),
+        HoverProvider: services => new ThinaiHoverProvider(services),
+        SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)
+    },
     validation: {
-        ThinaiValidator: () => new ThinaiValidator()
+        ThinaiValidator: services => new ThinaiValidator(services)
     }
 };
 
@@ -50,7 +95,8 @@ export function createThinaiServices(context: DefaultSharedModuleContext): {
 } {
     const shared = inject(
         createDefaultSharedModule(context),
-        ThinaiGeneratedSharedModule
+        ThinaiGeneratedSharedModule,
+        ThinaiSharedModule
     );
     const Thinai = inject(
         createDefaultModule({ shared }),

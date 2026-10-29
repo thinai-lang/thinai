@@ -1,8 +1,11 @@
 {
     "name": "vscode-thinai",
-    "description": "The extension specific package",
-    "version": "0.0.1",
-    "displayName": "thinai",
+    "publisher": "thinai-lang",
+    "description": "Thinai language support for VS Code",
+    "version": "0.1.0-alpha.1",
+    "license": "MIT",
+    "displayName": "Thinai",
+    "icon": "./icon.png",
     "type": "module",
     "engines": {
         "vscode": "^1.91.0"
@@ -11,32 +14,52 @@
         "Programming Languages"
     ],
     "contributes": {
-        "languages": [{
-            "id": "thinai",
-            "aliases": ["Thinai", "thinai"],
-            "extensions": [".tni"],
-            "configuration": "./language-configuration.json"
-        }],
-        "grammars": [{
-            "language": "thinai",
-            "scopeName": "source.thinai",
-            "path": "syntaxes/thinai.tmLanguage.json"
-        }]
+        "configurationDefaults": {
+            "[thinai]": {
+                "editor.detectIndentation": false,
+                "editor.insertSpaces": true,
+                "editor.tabSize": 2,
+                "files.insertFinalNewline": true,
+                "files.trimTrailingWhitespace": true
+            }
+        },
+        "languages": [
+            {
+                "id": "thinai",
+                "aliases": [
+                    "Thinai",
+                    "thinai"
+                ],
+                "extensions": [
+                    ".tni"
+                ],
+                "icon": {
+                    "light": "./icons/thinai-light.svg",
+                    "dark": "./icons/thinai-dark.svg"
+                },
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "thinai",
+                "scopeName": "source.thinai",
+                "path": "syntaxes/thinai.tmLanguage.json"
+            }
+        ]
     },
-    "activationEvents": [
-        "onLanguage:thinai"
-    ],
     "main": "./out/extension/main.cjs",
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out syntaxes",
         "vscode:prepublish": "npm run build",
-        "build:prepare": "shx mkdir -p ./syntaxes/ && shx cp -f ../language/syntaxes/thinai.tmLanguage.json ./syntaxes/thinai.tmLanguage.json",
+        "build:prepare": "npm --prefix ../language run langium:generate && shx mkdir -p ./syntaxes/ && shx cp -f ../language/syntaxes/thinai.tmLanguage.json ./syntaxes/thinai.tmLanguage.json",
         "build": "npm run build:prepare && tsc -b tsconfig.json && node esbuild.mjs",
         "build:clean": "npm run clean && npm run build",
         "watch": "npm run build:prepare && concurrently -n tsc,esbuild -c blue,yellow \"tsc -b tsconfig.json --watch\" \"node esbuild.mjs --watch\""
     },
     "dependencies": {
-        "thinai-language": "0.0.1",
+        "langium": "~4.4.0",
+        "thinai-language": "0.1.0-alpha.1",
         "vscode-languageclient": "~10.1.0",
         "vscode-languageserver": "~10.1.0"
     },
@@ -46,6 +69,15 @@
         "esbuild": "0.28.2"
     },
     "vsce": {
-      "dependencies": false
+        "dependencies": false
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/thinai-lang/thinai.git",
+        "directory": "packages/extension"
+    },
+    "homepage": "https://thinai-lang.github.io/",
+    "bugs": {
+        "url": "https://github.com/thinai-lang/thinai/issues"
     }
 }

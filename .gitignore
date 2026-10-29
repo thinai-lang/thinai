@@ -2,6 +2,8 @@
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+/.idea/
+/.langium-ai/
 node_modules/
 dist/
 out/
@@ -9,3 +11,4 @@ out/
 syntaxes/
 *.tsbuildinfo
 *.vsix
+coverage/

@@ -1,53 +1,2285 @@
-import { afterEach, beforeAll, describe, expect, test } from "vitest";
-import { EmptyFileSystem, type LangiumDocument } from "langium";
-import { expandToString as s } from "langium/generate";
-import { clearDocuments, parseHelper } from "langium/test";
-import type { Model } from "thinai-language";
-import { createThinaiServices, isModel } from "thinai-language";
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeAll, describe, expect, test } from 'vitest';
+import { AstUtils, EmptyFileSystem, type AstNode, type LangiumDocument, URI, UriUtils } from 'langium';
+import { expandToString as s } from 'langium/generate';
+import { NodeFileSystem } from 'langium/node';
+import { clearDocuments } from 'langium/test';
+import type { Diagnostic } from 'vscode-languageserver-types';
+import type { Model } from 'thinai-language';
+import { ThinaiDocumentBuilder } from '../src/thinai-document-builder.js';
+import {
+    createThinaiServices,
+    isAggregate,
+    isApplicationService,
+    isBoundedContextPart,
+    isDataObject,
+    isEntity,
+    isModule,
+    isModel,
+    isValueObject
+} from 'thinai-language';
 
 let services: ReturnType<typeof createThinaiServices>;
-let parse:    ReturnType<typeof parseHelper<Model>>;
-let document: LangiumDocument<Model> | undefined;
+let documents: LangiumDocument[] = [];
 
-beforeAll(async () => {
+class TestableThinaiDocumentBuilder extends ThinaiDocumentBuilder {
+    shouldRelinkDocument(document: LangiumDocument, changedUris: Set<string>): boolean {
+        return this.shouldRelink(document, changedUris);
+    }
+}
+
+beforeAll(() => {
     services = createThinaiServices(EmptyFileSystem);
-    parse = parseHelper<Model>(services.Thinai);
-
-    // activate the following if your linking test requires elements from a built-in library, for example
-    // await services.shared.workspace.WorkspaceManager.initializeWorkspace([]);
 });
 
 afterEach(async () => {
-    document && clearDocuments(services.shared, [ document ]);
+    await clearDocuments(services.shared, documents);
+    documents = [];
 });
 
 describe('Linking tests', () => {
+    test('relinks importers when an imported file changes', () => {
+        const importingDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/importing.tni'),
+            'import "./dependency.tni" actor Customer'
+        );
+        documents = [importingDocument];
 
-    test('linking of greetings', async () => {
-        document = await parse(`
-            person Langium
-            Hello Langium!
-        `);
+        const builder = new TestableThinaiDocumentBuilder(services.shared);
+        expect(builder.shouldRelinkDocument(importingDocument, new Set([
+            URI.file('/workspace/dependency.tni').toString()
+        ]))).toBe(true);
+        expect(builder.shouldRelinkDocument(importingDocument, new Set([
+            URI.file('/workspace/unrelated.tni').toString()
+        ]))).toBe(false);
+    });
 
-        expect(
-            // here we first check for validity of the parsed document object by means of the reusable function
-            //  'checkDocumentValid()' to sort out (critical) typos first,
-            // and then evaluate the cross references we're interested in by checking
-            //  the referenced AST element as well as for a potential error message;
-            checkDocumentValid(document)
-                || document.parseResult.value.greetings.map(g => g.person.ref?.name || g.person.error?.message).join('\n')
-        ).toBe(s`
-            Langium
-        `);
+    test('relinks documents with previous linking errors when any URI changes', async () => {
+        const brokenDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/broken-reference.tni'),
+            'bounded context Broken in bounded context Broken { aggregate Sample { root entity Item { identifier id: ItemId missing: MissingType } value object ItemId { raw: string } } }'
+        );
+        documents = [brokenDocument];
+        await services.shared.workspace.DocumentBuilder.build([brokenDocument], { validation: false });
+
+        const builder = new TestableThinaiDocumentBuilder(services.shared);
+        expect(builder.shouldRelinkDocument(brokenDocument, new Set([
+            URI.file('/workspace/unrelated.tni').toString()
+        ]))).toBe(true);
+    });
+
+    test('keeps imported contributions and their consumers linked after incremental updates', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-incremental-'));
+        const catalogUri = URI.file(path.join(directory, 'catalog.tni'));
+        const contributionUri = URI.file(path.join(directory, 'contribution.tni'));
+        const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
+        const files = {
+            [catalogUri.fsPath]: `bounded context Ordering
+in bounded context Ordering {
+    value object OrderId {
+        raw: string
+    }
+}
+`,
+            [contributionUri.fsPath]: `import { Ordering } from "./catalog.tni"
+in bounded context Ordering {
+    value object Status {
+        raw: string
+    }
+}
+`,
+            [consumerUri.fsPath]: `import { Ordering } from "./catalog.tni"
+import "./contribution.tni"
+in bounded context Ordering {
+    data object D {
+        status: Status
+    }
+}
+`
+        };
+        for (const [file, text] of Object.entries(files)) {
+            fs.writeFileSync(file, text);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all([catalogUri, contributionUri, consumerUri].map(uri =>
+            localDocuments.getOrCreateDocument(uri)
+        ));
+        const [catalog, contribution, consumer] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+        const indexNames = (type: string) => localServices.shared.workspace.IndexManager.allElements(type)
+            .toArray()
+            .map(description => description.name)
+            .sort();
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(catalog)).toEqual([]);
+            expect(errors(contribution)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+            expect(indexNames('ValueObject')).toEqual([
+                'Ordering.OrderId',
+                'Ordering.Status'
+            ]);
+
+            const rename = (text: string) => text
+                .replace('import { Ordering }', 'import { Orders }')
+                .replace('in bounded context Ordering', 'in bounded context Orders');
+            const catalogText = fs.readFileSync(catalogUri.fsPath, 'utf8')
+                .replace(/bounded context Ordering/g, 'bounded context Orders');
+            const contributionText = rename(fs.readFileSync(contributionUri.fsPath, 'utf8'));
+            const consumerText = rename(fs.readFileSync(consumerUri.fsPath, 'utf8'));
+            fs.writeFileSync(catalogUri.fsPath, catalogText);
+            fs.writeFileSync(contributionUri.fsPath, contributionText);
+            fs.writeFileSync(consumerUri.fsPath, consumerText);
+
+            await localServices.shared.workspace.DocumentBuilder.update(
+                [catalogUri, contributionUri, consumerUri],
+                []
+            );
+            expect(errors(catalog)).toEqual([]);
+            expect(errors(contribution)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+            expect(indexNames('ValueObject')).toEqual([
+                'Orders.OrderId',
+                'Orders.Status'
+            ]);
+
+            // The contribution changes without an edit to its consumer. The
+            // document builder must relink the consumer so the removed name is
+            // reported, and reindex the contribution under its new name.
+            fs.writeFileSync(
+                contributionUri.fsPath,
+                fs.readFileSync(contributionUri.fsPath, 'utf8').replace(/Status/g, 'State')
+            );
+            await localServices.shared.workspace.DocumentBuilder.update([contributionUri], []);
+            expect(indexNames('ValueObject')).toEqual([
+                'Orders.OrderId',
+                'Orders.State'
+            ]);
+            expect(errors(consumer)).toEqual([
+                "Could not resolve reference to TypeDeclaration named 'Status'."
+            ]);
+
+            fs.writeFileSync(
+                consumerUri.fsPath,
+                fs.readFileSync(consumerUri.fsPath, 'utf8').replace('status: Status', 'status: State')
+            );
+            await localServices.shared.workspace.DocumentBuilder.update([consumerUri], []);
+            expect(errors(consumer)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
+    test('relinks event payload references after an imported payload type changes', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-payload-cache-'));
+        const typesUri = URI.file(path.join(directory, 'types.tni'));
+        const catalogUri = URI.file(path.join(directory, 'catalog.tni'));
+        const mapUri = URI.file(path.join(directory, 'map.tni'));
+        const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
+        const typesText = `bounded context A
+in bounded context A {
+    value object Info {
+        a: string
+    }
+}
+`;
+        const catalogText = `import "./types.tni"
+in bounded context A {
+    module M {
+        exposes E
+        integration event E {
+            info: Info
+        }
+    }
+}
+`;
+        const mapText = `import "./types.tni"
+bounded context B
+context map Fulfillment {
+    customer B -> supplier A
+}
+`;
+        const consumerText = `import "./types.tni"
+import "./catalog.tni"
+import "./map.tni"
+in bounded context B {
+    application service App {
+        method handle(source: A.M.E) {
+            behavior "[[A.M.E.info.a]]"
+        }
+    }
+}
+`;
+        const files = [typesUri, catalogUri, mapUri, consumerUri];
+        const texts = [typesText, catalogText, mapText, consumerText];
+        for (let index = 0; index < files.length; index++) {
+            fs.writeFileSync(files[index]!.fsPath, texts[index]!);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all(files.map(uri => localDocuments.getOrCreateDocument(uri)));
+        const [types, , , consumer] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(consumer)).toEqual([]);
+
+            // The payload document is reparsed, but the event declaration in
+            // catalog.tni is not. The cached event contract must still see the
+            // new payload shape.
+            fs.writeFileSync(typesUri.fsPath, typesText.replace('    a: string\n', '    a: string\n    b: string\n'));
+            await localServices.shared.workspace.DocumentBuilder.update([typesUri], []);
+            expect(errors(types)).toEqual([]);
+            expect(errors(consumer)).toEqual([]);
+
+            fs.writeFileSync(consumerUri.fsPath, consumerText.replace('info.a]]', 'info.b]]'));
+            await localServices.shared.workspace.DocumentBuilder.update([consumerUri], []);
+            expect(errors(consumer)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
+    test('does not report an import cycle on a document outside that cycle', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-importer.tni'),
+            'import "./cycle-b.tni"\nbounded context Importer'
+        );
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-b.tni'),
+            'import "./cycle-c.tni"\nbounded context CycleB'
+        );
+        const third = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/cycle-c.tni'),
+            'import "./cycle-b.tni"\nbounded context CycleC'
+        );
+        documents = [first, second, third];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const cycleMessages = (document: LangiumDocument) => (document.diagnostics ?? [])
+            .filter(diagnostic => String(diagnostic.message).includes('Import cycle detected.'))
+            .length;
+        expect(cycleMessages(first)).toBe(0);
+        expect(cycleMessages(second)).toBeGreaterThan(0);
+        expect(cycleMessages(third)).toBeGreaterThan(0);
+    });
+
+    test('reports a duplicate write repository when the new declaration sorts first', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/z-context.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        const existingRepository = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/z-repository.tni'),
+            `import "./z-context.tni"
+             in bounded context Ordering {
+                 repository ExistingRepository { manages Order.Order }
+             }`
+        );
+        documents = [context, existingRepository];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        expect(semanticDiagnostics(existingRepository).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+
+        const addedRepository = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/a-repository.tni'),
+            `import "./z-context.tni"
+             in bounded context Ordering {
+                 repository AddedRepository { manages Order.Order }
+             }`
+        );
+        documents.push(addedRepository);
+        await services.shared.workspace.DocumentBuilder.build([addedRepository], { validation: true });
+
+        expect(semanticDiagnostics(addedRepository).some(diagnostic =>
+            diagnostic.code === 'duplicate-write-repository'
+        )).toBe(true);
+    });
+
+    test('links descriptive guards on method invocations', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/guarded-invocation.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method place() {
+                            invokes ensureOwner when "Place only when [[status]] is Draft."
+                        }
+                        method ensureOwner()
+                        identifier id: OrderId
+                        status: OrderStatus
+                    }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        const model = document.parseResult.value as Model;
+        type GuardedInvocation = {
+            path: Array<{ ref?: AstNode }>;
+            target?: { ref?: AstNode };
+            guard?: { parts: Array<{ target?: { ref?: AstNode } }> };
+        };
+        const context = model.declarations[1] as Model['declarations'][number] & {
+            members: Array<{ members?: Array<{ methods?: Array<{ invocations?: GuardedInvocation[] }> }> }>;
+        };
+        const aggregate = context.members[0];
+        const entity = aggregate.members?.[0];
+        const invocation = entity?.methods?.[0].invocations?.[0];
+        expect(invocation?.target?.ref?.$type).toBe('Method');
+        expect(invocation?.guard?.parts[1].target?.ref?.$type).toBe('Field');
+    });
+
+    test('links canonical context declarations and imported contributions', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            s`
+                subdomain OrderManagement kind core
+                bounded context Ordering realizes OrderManagement
+                in bounded context Ordering {
+                    aggregate Order {
+                        root entity Order {
+                            method place() { emits OrderPlaced }
+                            identifier id: OrderId
+                            status: OrderStatus
+                        }
+                        value object OrderId {
+                            raw: string
+                        }
+                        enum OrderStatus { Draft, Placed }
+                }
+                    repository OrderRepository {
+                        manages Order.Order
+                    }
+                application service OrderApplication {
+                    method placeOrder(id: OrderId) {
+                        invokes Order.Order.place
+                    }
+                    method publishOrderPlaced(source: OrderPlaced) {
+                        emits OrderPlacedV1
+                    }
+                    }
+                    event OrderPlaced
+                    integration event OrderPlacedV1 { orderId: string }
+                }
+            `
+        );
+        const part = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-events.tni'),
+            s`
+                import "./ordering.tni"
+
+                in bounded context Ordering {
+                    event OrderConfirmed
+                    integration event OrderConfirmedV1
+                }
+            `
+        );
+        const shippingContext = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `bounded context Shipping in bounded context Shipping {
+                aggregate Shipment {
+                    root entity Shipment { method start() identifier id: ShipmentId }
+                    value object ShipmentId { raw: string }
+                }
+                repository ShipmentRepository {
+                    manages Shipment.Shipment
+                }
+                factory ShipmentFactory {
+                    method createShipment() returns Shipment.Shipment
+                    }
+                application service ShipmentApplication {
+                    method createShipment() {
+                        invokes ShipmentFactory.createShipment
+                    }
+                }
+            }`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./ordering.tni" import "./shipping.tni" context map Fulfillment {
+                customer Shipping -> supplier Ordering
+            }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping-flow.tni'),
+            `import "./ordering.tni" import "./order-events.tni" import "./shipping.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Shipping {
+                  application service ShipmentEventHandler {
+                        method onOrderPlaced(source: Ordering.OrderPlacedV1) {
+                            invokes ShipmentApplication.createShipment
+                           behavior "Use the public order identifier [[Ordering.OrderPlacedV1.orderId]] from the event."
+                       }
+                  }
+              }`
+        );
+        documents = [context, part, shippingContext, contextMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(checkDocumentValid(context) || checkDocumentValid(part) || checkDocumentValid(consumer)).toBeUndefined();
+        expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const contextModel = context.parseResult.value as Model;
+        const partModel = part.parseResult.value as Model;
+        const consumerModel = consumer.parseResult.value as Model;
+        const contextNode = contextModel.declarations[1];
+        const partNode = partModel.declarations[0];
+        const shipping = consumerModel.declarations[0];
+
+        expect(isModel(contextModel)).toBe(true);
+        expect((contextNode as Model['declarations'][number] & { subdomains: Array<{ target: { ref?: unknown } }> }).subdomains[0].target.ref).toBe(contextModel.declarations[0]);
+        expect(partNode.$type).toBe('BoundedContextPart');
+        expect((partNode as Model['declarations'][number] & { context: { ref?: unknown } }).context.ref).toBe(contextNode);
+        const shippingMembers = (shipping as Model['declarations'][number] & { members: Array<{ $type: string; methods?: Array<{ parameters: Array<{ type?: { ref?: { $type?: string } } }>; invocations?: Array<{ target: { ref?: unknown } }> }> }> }).members;
+        const shippingService = shippingMembers.find(member => member.$type === 'ApplicationService' && member.methods?.some(method => method.parameters.some(parameter =>
+            parameter.type?.ref?.$type === 'DomainEvent' || parameter.type?.ref?.$type === 'IntegrationEvent'
+        )));
+        expect(shippingService?.methods?.[0].parameters[0].type?.ref?.$type).toBe('IntegrationEvent');
+        expect(shippingService?.methods?.[0].invocations?.[0].target.ref).toBeDefined();
+
+        const contextPath = services.Thinai.workspace.AstNodeLocator.getAstNodePath(contextNode);
+        const contextReferences = services.shared.workspace.IndexManager
+            .findAllReferences(contextNode, contextPath)
+            .toArray();
+        expect(contextReferences.some(reference => reference.sourceUri.toString() === part.uri.toString())).toBe(true);
+    });
+
+    test('does not expose workspace-global declarations without an import', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering in bounded context Ordering { event OrderPlaced }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/consumer.tni'),
+            'bounded context Shipping in bounded context Shipping { application service ShipmentApplication { method onOrderPlaced(source: OrderPlaced) {} } }'
+        );
+        documents = [context, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to ParameterType named 'OrderPlaced'"))).toBe(true);
+    });
+
+    test('rejects direct consumption of a private domain event across contexts', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering in bounded context Ordering { event OrderPlaced }'
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            s`
+                import "./ordering.tni"
+
+                bounded context Shipping in bounded context Shipping {
+                    aggregate Shipment {
+                        root entity Shipment {
+                            identifier id: ShipmentId
+                        }
+                        value object ShipmentId {
+                            raw: string
+                        }
+                    }
+                    application service ShipmentApplication {
+                        method createShipment() {}
+                        method onOrderPlaced(source: Ordering.OrderPlaced) { invokes createShipment }
+                    }
+                }
+            `
+        );
+        documents = [ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('domain event can be handled only in its own bounded context'))).toBe(true);
+    });
+
+    test('requires an authorized imported context map to consume an integration event', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering in bounded context Ordering { module Contracts { exposes OrderPlacedV1 integration event OrderPlacedV1 } }'
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `import "./ordering.tni"
+             bounded context Shipping in bounded context Shipping {
+                 aggregate Shipment { root entity Shipment { identifier id: ShipmentId } value object ShipmentId { raw: string } }
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(true);
+    });
+
+    test('authorizes a same-document context-map relationship between local contexts', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map.tni'),
+            `bounded context Ordering
+             bounded context Shipping
+             in bounded context Ordering {
+                 integration event OrderPlacedV1
+             }
+             context map Fulfillment {
+                 customer Shipping -> supplier Ordering
+             }
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('authorizes a same-document context-map relationship for a local query read', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-query-map.tni'),
+            `bounded context Catalog
+             bounded context Ordering
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns string
+                     }
+                 }
+             }
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }
+             in bounded context Ordering {
+                 application service App {
+                     method check() {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+             }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('authorizes event consumption across a partnership without pattern labels', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni"
+             context map Fulfillment {
+                 partner Shipping <-> partner Ordering
+             }`
+        );
+        const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, shippingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shippingPart.parseResult.parserErrors).toHaveLength(0);
+        expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(false);
+    });
+
+    test('allows reads from an exposed external query operation with an authorized context map', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-contexts.tni'),
+            'bounded context Catalog bounded context Ordering'
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/catalog-api.tni'),
+            `import "./query-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                      exposes ProductQueries, ProductInfo
+                      query service ProductQueries {
+                          method findProduct(sku: string) returns List<ProductInfo>
+                      }
+                      data object ProductInfo { address: ProductAddress }
+                      data object ProductAddress { city: string }
+                  }
+             }`
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-map.tni'),
+            `import "./query-contexts.tni"
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/query-consumer.tni'),
+            `import "./query-contexts.tni"
+             import "./catalog-api.tni"
+             import { Commerce } from "./query-map.tni"
+             in bounded context Ordering {
+                 read model OrderSummary {
+                     productAvailable: boolean
+                 }
+                 event OrderPlaced
+                 domain service ProductEligibility {
+                      method canOrder(sku: string) returns boolean {
+                          reads from Catalog.PublicApi.ProductQueries.findProduct
+                              when "Local product facts are unavailable."
+                          behavior "Use [[Catalog.PublicApi.ProductAddress.city]] from the published product result to evaluate eligibility."
+                      }
+                 }
+                 application service OrderApplication {
+                     method checkCatalog(sku: string) {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+                 query service OrderQueries {
+                     method checkCatalog(sku: string) returns boolean {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                     }
+                 }
+                 projector OrderProjector {
+                     method onOrderPlaced(source: OrderPlaced) {
+                         reads from Catalog.PublicApi.ProductQueries.findProduct
+                         projects OrderSummary
+                     }
+                 }
+             }`
+        );
+        documents = [contexts, catalog, contextMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.parseResult.parserErrors).toHaveLength(0);
+        expect(consumer.diagnostics?.filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+        expect(consumer.diagnostics?.some(diagnostic => diagnostic.severity === 2 &&
+            String(diagnostic.message).includes('projector reading an external query API'))).toBe(true);
+
+        const nestedFieldOffset = consumer.textDocument.getText().indexOf('ProductAddress.city') +
+            'ProductAddress.ci'.length;
+        const nestedFieldCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(nestedFieldOffset)
+        });
+        expect(nestedFieldCompletion?.items.some(item => item.label === 'city')).toBe(true);
+    });
+
+    test('pattern labels do not control event authorization', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni"
+             context map Fulfillment {
+                 partner Shipping <-> partner Ordering { integrationPatterns: ["OpenHostService"] }
+             }`
+        );
+        const shippingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, shippingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shippingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(false);
+    });
+
+    test('customer-supplier authorization does not permit supplier consumption of customer events', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni"
+             context map Fulfillment {
+                 customer Shipping -> supplier Ordering
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Ordering {
+                 application service OrderApplication {
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(true);
+    });
+
+    test('authorizes partnership event consumption in the reverse direction too', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni"
+             context map Fulfillment {
+                 partner Shipping <-> partner Ordering
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Ordering {
+                 application service OrderApplication {
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(false);
+    });
+
+    test('allows equivalent relationships to be repeated across imported context maps', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping shared kernel CommonTypes {}'
+        );
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-one.tni'),
+            'import "./repeated-map-contexts.tni" context map FulfillmentA { customer Shipping -> supplier Ordering sharedKernel CommonTypes { participants: [Ordering, Shipping] } }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-two.tni'),
+            'import "./repeated-map-contexts.tni" context map FulfillmentB { customer Shipping -> supplier Ordering }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repeated-map-consumer.tni'),
+            `import "./repeated-map-contexts.tni"
+             import { FulfillmentA } from "./repeated-map-one.tni"
+             import { FulfillmentB } from "./repeated-map-two.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, firstMap, secondMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'Imported context maps'
+        ))).toBe(false);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(false);
+    });
+
+    test('rejects conflicting relationships between imported context maps and denies authorization', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const partnershipMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-partnership.tni'),
+            'import "./conflicting-map-contexts.tni" context map Partners { partner Ordering <-> partner Shipping }'
+        );
+        const separateWaysMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-separate-ways.tni'),
+            'import "./conflicting-map-contexts.tni" context map Separate { separateWays Ordering -x- Shipping }'
+        );
+        const consumerText = `import "./conflicting-map-contexts.tni"
+             import { Partners } from "./conflicting-map-partnership.tni"
+             import { Separate } from "./conflicting-map-separate-ways.tni"
+             in bounded context Shipping {
+                 application service ShipmentApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/conflicting-map-consumer.tni'), consumerText
+        );
+        documents = [contexts, partnershipMap, separateWaysMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            "define conflicting relationships between 'Ordering' and 'Shipping'"
+        ))).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(true);
+        const prefixEnd = consumerText.indexOf('Ordering.OrderPlacedV1') + 'Ordering.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(prefixEnd)
+        });
+        expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
+    });
+
+    test('does not use a local context map to authorize external event or query references', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-contexts.tni'),
+            `bounded context Ordering
+             bounded context Shipping
+             bounded context Catalog
+             in bounded context Ordering {
+                 integration event OrderPlacedV1
+             }`
+        );
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-catalog.tni'),
+            `import "./local-map-authorization-contexts.tni"
+             in bounded context Catalog {
+                 module PublicApi {
+                     exposes ProductQueries, ProductInfo
+                     query service ProductQueries {
+                         method findProduct(sku: string) returns ProductInfo
+                     }
+                     data object ProductInfo { available: boolean }
+                 }
+             }`
+        );
+        const consumerText = `import "./local-map-authorization-contexts.tni"
+            import "./local-map-authorization-catalog.tni"
+            context map LocalRelations {
+                customer Shipping -> supplier Ordering
+                customer Shipping -> supplier Catalog
+            }
+            context map LocalSeparation {
+                separateWays Shipping -x- Ordering
+            }
+            in bounded context Shipping {
+                application service ShipmentApplication {
+                    method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                    method checkCatalog(sku: string) {
+                        reads from Catalog.PublicApi.ProductQueries.findProduct
+                    }
+                }
+            }`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-authorization-consumer.tni'), consumerText
+        );
+        documents = [contexts, catalog, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints')
+        )).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('requires an exposed query contract and an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints')
+        )).toBe(true);
+        expect(consumer.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('Imported context maps')
+        )).toBe(false);
+
+        const eventPrefixEnd = consumerText.indexOf('Ordering.OrderPlacedV1') + 'Ordering.'.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(eventPrefixEnd)
+        });
+        expect(completion?.items.some(item => item.label === 'OrderPlacedV1')).toBe(false);
+    });
+
+    test('reports local and imported context-map conflicts on current-document ranges', async () => {
+        const local = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/local-map-conflict.tni'),
+            `bounded context Alpha
+bounded context Beta
+context map First {
+    customer Alpha -> supplier Beta
+}
+context map Second {
+    separateWays Alpha -x- Beta
+}
+`
+        );
+        documents = [local];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const localConflict = (local.diagnostics ?? []).find(diagnostic =>
+            String(diagnostic.message).includes("Context maps 'First' and 'Second' define conflicting relationships")
+        );
+        expect(localConflict).toBeDefined();
+        expect(local.textDocument.getText(localConflict!.range)).toContain('separateWays');
+
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-map-one.tni'),
+            'import "./import-range-contexts.tni"\ncontext map First { partner Alpha <-> partner Beta }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-map-two.tni'),
+            'import "./import-range-contexts.tni"\ncontext map Second { separateWays Alpha -x- Beta }'
+        );
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-contexts.tni'),
+            'bounded context Alpha\nbounded context Beta\n'
+        );
+        const consumerText = `import "./import-range-contexts.tni"
+import { First } from "./import-range-map-one.tni"
+import { Second } from "./import-range-map-two.tni"
+`;
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-range-consumer.tni'), consumerText
+        );
+        documents = [firstMap, secondMap, contexts, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const importedConflict = (consumer.diagnostics ?? []).find(diagnostic =>
+            String(diagnostic.message).includes("Imported context maps 'First' and 'Second'")
+        );
+        expect(importedConflict).toBeDefined();
+        const conflictText = consumer.textDocument.getText(importedConflict!.range);
+        expect(conflictText).toContain('./');
+        expect(conflictText).not.toContain('separateWays');
+    });
+
+    test('does not treat different integration patterns across imported maps as a conflict', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-contexts.tni'),
+            'bounded context Ordering in bounded context Ordering { integration event OrderPlacedV1 } bounded context Shipping'
+        );
+        const firstMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-map-one.tni'),
+            'import "./pattern-conflict-contexts.tni" context map FulfillmentA { customer Shipping { integrationPatterns: ["AntiCorruptionLayer"] } -> supplier Ordering }'
+        );
+        const secondMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-map-two.tni'),
+            'import "./pattern-conflict-contexts.tni" context map FulfillmentB { customer Shipping { integrationPatterns: ["OpenHostService"] } -> supplier Ordering }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/pattern-conflict-consumer.tni'),
+            `import "./pattern-conflict-contexts.tni"
+             import { FulfillmentA } from "./pattern-conflict-map-one.tni"
+             import { FulfillmentB } from "./pattern-conflict-map-two.tni"
+             in bounded context Shipping {
+                 application service ShippingApplication {
+                     method onOrderPlaced(source: Ordering.OrderPlacedV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, firstMap, secondMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            "define conflicting relationships between 'Ordering' and 'Shipping'"
+        ))).toBe(false);
+        expect(consumer.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(false);
+    });
+
+    test('denies shared-kernel use when imported context maps conflict', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-contexts.tni'),
+            `bounded context Alpha
+bounded context Beta
+shared kernel Common {
+    value object Code {
+        raw: string
+    }
+}`
+        );
+        const sharedMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-map-one.tni'),
+            `import "./shared-conflict-contexts.tni"
+context map SharedTypes {
+    sharedKernel Common {
+        participants: [Alpha, Beta]
+    }
+}`
+        );
+        const separateMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-map-two.tni'),
+            `import "./shared-conflict-contexts.tni"
+context map SeparateTypes {
+    separateWays Alpha -x- Beta
+}`
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-conflict-consumer.tni'),
+            `import "./shared-conflict-contexts.tni"
+import { SharedTypes } from "./shared-conflict-map-one.tni"
+import { SeparateTypes } from "./shared-conflict-map-two.tni"
+in bounded context Beta {
+    value object Local {
+        code: Common.Code
+    }
+}`
+        );
+        documents = [contexts, sharedMap, separateMap, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const messages = (consumer.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages).toContain("Imported context maps 'SharedTypes' and 'SeparateTypes' define conflicting relationships between 'Alpha' and 'Beta'.");
+        expect(messages).toContain('Using a shared-kernel type requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.');
+    });
+
+    test('separate-ways relationships do not authorize event consumption', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering bounded context Shipping in bounded context Shipping { integration event ShipmentSentV1 }'
+        );
+        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map.tni'),
+            `import "./contexts.tni"
+             context map Fulfillment {
+                 separateWays Ordering -x- Shipping
+             }`
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `import "./contexts.tni" import { Fulfillment } from "./context-map.tni"
+             in bounded context Ordering {
+                 application service OrderApplication {
+                     method onShipmentSent(source: Shipping.ShipmentSentV1) {}
+                 }
+             }`
+        );
+        documents = [contexts, contextMap, orderingPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(orderingPart.diagnostics?.some(diagnostic => String(diagnostic.message).includes(
+            'requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints'
+        ))).toBe(true);
+    });
+
+    test('links shared values, identifier mirrors, and module exposures', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/common.tni'),
+            'shared kernel CommonTypes { value object Currency { code: string } }'
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            s`
+                import { CommonTypes } from "./common.tni"
+
+                bounded context Ordering in bounded context Ordering {
+                    aggregate Order {
+                        root entity Order {
+                            identifier id: OrderId
+                            currency: CommonTypes.Currency
+                        }
+                        value object OrderId {
+                            raw: string
+                        }
+                    }
+                }
+                bounded context Peer
+                context map SharedTypes {
+                    sharedKernel CommonTypes { participants: [Ordering, Peer] }
+                }
+            `
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            s`
+                import "./ordering.tni"
+
+                bounded context Shipping in bounded context Shipping {
+                    value object OrderId mirrors Ordering.Order.OrderId {
+                        raw: string
+                    }
+
+                    aggregate Shipment {
+                        root entity Shipment {
+                            identifier id: ShipmentId
+                            orderId: OrderId
+                        }
+                        value object ShipmentId {
+                            raw: string
+                        }
+                    }
+
+                    module Public {
+                        exposes PublicCode
+                        value object PublicCode {
+                            raw: string
+                        }
+                    }
+
+                    module Consumer depends on Public {
+                        value object LocalCode {
+                            publicCode: PublicCode
+                        }
+                    }
+                }
+            `
+        );
+        documents = [common, ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(shipping).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        type TestNode = {
+            $type: string;
+            name: string;
+            fields?: Array<{ type?: { ref?: unknown } }>;
+            members?: TestNode[];
+            mirrors?: { ref?: unknown };
+        };
+        const orderingModel = ordering.parseResult.value as Model;
+        const shippingModel = shipping.parseResult.value as Model;
+        const orderingContext = orderingModel.declarations[1] as Model['declarations'][number] & { members: TestNode[] };
+        const orderAggregate = orderingContext.members.find(member => member.$type === 'Aggregate');
+        const orderRoot = orderAggregate?.members?.find(member => member.name === 'Order');
+        const shippingPart = shippingModel.declarations[1] as Model['declarations'][number] & { members: TestNode[] };
+        const mirroredId = shippingPart.members.find(member => member.$type === 'ValueObject' && member.mirrors);
+        const publicModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Public');
+        const consumerModule = shippingPart.members.find(member => member.$type === 'Module' && member.name === 'Consumer');
+        const localCode = consumerModule?.members?.find(member => member.name === 'LocalCode');
+
+        expect(mirroredId?.mirrors?.ref).toBe(orderAggregate?.members?.find(member => member.name === 'OrderId'));
+        expect(localCode?.fields?.[0].type?.ref).toBe(publicModule?.members?.find(member => member.name === 'PublicCode'));
+        expect(orderRoot).toBeDefined();
+    });
+
+    test('navigates repository ownership to the aggregate and its root entity', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/repository-root.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                repository OrderRepository {
+                    manages Order.Order
+                }
+            }`
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        const pathOffset = text.indexOf('Order.Order', text.indexOf('repository'));
+        const expected = [
+            { source: pathOffset, declaration: text.indexOf('aggregate Order') + 'aggregate '.length },
+            { source: pathOffset + 'Order.'.length, declaration: text.indexOf('root entity Order') + 'root entity '.length }
+        ];
+        for (const segment of expected) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.source)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(document.textDocument.positionAt(segment.declaration));
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.source),
+                end: document.textDocument.positionAt(segment.source + 'Order'.length)
+            });
+        }
+    });
+
+    test('navigates qualified module dependencies and emitted-event paths', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/qualified-list-paths.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                module Contracts {
+                    exposes OrderPlaced
+                    event OrderPlaced
+                }
+                module Api depends on Ordering.Contracts { value object ApiCode { raw: string } }
+                aggregate Order {
+                    root entity Order {
+                        method place() { emits Contracts.OrderPlaced }
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        const paths = [
+            {
+                offset: text.indexOf('Ordering.Contracts'),
+                parts: ['Ordering', 'Contracts'],
+                declarations: [text.indexOf('bounded context Ordering') + 'bounded context '.length, text.indexOf('module Contracts') + 'module '.length]
+            },
+            {
+                offset: text.indexOf('Contracts.OrderPlaced'),
+                parts: ['Contracts', 'OrderPlaced'],
+                declarations: [text.indexOf('module Contracts') + 'module '.length, text.indexOf('event OrderPlaced') + 'event '.length]
+            }
+        ];
+        for (const path of paths) {
+            let partOffset = 0;
+            for (let index = 0; index < path.parts.length; index++) {
+                const segmentOffset = path.offset + partOffset;
+                const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                    textDocument: { uri: document.uri.toString() },
+                    position: document.textDocument.positionAt(segmentOffset)
+                });
+                expect(definitions?.[0]?.targetSelectionRange.start).toEqual(
+                    document.textDocument.positionAt(path.declarations[index])
+                );
+                expect(definitions?.[0]?.originSelectionRange).toEqual({
+                    start: document.textDocument.positionAt(segmentOffset),
+                    end: document.textDocument.positionAt(segmentOffset + path.parts[index].length)
+                });
+                partOffset += path.parts[index].length + 1;
+            }
+        }
+    });
+
+    test('resolves every mirror path segment through an imported bounded-context contribution', async () => {
+        const context = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-context.tni'),
+            'bounded context Ordering'
+        );
+        const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-part.tni'),
+            `import "./ordering-context.tni"
+             in bounded context Ordering {
+                 aggregate Order {
+                     root entity Order { identifier id: OrderId }
+                     value object OrderId { raw: string }
+                 }
+             }`
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping-mirror.tni'),
+            `import "./ordering-part.tni"
+             bounded context Shipping in bounded context Shipping {
+                 value object OrderId mirrors Ordering.Order.OrderId { raw: string }
+             }`
+        );
+        documents = [context, orderingPart, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(shipping).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const mirror = AstUtils.streamAst(shipping.parseResult.value).toArray()
+            .find(node => node.$type === 'ValueObject' && 'name' in node && node.name === 'OrderId');
+        expect(mirror && isValueObject(mirror)).toBe(true);
+        if (!mirror || !isValueObject(mirror)) {
+            return;
+        }
+        expect(mirror.mirrorsPath.map(reference =>
+            reference.ref && 'name' in reference.ref ? String(reference.ref.name) : undefined
+        )).toEqual(['Ordering', 'Order']);
+        expect(mirror.mirrors?.ref && 'name' in mirror.mirrors.ref ? String(mirror.mirrors.ref.name) : undefined).toBe('OrderId');
+
+        const pathOffset = shipping.textDocument.getText().indexOf('Ordering.Order.OrderId');
+        const expectedDefinitions = [
+            { start: pathOffset, document: context, target: context.textDocument.getText().indexOf('Ordering') },
+            { start: pathOffset + 'Ordering.'.length, document: orderingPart, target: orderingPart.textDocument.getText().indexOf('aggregate Order') + 'aggregate '.length },
+            { start: pathOffset + 'Ordering.Order.'.length, document: orderingPart, target: orderingPart.textDocument.getText().indexOf('OrderId { raw') }
+        ];
+        for (const expected of expectedDefinitions) {
+            const links = await services.Thinai.lsp.DefinitionProvider?.getDefinition(shipping, {
+                textDocument: { uri: shipping.uri.toString() },
+                position: shipping.textDocument.positionAt(expected.start)
+            });
+            expect(links).toHaveLength(1);
+            expect(links?.[0]?.originSelectionRange).toEqual({
+                start: shipping.textDocument.positionAt(expected.start),
+                end: shipping.textDocument.positionAt(expected.start + shipping.textDocument.getText().slice(expected.start).match(/^\w+/)![0].length)
+            });
+            expect(links?.[0]?.targetSelectionRange.start).toEqual(expected.document.textDocument.positionAt(expected.target));
+        }
+    });
+
+    test('navigates multiple method-level projector targets', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-target-projector.tni'),
+            `bounded context Commerce in bounded context Commerce {
+                read model OrderSummary { orderId: string }
+                read model CustomerSummary { customerId: string }
+                event EntityChanged
+                projector SearchProjection {
+                    method onEntityChanged(source: EntityChanged) {
+                        projects OrderSummary, CustomerSummary
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const text = document.textDocument.getText();
+        for (const name of ['OrderSummary', 'CustomerSummary']) {
+            const source = text.indexOf(name, text.indexOf('projects '));
+            const target = text.indexOf(`${name} {`);
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(source)
+            });
+            expect(definitions).toHaveLength(1);
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(source),
+                end: document.textDocument.positionAt(source + name.length)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(document.textDocument.positionAt(target));
+        }
+    });
+
+    test('navigates transition fields and enum values', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/transition-navigation.tni'),
+            `bounded context Shipping in bounded context Shipping {
+                aggregate Shipment {
+                    root entity Shipment {
+                        method ship() { transition status from Open to Shipped }
+                        identifier id: ShipmentId
+                        status: ShipmentStatus
+                    }
+                    value object ShipmentId { raw: string }
+                    enum ShipmentStatus { Open, Shipped }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const text = document.textDocument.getText();
+        const transition = text.indexOf('transition status');
+        const targets = [
+            { source: transition + 'transition '.length, name: 'status', declaration: text.indexOf('status: ShipmentStatus') },
+            { source: text.indexOf('Open to Shipped'), name: 'Open', declaration: text.indexOf('Open, Shipped') },
+            { source: text.indexOf('Open, Shipped') + 'Open, '.length, name: 'Shipped', declaration: text.indexOf('Open, Shipped') + 'Open, '.length }
+        ];
+        for (const target of targets) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(target.source)
+            });
+            expect(definitions).toHaveLength(1);
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(target.source),
+                end: document.textDocument.positionAt(target.source + target.name.length)
+            });
+            expect(definitions?.[0]?.targetSelectionRange.start).toEqual(
+                document.textDocument.positionAt(target.declaration)
+            );
+        }
+    });
+
+    test('rejects direct use of a value object across contexts', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            'bounded context Ordering in bounded context Ordering { value object InternalCode { raw: string } }'
+        );
+        const shipping = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shipping.tni'),
+            s`
+                import "./ordering.tni"
+
+                bounded context Shipping in bounded context Shipping {
+                    value object LocalCode {
+                        source: Ordering.InternalCode
+                    }
+                }
+            `
+        );
+        documents = [ordering, shipping];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(shipping.diagnostics?.some(diagnostic => String(diagnostic.message).includes('cannot directly use a value object from another bounded context'))).toBe(true);
+    });
+
+    test('links inline method references in command behavior specifications', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        method ensureOwner()
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                repository OrderRepository {
+                    manages Order.Order
+                }
+                application service OrderApplication {
+                     method placeOrder(id: OrderId) {
+                         invokes Order.Order.ensureOwner
+                         behavior "Check [[Order.Order.ensureOwner]] before placing."
+                     }
+                }
+            }`
+        );
+        documents = [ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(ordering.parseResult.parserErrors).toHaveLength(0);
+        const model = ordering.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[1];
+        expect(context && isBoundedContextPart(context)).toBe(true);
+        if (!context || !isBoundedContextPart(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const root = aggregate?.members.find(isEntity);
+        const method = root?.methods[0];
+        const applicationService = context.members.find(member => member.$type === 'ApplicationService') as {
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: unknown }; targets: Array<{ ref?: unknown }> }> } }> }>;
+        } | undefined;
+        const commandMethod = applicationService?.methods[0];
+        const part = commandMethod?.behaviors[0].description.parts.find(part => part.target);
+        const finalTarget = part?.targets.at(-1)?.ref ?? part?.target?.ref;
+
+        expect(method).toBeDefined();
+        expect(finalTarget).toBe(method);
+        expect(semanticDiagnostics(ordering).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+
+        const methodOffset = ordering.textDocument.getText().indexOf('Order.Order.ensureOwner') + 'Order.Order.'.length;
+        const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(ordering, {
+            textDocument: { uri: ordering.uri.toString() },
+            position: ordering.textDocument.positionAt(methodOffset)
+        });
+        expect(definitions?.some(definition => definition.targetUri === ordering.uri.toString())).toBe(true);
+    });
+
+    test('links entity fields and factory creation methods in behavior specifications', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/factory-links.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                        status: string
+                    }
+                    value object OrderId { raw: string }
+                }
+                factory OrderFactory {
+                    method createOrder(id: OrderId) returns Order.Order
+                    }
+                repository OrderRepository {
+                    manages Order.Order
+                }
+                application service OrderApplication {
+                    method placeOrder() {
+                        invokes OrderFactory.createOrder
+                        behavior "Create through [[OrderFactory.createOrder]] using [[Order.Order.status]] and [[Order.OrderId.raw]]."
+                    }
+                }
+            }`
+        );
+        documents = [ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(ordering.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(ordering).filter(diagnostic => diagnostic.severity === 1)).toHaveLength(0);
+        const model = ordering.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[1];
+        expect(context && isBoundedContextPart(context)).toBe(true);
+        if (!context || !isBoundedContextPart(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const root = aggregate?.members.find(isEntity);
+        const factory = context.members.find(member => member.$type === 'Factory') as { methods: Array<{ name: string }> } | undefined;
+        const service = context.members.find(member => member.$type === 'ApplicationService') as {
+            methods: Array<{ behaviors: Array<{ description: { parts: Array<{ target?: { ref?: AstNode }; targets: Array<{ ref?: AstNode }> }> } }> }>;
+        } | undefined;
+        const targets = service?.methods[0].behaviors[0].description.parts
+            .map(part => part.targets.at(-1)?.ref ?? part.target?.ref)
+            .filter((target): target is AstNode => target !== undefined) ?? [];
+
+        expect(factory?.methods[0].name).toBe('createOrder');
+        expect(targets.map(target => target.$type)).toEqual(['Method', 'Field', 'Field']);
+        expect(targets[0]).toBe(factory?.methods[0]);
+        expect(targets[1]).toBe(root?.fields.find(field => field.name === 'status'));
+        const identifier = aggregate?.members.find(member => member.$type === 'ValueObject') as { fields: Array<AstNode & { name: string }> } | undefined;
+        expect(targets[2]).toBe(identifier?.fields.find(field => field.name === 'raw'));
+    });
+
+    test('navigates each segment of one nested specification reference independently', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/nested-specification-path.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                value object AddressInput { street: string }
+                value object OrderInput { address: AddressInput }
+                aggregate Order {
+                    root entity Order {
+                        method place(input: OrderInput) {
+                            behavior "Place the order using [[input.address.street]]."
+                        }
+                        identifier id: OrderId
+                    }
+                    value object OrderId { raw: string }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const model = document.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const context = model.declarations[1];
+        expect(isBoundedContextPart(context)).toBe(true);
+        if (!isBoundedContextPart(context)) {
+            return;
+        }
+        const aggregate = context.members.find(isAggregate);
+        const order = aggregate?.members.find(isEntity);
+        const method = order?.methods[0];
+        const parameter = method?.parameters[0];
+        const valueObjects = context.members.filter(isValueObject);
+        const input = valueObjects.find(valueObject => valueObject.name === 'OrderInput');
+        const address = input?.fields.find(field => field.name === 'address')?.type?.ref;
+        const street = isValueObject(address) || isDataObject(address)
+            ? address.fields.find(field => field.name === 'street')
+            : undefined;
+        const parts = method?.behaviors[0].description.parts;
+        const linkedPart = parts?.find(part => part.target);
+
+        expect(linkedPart?.target?.ref).toBe(parameter);
+        expect(linkedPart?.targets.map(reference => reference.ref)).toEqual([
+            input?.fields.find(field => field.name === 'address'),
+            street
+        ]);
+
+        const text = document.textDocument.getText();
+        const pathOffset = text.indexOf('input.address.street');
+        const definitionAt = async (offset: number) => {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        expect(await definitionAt(pathOffset)).toEqual(
+            document.textDocument.positionAt(text.indexOf('input: OrderInput'))
+        );
+        expect(await definitionAt(pathOffset + 'input.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('address: AddressInput') )
+        );
+        expect(await definitionAt(pathOffset + 'input.address.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('street: string'))
+        );
+        for (const separatorOffset of [pathOffset + 'input'.length, pathOffset + 'input.address'.length]) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(separatorOffset)
+            });
+            const precedingSegment = separatorOffset === pathOffset + 'input'.length ? 'input' : 'address';
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(separatorOffset - precedingSegment.length),
+                end: document.textDocument.positionAt(separatorOffset)
+            });
+        }
+        const rightToLeftSegments = [
+            { offset: pathOffset + 'input.address.'.length, text: 'street' },
+            { offset: pathOffset + 'input.'.length, text: 'address' },
+            { offset: pathOffset, text: 'input' }
+        ];
+        for (const segment of rightToLeftSegments) {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.offset)
+            });
+            expect(definitions?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.offset),
+                end: document.textDocument.positionAt(segment.offset + segment.text.length)
+            });
+        }
+    });
+
+    test('resolves same-suffix value objects, fields, and modules in the owning context', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/duplicate-context-symbols.tni'),
+            `bounded context Shipping in bounded context Shipping {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+                repository OrderRepository {
+                    manages Order.Order
+                }
+                module Contracts {
+                    value object DeliveryCode { raw: string }
+                }
+            }
+            bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { method fulfillItem() identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+                repository OrderRepository {
+                    manages Order.Order
+                }
+                aggregate Invoice {
+                    root entity Invoice { method inspect() identifier id: InvoiceId orderId: Order.OrderId }
+                    value object InvoiceId { raw: string }
+                }
+                repository InvoiceRepository {
+                    manages Invoice.Invoice
+                }
+                module Contracts {
+                    exposes DeliveryCode
+                    value object DeliveryCode { raw: string }
+                }
+                module Api depends on Contracts {
+                    value object ApiCode { code: Contracts.DeliveryCode }
+                }
+                application service InvoiceApplication {
+                    method inspect(id: InvoiceId, code: Contracts.DeliveryCode) {
+                        invokes Invoice.Invoice.inspect
+                        behavior "Use [[Order.OrderId.raw]] and [[Contracts.DeliveryCode.raw]]."
+                         behavior "Discuss aggregate [[Ordering.Order]], entity [[Ordering.Order.Order]], state [[Ordering.Order.OrderStatus.Placed]], and repository [[Ordering.OrderRepository]]."
+                    }
+                }
+                application service OrderApplication {
+                    method fulfillOrder() {
+                        invokes Order.Order.fulfillItem
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.parseResult.parserErrors).toHaveLength(0);
+        const model = document.parseResult.value;
+        expect(model && isModel(model)).toBe(true);
+        if (!model || !isModel(model)) {
+            return;
+        }
+        const ordering = model.declarations.find(declaration =>
+            isBoundedContextPart(declaration) && declaration.context.ref?.name === 'Ordering'
+        );
+        expect(ordering && isBoundedContextPart(ordering)).toBe(true);
+        if (!ordering || !isBoundedContextPart(ordering)) {
+            return;
+        }
+        const aggregates = ordering.members.filter(isAggregate);
+        const order = aggregates.find(aggregate => aggregate.name === 'Order');
+        const invoice = aggregates.find(aggregate => aggregate.name === 'Invoice');
+        const orderId = order?.members.find(isValueObject);
+        const invoiceRoot = invoice?.members.find(isEntity);
+        const orderIdReference = invoiceRoot?.fields.find(field => field.name === 'orderId')?.type?.ref;
+        const modules = ordering.members.filter(isModule);
+        const localContracts = modules.find(module => module.name === 'Contracts');
+        const localDeliveryCode = localContracts?.members.find(isValueObject);
+        const api = modules.find(module => module.name === 'Api');
+        const application = ordering.members.find(isApplicationService);
+        const behaviorTargets = application?.methods[0].behaviors[0].description.parts
+            .flatMap(part => {
+                const target = part.targets.at(-1)?.ref ?? part.target?.ref;
+                return target ? [target] : [];
+            }) ?? [];
+
+        expect(orderIdReference).toBe(orderId);
+        expect(api?.dependencies[0].target.ref).toBe(localContracts);
+        expect(application?.methods[0].parameters[1].type?.ref).toBe(localDeliveryCode);
+        expect(behaviorTargets.map(target => [target.$type, 'name' in target ? target.name : undefined])).toEqual([
+            ['Field', 'raw'],
+            ['Field', 'raw']
+        ]);
+        const declarationLinks = application?.methods[0].behaviors[1].description.parts
+            .flatMap(part => [part.target?.ref, ...part.targets.map(reference => reference.ref)]
+                .filter((target): target is NonNullable<typeof target> => target !== undefined)) ?? [];
+        expect(declarationLinks.map(target => target.$type)).toEqual([
+            'BoundedContext', 'Aggregate',
+            'BoundedContext', 'Aggregate', 'Entity',
+            'BoundedContext', 'Aggregate', 'EnumType', 'EnumValue',
+            'BoundedContext', 'Repository'
+        ]);
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+
+        const text = document.textDocument.getText();
+        const getDefinitionLinks = async (referenceOffset: number) => services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(referenceOffset)
+        });
+        const getDefinitionStart = async (referenceOffset: number) => {
+            const definitions = await getDefinitionLinks(referenceOffset);
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        const orderingOffset = text.indexOf('bounded context Ordering');
+        const valueObjectTypePath = text.indexOf('Order.OrderId');
+        expect(await getDefinitionStart(valueObjectTypePath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('aggregate Order {', orderingOffset) + 'aggregate '.length)
+        );
+        expect(await getDefinitionStart(valueObjectTypePath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string }', orderingOffset))
+        );
+        const typePrefixLink = (await getDefinitionLinks(valueObjectTypePath))?.[0];
+        expect(typePrefixLink?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(valueObjectTypePath),
+            end: document.textDocument.positionAt(valueObjectTypePath + 'Order'.length)
+        });
+        const typeTerminalOffset = valueObjectTypePath + 'Order.'.length;
+        const typeTerminalLink = (await getDefinitionLinks(typeTerminalOffset))?.[0];
+        expect(typeTerminalLink?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(typeTerminalOffset),
+            end: document.textDocument.positionAt(typeTerminalOffset + 'OrderId'.length)
+        });
+        const orderFieldPath = text.indexOf('Order.OrderId.raw');
+        expect(await getDefinitionStart(orderFieldPath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('OrderId { raw: string }', orderingOffset))
+        );
+        expect(await getDefinitionStart(orderFieldPath + 'Order.OrderId.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('raw: string', text.indexOf('value object OrderId', orderingOffset)))
+        );
+        const codePath = text.indexOf('Contracts.DeliveryCode.raw');
+        expect(await getDefinitionStart(codePath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('module Contracts', orderingOffset) + 'module '.length)
+        );
+        expect(await getDefinitionStart(codePath + 'Contracts.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('value object DeliveryCode', orderingOffset) + 'value object '.length)
+        );
+        expect(await getDefinitionStart(codePath + 'Contracts.DeliveryCode.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('raw: string', text.indexOf('value object DeliveryCode', orderingOffset)))
+        );
+        expect(await getDefinitionStart(text.indexOf('depends on Contracts') + 'depends on '.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('Contracts {', orderingOffset))
+        );
+        const invocationPath = text.indexOf('Order.Order.fulfillItem');
+        expect(await getDefinitionStart(invocationPath)).toEqual(
+            document.textDocument.positionAt(text.indexOf('aggregate Order {', orderingOffset) + 'aggregate '.length)
+        );
+        expect(await getDefinitionStart(invocationPath + 'Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('root entity Order {', orderingOffset) + 'root entity '.length)
+        );
+        expect(await getDefinitionStart(invocationPath + 'Order.Order.'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('method fulfillItem()') + 'method '.length)
+        );
+        const finalMethodOffset = text.indexOf('fulfillItem', invocationPath);
+        const finalMethodDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(finalMethodOffset)
+        });
+        expect(finalMethodDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(finalMethodOffset),
+            end: document.textDocument.positionAt(finalMethodOffset + 'fulfillItem'.length)
+        });
+        expect(await getDefinitionStart(finalMethodOffset + 'fulfillItem'.length)).toEqual(
+            document.textDocument.positionAt(text.indexOf('method fulfillItem()') + 'method '.length)
+        );
+        const firstSeparatorOffset = invocationPath + 'Order'.length;
+        const firstSeparatorDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(firstSeparatorOffset)
+        });
+        expect(firstSeparatorDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(firstSeparatorOffset - 'Order'.length),
+            end: document.textDocument.positionAt(firstSeparatorOffset)
+        });
+        const secondSeparatorOffset = invocationPath + 'Order.Order'.length;
+        const secondSeparatorDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(secondSeparatorOffset)
+        });
+        expect(secondSeparatorDefinition?.[0]?.originSelectionRange).toEqual({
+            start: document.textDocument.positionAt(secondSeparatorOffset - 'Order'.length),
+            end: document.textDocument.positionAt(secondSeparatorOffset)
+        });
+
+        const rightToLeftSegments = [
+            { offset: invocationPath + 'Order.Order.'.length, text: 'fulfillItem' },
+            { offset: invocationPath + 'Order.'.length, text: 'Order' },
+            { offset: invocationPath, text: 'Order' }
+        ];
+        for (const segment of rightToLeftSegments) {
+            const links = await services.Thinai.lsp.DefinitionProvider?.getDefinition(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(segment.offset)
+            });
+            expect(links?.[0]?.originSelectionRange).toEqual({
+                start: document.textDocument.positionAt(segment.offset),
+                end: document.textDocument.positionAt(segment.offset + segment.text.length)
+            });
+        }
+    });
+
+    test('links every segment of a qualified invocation across imported context contributions', async () => {
+        const canonical = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-context.tni'),
+            'bounded context Ordering'
+        );
+        const aggregatePart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-aggregate.tni'),
+            `import "./order-context.tni"
+             in bounded context Ordering {
+                 aggregate Order {
+                     root entity Order { method place() identifier id: OrderId }
+                     value object OrderId { raw: string }
+                 }
+             }`
+        );
+        const applicationPart = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/order-application.tni'),
+            `import "./order-context.tni"
+             import "./order-aggregate.tni"
+             in bounded context Ordering {
+                 application service OrderApplication {
+                     method placeOrder(id: OrderId) {
+                         invokes Order.Order.place
+                     }
+                 }
+             }`
+        );
+        documents = [canonical, aggregatePart, applicationPart];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(applicationPart.parseResult.parserErrors).toHaveLength(0);
+        expect(semanticDiagnostics(applicationPart).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
+        const text = applicationPart.textDocument.getText();
+        const pathOffset = text.indexOf('Order.Order.place');
+        const getDefinition = async (offset: number) => {
+            const definitions = await services.Thinai.lsp.DefinitionProvider?.getDefinition(applicationPart, {
+                textDocument: { uri: applicationPart.uri.toString() },
+                position: applicationPart.textDocument.positionAt(offset)
+            });
+            return definitions?.[0]?.targetSelectionRange.start;
+        };
+        expect(await getDefinition(pathOffset)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('aggregate Order {') + 'aggregate '.length)
+        );
+        expect(await getDefinition(pathOffset + 'Order.'.length)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('root entity Order {') + 'root entity '.length)
+        );
+        expect(await getDefinition(pathOffset + 'Order.Order.'.length)).toEqual(
+            aggregatePart.textDocument.positionAt(aggregatePart.textDocument.getText().indexOf('method place()') + 'method '.length)
+        );
+    });
+
+    test('requires factory methods to return their aggregate root', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invalid-factory.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    value object Other { raw: string }
+                }
+                factory OrderFactory {
+                    method createOrder() returns Other
+                    }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('A factory method must return an aggregate-root entity in its own bounded context.')
+        )).toBe(true);
+    });
+
+    test('selectively imports bounded contexts from a multi-context file', async () => {
+        const catalog = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/contexts.tni'),
+            'bounded context Ordering bounded context Shipping bounded context Billing'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/map.tni'),
+            `import { Ordering as Orders, Shipping } from "./contexts.tni"
+             context map FulfillmentMap {
+                 partner Orders <-> partner Shipping
+                 partner Billing <-> partner Shipping
+                 separateWays Orders -x- Billing
+             }`
+        );
+        documents = [catalog, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const diagnostics = consumer.diagnostics ?? [];
+        expect(consumer.parseResult.parserErrors).toHaveLength(0);
+        expect(diagnostics.some(diagnostic => String(diagnostic.message).includes("Could not resolve reference to BoundedContext named 'Billing'"))).toBe(true);
+        const model = consumer.parseResult.value as Model;
+        const map = model?.declarations[0] as Model['declarations'][number] & {
+            relationships: Array<{ left: { context: { ref?: { name: string } } }; right: { context: { ref?: { name: string } } } }>;
+        };
+        expect(map.relationships[0].left.context.ref?.name).toBe('Ordering');
+        expect(map.relationships[0].right.context.ref?.name).toBe('Shipping');
+        const importComponentOffset = consumer.textDocument.getText().indexOf('Ordering');
+        const importDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(importComponentOffset)
+        });
+        expect(importDefinition?.[0]?.targetSelectionRange.start).toEqual(
+            catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
+        );
+        const importAliasOffset = consumer.textDocument.getText().indexOf('Orders');
+        const aliasDefinition = await services.Thinai.lsp.DefinitionProvider?.getDefinition(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(importAliasOffset)
+        });
+        expect(aliasDefinition?.[0]?.targetSelectionRange.start).toEqual(
+            catalog.textDocument.positionAt(catalog.textDocument.getText().indexOf('Ordering'))
+        );
+    });
+
+    test('keeps ambiguous imported suffixes unresolved but permits qualified names', async () => {
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/ordering-money.tni'),
+            'bounded context Ordering in bounded context Ordering { value object Money { raw: string } }'
+        );
+        const billing = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/billing-money.tni'),
+            'bounded context Billing in bounded context Billing { value object Money { raw: string } }'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/money-consumer.tni'),
+            `import "./ordering-money.tni" import "./billing-money.tni"
+             bounded context Checkout in bounded context Checkout {
+                 application service Handler {
+                     method handle(ambiguous: Money, qualified: Ordering.Money)
+                 }
+             }`
+        );
+        documents = [ordering, billing, consumer];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const checkout = (consumer.parseResult.value as Model).declarations[1] as Model['declarations'][number] & {
+            members: Array<{ methods?: Array<{ parameters: Array<{ type?: { ref?: AstNode } }> }> }>;
+        };
+        const parameters = checkout.members[0].methods?.[0].parameters ?? [];
+        expect(parameters[0].type?.ref).toBeUndefined();
+        expect(parameters[1].type?.ref?.$type).toBe('ValueObject');
+        expect((parameters[1].type?.ref as AstNode & { name: string }).name).toBe('Money');
+    });
+
+    test('reports unresolved method references in behavior specifications', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/unresolved-behavior.tni'),
+            `bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                application service OrderApplication {
+                    method placeOrder() {
+                        behavior "Check [[Order.Order.missingMethod]] before placing."
+                    }
+                }
+            }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("Could not resolve reference") &&
+            String(diagnostic.message).includes("missingMethod"))
+        ).toBe(true);
+    });
+
+    test('keeps valid qualified reference prefixes resolved when a later segment is missing', async () => {
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/qualified-prefix.tni'),
+            `bounded context Shop
+             in bounded context Shop {
+                 aggregate Order {
+                     root entity Order { identifier id: OrderId }
+                     value object OrderId { raw: string }
+                     value object UsesId { id: Order.Nope }
+                 }
+             }`
+        );
+        documents = [document];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const messages = (document.diagnostics ?? []).map(diagnostic => String(diagnostic.message));
+        expect(messages.some(message => message.includes("named 'Nope'"))).toBe(true);
+        expect(messages.some(message => message.includes("named 'Order'"))).toBe(false);
+    });
+
+    test('indexes context contributions under a local canonical name instead of an aliased import', async () => {
+        const other = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-other.tni'), 'bounded context Other'
+        );
+        const ordering = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/alias-ordering.tni'),
+            `import { Other as Ordering } from "./alias-other.tni"
+             bounded context Ordering
+             in bounded context Ordering {
+                 aggregate Model {
+                     root entity Model { identifier id: ModelId }
+                     value object ModelId { raw: string }
+                 }
+             }`
+        );
+        documents = [other, ordering];
+
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const aggregateNames = services.shared.workspace.IndexManager.allElements('Aggregate')
+            .filter(description => UriUtils.equals(description.documentUri, ordering.uri))
+            .map(description => description.name)
+            .toArray();
+        const valueObjectNames = services.shared.workspace.IndexManager.allElements('ValueObject')
+            .filter(description => UriUtils.equals(description.documentUri, ordering.uri))
+            .map(description => description.name)
+            .toArray();
+        expect(aggregateNames).toContain('Ordering.Model');
+        expect(valueObjectNames).toContain('Ordering.Model.ModelId');
+        expect(valueObjectNames).not.toContain('Other.Model.ModelId');
+    });
+
+    test('allows multiple component imports from the same file', async () => {
+        const contexts = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-import-contexts.tni'),
+            'bounded context Alpha bounded context Beta'
+        );
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/multi-import-consumer.tni'),
+            `import { Alpha } from "./multi-import-contexts.tni"
+import { Beta } from "./multi-import-contexts.tni"
+context map M {
+    customer Alpha -> supplier Beta
+}`
+        );
+        documents = [contexts, consumer];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        expect(semanticDiagnostics(consumer).map(diagnostic => String(diagnostic.message)))
+            .not.toContain('The same file is imported with more than one bare import.');
+        expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('invalidates the complete import component for duplicate declarations on add and delete', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-component-duplicates-'));
+        const aUri = URI.file(path.join(directory, 'a.tni'));
+        const bUri = URI.file(path.join(directory, 'b.tni'));
+        const aText = `bounded context C
+in bounded context C {
+    aggregate X {
+        root entity X {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`;
+        const bText = `bounded context B
+`;
+        const bDuplicateText = `import "./a.tni"
+in bounded context C {
+    aggregate X {
+        root entity X {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`;
+        fs.writeFileSync(aUri.fsPath, aText);
+        fs.writeFileSync(bUri.fsPath, bText);
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const [a, b] = await Promise.all([aUri, bUri].map(uri => localDocuments.getOrCreateDocument(uri)));
+        const messages = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+        const duplicates = (document: LangiumDocument) => messages(document)
+            .filter(message => message.startsWith('Duplicate declaration'));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build([a, b], { validation: true });
+            expect(duplicates(a)).toEqual([]);
+
+            fs.writeFileSync(bUri.fsPath, bDuplicateText);
+            await localServices.shared.workspace.DocumentBuilder.update([bUri], []);
+            expect(duplicates(a)).toContain("Duplicate declaration 'C.X'.");
+            expect(duplicates(b)).toContain("Duplicate declaration 'C.X'.");
+
+            fs.rmSync(bUri.fsPath);
+            await localServices.shared.workspace.DocumentBuilder.update([], [bUri]);
+            expect(duplicates(a)).toEqual([]);
+        } finally {
+            await clearDocuments(localServices.shared, [a, b]);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
+    test('invalidates transitive shape dependencies for nested event payload validation', async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'thinai-component-shapes-'));
+        const aggUri = URI.file(path.join(directory, 'agg.tni'));
+        const typesUri = URI.file(path.join(directory, 'types.tni'));
+        const payloadUri = URI.file(path.join(directory, 'payload.tni'));
+        const eventUri = URI.file(path.join(directory, 'event.tni'));
+        const files = {
+            [aggUri.fsPath]: `bounded context C
+in bounded context C {
+    aggregate A {
+        root entity A {
+            identifier id: Id
+        }
+        value object Id {
+            raw: string
+        }
+    }
+}
+`,
+            [typesUri.fsPath]: `import "./agg.tni"
+in bounded context C {
+    value object Nested {
+        raw: string
+    }
+}
+`,
+            [payloadUri.fsPath]: `import "./agg.tni"
+import "./types.tni"
+in bounded context C {
+    value object Payload {
+        nested: Nested
+    }
+}
+`,
+            [eventUri.fsPath]: `import "./agg.tni"
+import "./payload.tni"
+in bounded context C {
+    integration event E {
+        payload: Payload
+    }
+}
+`
+        };
+        for (const [file, text] of Object.entries(files)) {
+            fs.writeFileSync(file, text);
+        }
+
+        const localServices = createThinaiServices({ fileSystemProvider: NodeFileSystem.fileSystemProvider });
+        const localDocuments = localServices.shared.workspace.LangiumDocuments;
+        const documents = await Promise.all([aggUri, typesUri, payloadUri, eventUri].map(uri =>
+            localDocuments.getOrCreateDocument(uri)
+        ));
+        const [, , , event] = documents;
+        const errors = (document: LangiumDocument) => semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === 1)
+            .map(diagnostic => String(diagnostic.message));
+
+        try {
+            await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+            expect(errors(event)).toEqual([]);
+
+            fs.writeFileSync(typesUri.fsPath, `import "./agg.tni"
+in bounded context C {
+    value object Nested {
+        raw: string
+        owner: C.A.A
+    }
+}
+`);
+            await localServices.shared.workspace.DocumentBuilder.update([typesUri], []);
+            expect(errors(event)).toContain(
+                'Event payloads must not expose entity instances; use stable value data instead.'
+            );
+        } finally {
+            await clearDocuments(localServices.shared, documents);
+            fs.rmSync(directory, { recursive: true, force: true });
+        }
     });
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {
     return document.parseResult.parserErrors.length && s`
         Parser errors:
-          ${document.parseResult.parserErrors.map(e => e.message).join('\n  ')}
+          ${document.parseResult.parserErrors.map(error => error.message).join('\n  ')}
     `
         || document.parseResult.value === undefined && `ParseResult is 'undefined'.`
         || !isModel(document.parseResult.value) && `Root AST object is a ${document.parseResult.value.$type}, expected a 'Model'.`
         || undefined;
+}
+
+function semanticDiagnostics(document: LangiumDocument): Diagnostic[] {
+    // These fixtures focus on linking; line-break policy is covered separately.
+    return (document.diagnostics ?? []).filter(diagnostic =>
+        diagnostic.code !== 'line-break-required' && diagnostic.code !== 'line-break-required-after-open-brace'
+    );
 }

@@ -1,0 +1,25 @@
+{
+  "version": "0.5.0",
+  "langium": {
+    "configPath": "packages/language/langium-config.json",
+    "languages": [
+      {
+        "id": "thinai",
+        "grammarPath": "src/thinai.langium",
+        "caseInsensitive": false
+      }
+    ]
+  },
+  "descriptor": {
+    "path": "thinai-workspace.descriptor.yml"
+  },
+  "sysprompt": {
+    "path": "thinai-workspace.sysprompt.md"
+  },
+  "evaluations": {
+    "directory": "evals"
+  },
+  "project": {
+    "name": "thinai-workspace"
+  }
+}
