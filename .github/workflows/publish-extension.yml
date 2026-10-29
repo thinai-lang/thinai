@@ -27,10 +27,13 @@ jobs:
       - name: Publish to Visual Studio Marketplace
         working-directory: packages/extension
         run: |
+          # Marketplace only accepts major.minor.patch. A semver prerelease tag
+          # such as 0.1.0-alpha.1 is published as 0.1.0 with the pre-release flag.
           version=$(node -p "require('./package.json').version")
+          base=${version%%-*}
           flags=""
-          case "$version" in
-            *-*) flags="--pre-release" ;;
-          esac
-          echo "Publishing $version with flags: ${flags:-none}"
-          npx @vscode/vsce publish --oidc $flags
+          if [ "$base" != "$version" ]; then
+            flags="--pre-release"
+          fi
+          echo "Publishing $base (from $version) with flags: ${flags:-none}"
+          npx @vscode/vsce publish "$base" --oidc $flags
