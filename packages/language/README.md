@@ -1,6 +1,6 @@
 # Thinai Language
 
-<p><img src="https://raw.githubusercontent.com/thinai-lang/thinai/main/packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
+<p><img src="https://raw.githubusercontent.com/thinai-lang/thinai-lang.github.io/main/public/assets/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
 Thinai is a domain-specific modeling language for expressing DDD structures,
 relationships, and behavioral intent in a shared, navigable model. It models
@@ -12,7 +12,7 @@ Thinai uses braces for blocks and does not use semicolon terminators.
 > before relying on it in production.
 
 For topic-based introductions, see the [Thinai language guides](https://thinai-lang.github.io/)
-and the [complete Order Fulfillment example](https://github.com/thinai-lang/thinai/blob/main/examples/order-fulfillment/README.md).
+and the [complete Order Fulfillment example](https://github.com/thinai-lang/thinai-lang.github.io/blob/main/examples/order-fulfillment/README.md).
 
 ## File Model
 
@@ -577,4 +577,4 @@ spaces.
 
 ## License
 
-Thinai is released under the [MIT License](https://github.com/thinai-lang/thinai/blob/main/LICENSE).
+Thinai is released under the [MIT License](https://opensource.org/licenses/MIT).

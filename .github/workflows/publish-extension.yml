@@ -39,4 +39,4 @@ jobs:
             npm pkg set version="$base"
           fi
           echo "Publishing $base (from $version) with flags: ${flags:-none}"
-          npx @vscode/vsce publish --oidc $flags
+          npx @vscode/vsce publish --oidc --allow-missing-repository $flags

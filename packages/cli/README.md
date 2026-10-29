@@ -1,6 +1,6 @@
 # Thinai CLI
 
-<p><img src="https://raw.githubusercontent.com/thinai-lang/thinai/main/packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="80"></p>
+<p><img src="https://raw.githubusercontent.com/thinai-lang/thinai-lang.github.io/main/public/assets/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
 The Thinai CLI reads a `.tni` model and its imported files. It can generate a
 JavaScript summary, export the model graph, produce task-scoped context slices,
@@ -9,39 +9,50 @@ report model impact, validate models, and run a read-only MCP server.
 > **Alpha:** This is the first Thinai alpha. CLI behavior and output may change
 > between alpha releases.
 
-After running `npm install` and `npm run build` from the repository root, try it
-with the Order Fulfillment example:
+Install it globally:
 
 ```bash
-node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
+npm install -g thinai-cli@alpha
+thinai-cli --version
+```
+
+Or run it without installing:
+
+```bash
+npx thinai-cli@alpha --version
+```
+
+Try it with the public [Order Fulfillment example](https://github.com/thinai-lang/thinai-lang.github.io/tree/main/examples/order-fulfillment):
+
+```bash
+thinai-cli generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
 ```
 
 ## Agent and model inspection commands
 
 ```bash
 # Full model graph as JSON
-node packages/cli/bin/cli.js inspect path/to/model.tni --out model.json
+thinai-cli inspect path/to/model.tni --out model.json
 
 # One aggregate or context and its visible dependencies
-node packages/cli/bin/cli.js context path/to/model.tni Aggregate:Ordering.Order --format md
+thinai-cli context path/to/model.tni Aggregate:Ordering.Order --format md
 
 # Model elements that reference a declaration
-node packages/cli/bin/cli.js impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json
+thinai-cli impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json
 
 # Validate the source file and its transitive imports
-node packages/cli/bin/cli.js validate path/to/model.tni
+thinai-cli validate path/to/model.tni
 
 # Start a read-only MCP server over stdio
-node packages/cli/bin/cli.js mcp path/to/model.tni
+thinai-cli mcp path/to/model.tni
 ```
 
 The exported model uses the stable `thinai-model-v1` schema. Element IDs are
 canonical and kind-prefixed, for example `Aggregate:Ordering.Order` and
 `Field:Ordering.Order.Order.id`.
 
-Run `node packages/cli/bin/cli.js --help` to see all commands and options. The
-CLI is implemented in TypeScript and uses the Thinai language package to parse
-and validate models.
+Run `thinai-cli --help` to see all commands and options. The CLI is implemented
+in TypeScript and uses the Thinai language package to parse and validate models.
 
 ## Validation scope
 

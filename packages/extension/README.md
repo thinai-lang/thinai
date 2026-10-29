@@ -19,22 +19,18 @@ Open a folder containing `.tni` files, or create a new file with the `.tni`
 extension. The language server indexes the files in the workspace and resolves
 imports relative to each document.
 
-The Order Fulfillment example in the repository demonstrates strategic and
-tactical modeling, events, CQRS, and journeys.
+The [Order Fulfillment example](https://github.com/thinai-lang/thinai-lang.github.io/tree/main/examples/order-fulfillment)
+demonstrates strategic and tactical modeling, events, CQRS, and journeys.
 
 ## Documentation
 
 See the [Thinai language guides](https://thinai-lang.github.io/) for the full
 language documentation.
 
-## Development
+## Source
 
-This extension is built from the repository root:
-
-```bash
-npm install
-npm run build
-```
+The Thinai source repository is private during the alpha. Report bugs and
+feature requests in the [public issue tracker](https://github.com/thinai-lang/issues).
 
 The language server is bundled into `out/language/main.cjs`; the extension entry
 point is `out/extension/main.cjs`.

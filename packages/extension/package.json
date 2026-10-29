@@ -2,7 +2,7 @@
     "name": "vscode-thinai",
     "publisher": "thinai-lang",
     "description": "Thinai language support for VS Code",
-    "version": "0.1.0-alpha.1",
+    "version": "0.1.1-alpha.1",
     "license": "MIT",
     "displayName": "Thinai",
     "icon": "./icon.png",
@@ -71,13 +71,8 @@
     "vsce": {
         "dependencies": false
     },
-    "repository": {
-        "type": "git",
-        "url": "git+https://github.com/thinai-lang/thinai.git",
-        "directory": "packages/extension"
-    },
     "homepage": "https://thinai-lang.github.io/",
     "bugs": {
-        "url": "https://github.com/thinai-lang/thinai/issues"
+        "url": "https://github.com/thinai-lang/issues"
     }
 }
