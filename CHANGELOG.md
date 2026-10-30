@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Accept Unicode identifiers in declarations and references, including quoted names.
+- Warn when an identifier is not in Unicode NFC form so visually identical names link consistently.
+- Keep keyword lexing correct when an identifier starts with a keyword, such as `input` or `boundedness`.
+
 ## 0.1.0-alpha.2 - 2026-10-30
 
 - Point package metadata, READMEs, and support links at the public documentation, examples, and issue tracker.
