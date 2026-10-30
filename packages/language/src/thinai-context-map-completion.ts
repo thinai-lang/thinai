@@ -25,24 +25,24 @@ import { getLineStartOffset } from './thinai-text-utils.js';
 const contextEndpointPattern = THINAI_QUALIFIED_IDENTIFIER_SOURCE;
 const integrationPatternsClause = String.raw`\{\s*integrationPatterns\s*:\s*\[[^\]]*\]\s*\}`;
 const relationshipContinuationPatterns: ReadonlyArray<readonly [RegExp, string]> = [
-    [new RegExp(String.raw`^\s*customer\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '-> supplier'],
-    [new RegExp(String.raw`^\s*partner\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`), '<-> partner'],
-    [new RegExp(String.raw`^\s*separateWays\s+${contextEndpointPattern}\s+$`), '-x-']
+    [new RegExp(String.raw`^\s*customer\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`, 'u'), '-> supplier'],
+    [new RegExp(String.raw`^\s*partner\s+${contextEndpointPattern}(?:\s*${integrationPatternsClause})?\s+$`, 'u'), '<-> partner'],
+    [new RegExp(String.raw`^\s*separateWays\s+${contextEndpointPattern}\s+$`, 'u'), '-x-']
 ];
 const rightContextPatterns: ReadonlyArray<{
     pattern: RegExp;
     kind: Exclude<ContextRelationshipPairKind, 'sharedKernel'>;
 }> = [
     {
-        pattern: new RegExp(String.raw`^\s*customer\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*->\s*supplier\s*(.*)$`, 'i'),
+        pattern: new RegExp(String.raw`^\s*customer\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*->\s*supplier\s*(.*)$`, 'iu'),
         kind: 'customerSupplier'
     },
     {
-        pattern: new RegExp(String.raw`^\s*partner\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*<->\s*partner\s*(.*)$`, 'i'),
+        pattern: new RegExp(String.raw`^\s*partner\s+(${contextEndpointPattern})(?:\s*${integrationPatternsClause})?\s*<->\s*partner\s*(.*)$`, 'iu'),
         kind: 'partnership'
     },
     {
-        pattern: new RegExp(String.raw`^\s*separateWays\s+(${contextEndpointPattern})\s+-x-\s*(.*)$`, 'i'),
+        pattern: new RegExp(String.raw`^\s*separateWays\s+(${contextEndpointPattern})\s+-x-\s*(.*)$`, 'iu'),
         kind: 'separateWays'
     }
 ];

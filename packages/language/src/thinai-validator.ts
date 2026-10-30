@@ -119,7 +119,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
     const validator = services.validation.ThinaiValidator;
     const checks: ValidationChecks<ThinaiAstType> = {
         Aggregate: validator.checkAggregate,
-        AstNode: validator.checkReferences,
+        AstNode: [validator.checkReferences, validator.checkIdentifierNormalization],
         BoundedContext: validator.checkBoundedContext,
         BoundedContextPart: validator.checkBoundedContextPart,
         CollectionType: validator.checkCollectionType,
@@ -1443,6 +1443,39 @@ export class ThinaiValidator {
             }
         }
         return false;
+    }
+
+    checkIdentifierNormalization(node: import('langium').AstNode, accept: ValidationAcceptor): void {
+        const name = (node as AstNode & { name?: unknown }).name;
+        if (typeof name === 'string') {
+            this.reportNonNormalizedIdentifier(name, accept, { node, property: 'name' });
+        }
+        AstUtils.streamReferences(node).forEach(referenceInfo => {
+            const reference = referenceInfo.reference;
+            if (!isReference(reference) || reference.$refText.length === 0) {
+                return;
+            }
+            this.reportNonNormalizedIdentifier(reference.$refText, accept, {
+                node: referenceInfo.container,
+                property: referenceInfo.property,
+                index: referenceInfo.index
+            });
+        });
+    }
+
+    private reportNonNormalizedIdentifier(
+        text: string,
+        accept: ValidationAcceptor,
+        location: Parameters<ValidationAcceptor>[2]
+    ): void {
+        const normalized = text.normalize('NFC');
+        if (normalized === text) {
+            return;
+        }
+        accept('warning', `Identifier '${text}' is not in Unicode NFC form. Use '${normalized}'.`, {
+            ...location,
+            code: 'identifier-not-nfc'
+        });
     }
 
     checkReferences(node: import('langium').AstNode, accept: ValidationAcceptor): void {

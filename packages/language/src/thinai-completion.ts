@@ -836,7 +836,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         for (const brace of sourceStructure.braces) {
             if (brace.character === '{') {
                 const declaration = sourcePrefix.slice(previousBrace + 1, brace.offset).trim();
-                braceOwners.push(/\baggregate\s+[_a-zA-Z][\w]*\s*$/iu.test(declaration) ? 'aggregate' : 'other');
+                braceOwners.push(/\baggregate\s+[\p{ID_Start}_][\p{ID_Continue}]*\s*$/iu.test(declaration) ? 'aggregate' : 'other');
                 previousBrace = brace.offset;
             } else {
                 braceOwners.pop();
@@ -1817,8 +1817,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     private hasIncompleteStatementSuffix(source: string): boolean {
         const prefix = source.replace(/\s+$/, '');
         return this.hasIncompleteKeywordSuffix(prefix, getIncompleteStatementSuffixes()) || [
-            /\bmethod\s+[_a-zA-Z][\w_]*$/iu,
-            /\bmethod\s+[_a-zA-Z][\w_]*\s*\([^)]*$/iu,
+            /\bmethod\s+[\p{ID_Start}_][\p{ID_Continue}]*$/iu,
+            /\bmethod\s+[\p{ID_Start}_][\p{ID_Continue}]*\s*\([^)]*$/iu,
             /\bconstructor$/iu,
             /\bconstructor\s*\([^)]*$/iu
         ].some(pattern => pattern.test(prefix));
@@ -1835,7 +1835,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private hasClosedParameterList(source: string, keyword: 'constructor' | 'method'): boolean {
         const signaturePattern = keyword === 'method'
-            ? /^\s*method\s+[_a-zA-Z][\w_]*\s*\(/iu
+            ? /^\s*method\s+[\p{ID_Start}_][\p{ID_Continue}]*\s*\(/iu
             : /^\s*constructor\s*\(/iu;
         const signature = signaturePattern.exec(source);
         if (!signature) {

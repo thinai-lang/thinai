@@ -41,7 +41,7 @@ const exportedTypes = new Set([
 
 type NamedNode = AstNode & { name: string };
 
-const plainIdentifier = /^[_a-zA-Z][\w_]*$/u;
+const plainIdentifier = /^[\p{ID_Start}_][\p{ID_Continue}]*$/u;
 
 /** Formats a declaration or reference name for insertion into Thinai source. */
 export function formatIdentifier(name: string): string {

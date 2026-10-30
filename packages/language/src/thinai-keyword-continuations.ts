@@ -491,8 +491,8 @@ export class ThinaiKeywordContinuations {
             if (source.startsWith(keyword, index)) {
                 const before = source[index - 1];
                 const after = source[index + keyword.length];
-                if ((before === undefined || !/[\w]/u.test(before)) &&
-                    (after === undefined || !/[\w]/u.test(after))) {
+                if ((before === undefined || !/[\p{ID_Continue}]/u.test(before)) &&
+                    (after === undefined || !/[\p{ID_Continue}]/u.test(after))) {
                     last = index;
                     index += keyword.length - 1;
                 }
