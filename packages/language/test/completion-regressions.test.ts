@@ -494,6 +494,23 @@ in bounded context O {
         expect(item).not.toHaveProperty('nodeDescription');
     });
 
+    test('completes Unicode declaration names', async () => {
+        const result = await build(`bounded context ஆர்டர்
+in bounded context ஆர்டர் {
+    aggregate ஆர்டர் {
+        root entity ஆர்டர் {
+            identifier id: ஆர்டர்Id
+            amount: ${marker}
+        }
+        value object ஆர்டர்Id {
+            raw: string
+        }
+    }
+}`);
+        const labels = result.completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('ஆர்டர்Id');
+    });
+
     test('does not offer an already exposed declaration again', async () => {
         const afterComma = await build(`bounded context Ordering
 in bounded context Ordering {
