@@ -466,11 +466,11 @@ export class ThinaiValidator {
         return this.getEventParameterType(parameter) !== undefined;
     }
 
-    private getCollectionTypeSignature(collection?: CollectionType): string {
+    private getCollectionTypeSignature(collection?: CollectionType, mapSeparator = ','): string {
         return formatCollectionType(
             collection,
             reference => getExportedName(reference.ref as AstNode & { name: string }),
-            { missingType: '?', mapSeparator: ',' }
+            { missingType: '?', mapSeparator }
         );
     }
 
@@ -1352,7 +1352,105 @@ export class ThinaiValidator {
                     property: 'mirrors'
                 });
             }
+            if (isValueObject(source)) {
+                this.checkMirrorShape(valueObject, source, accept);
+            }
+            if (!this.referencePolicy.hasContextRelationship(valueObject, source)) {
+                const consumer = getOwningContextName(valueObject);
+                const provider = getOwningContextName(source);
+                accept('error', `Mirrored identifier '${valueObject.name}' references '${getExportedName(source)}', but no customer-supplier, partnership, or shared-kernel relationship connects '${consumer}' and '${provider}' in an imported context map.`, {
+                    node: valueObject,
+                    property: 'mirrors',
+                    code: 'mirror-without-relationship'
+                });
+            }
         }
+    }
+
+    private checkMirrorShape(mirror: ValueObject, source: ValueObject, accept: ValidationAcceptor): void {
+        const sourceFields = new Map(source.fields.map(field => [field.name, field]));
+        const mirrorFields = new Map(mirror.fields.map(field => [field.name, field]));
+        for (const [name, sourceField] of sourceFields) {
+            const mirrorField = mirrorFields.get(name);
+            if (!mirrorField) {
+                accept('error', `Mirrored identifier '${mirror.name}' must declare field '${name}' from '${getExportedName(source)}'.`, {
+                    node: mirror,
+                    property: 'fields',
+                    code: 'mirror-shape'
+                });
+                continue;
+            }
+            if (Boolean(mirrorField.optional) !== Boolean(sourceField.optional) ||
+                !this.sameFieldType(mirrorField, sourceField)) {
+                accept('error', `Field '${name}' must have type '${this.getFieldTypeSignature(sourceField)}' to match '${getExportedName(source)}'.`, {
+                    node: mirrorField,
+                    property: 'name',
+                    code: 'mirror-shape'
+                });
+            }
+        }
+        for (const [name, mirrorField] of mirrorFields) {
+            if (!sourceFields.has(name)) {
+                accept('error', `Mirrored identifier '${mirror.name}' declares field '${name}' that is not part of '${getExportedName(source)}'.`, {
+                    node: mirrorField,
+                    property: 'name',
+                    code: 'mirror-shape'
+                });
+            }
+        }
+    }
+
+    private sameFieldType(left: Field, right: Field): boolean {
+        if (left.primitive || right.primitive) {
+            return left.primitive === right.primitive;
+        }
+        if (left.collection || right.collection) {
+            return left.collection !== undefined && right.collection !== undefined &&
+                this.sameCollectionType(left.collection, right.collection);
+        }
+        return left.type?.ref !== undefined && left.type.ref === right.type?.ref;
+    }
+
+    private sameCollectionType(left: CollectionType, right: CollectionType): boolean {
+        if (left.kind !== right.kind ||
+            !this.sameTypeMember(
+                left.elementPrimitive, left.elementType?.ref, left.elementCollection,
+                right.elementPrimitive, right.elementType?.ref, right.elementCollection
+            )) {
+            return false;
+        }
+        if (left.kind !== 'Map') {
+            return true;
+        }
+        return this.sameTypeMember(
+            left.valuePrimitive, left.valueType?.ref, left.valueCollection,
+            right.valuePrimitive, right.valueType?.ref, right.valueCollection
+        );
+    }
+
+    private sameTypeMember(
+        leftPrimitive: Field['primitive'],
+        leftType: AstNode | undefined,
+        leftCollection: CollectionType | undefined,
+        rightPrimitive: Field['primitive'],
+        rightType: AstNode | undefined,
+        rightCollection: CollectionType | undefined
+    ): boolean {
+        if (leftPrimitive || rightPrimitive) {
+            return leftPrimitive === rightPrimitive;
+        }
+        if (leftCollection || rightCollection) {
+            return leftCollection !== undefined && rightCollection !== undefined &&
+                this.sameCollectionType(leftCollection, rightCollection);
+        }
+        return leftType !== undefined && leftType === rightType;
+    }
+
+    private getFieldTypeSignature(field: Field): string {
+        const base = field.primitive ??
+            (field.type?.ref ? getExportedName(field.type.ref as AstNode & { name: string }) : undefined) ??
+            this.getCollectionTypeSignature(field.collection, ', ');
+        return `${base}${field.optional ? '?' : ''}`;
     }
 
     checkModule(module: Module, accept: ValidationAcceptor): void {

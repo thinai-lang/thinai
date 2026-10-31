@@ -526,6 +526,9 @@ in bounded context B {
         raw: string
     }
 }
+context map AB {
+    customer B -> supplier A
+}
 `
         };
         const built = await buildFiles(files);

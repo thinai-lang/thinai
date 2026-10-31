@@ -5,6 +5,8 @@
 - Accept Unicode identifiers in declarations and references, including quoted names.
 - Warn when an identifier is not in Unicode NFC form so visually identical names link consistently.
 - Keep keyword lexing correct when an identifier starts with a keyword, such as `input` or `boundedness`.
+- Require a mirrored identifier to declare the same fields, types, and optionality as its source.
+- Require a customer-supplier, partnership, or shared-kernel relationship for a mirrored identifier.
 
 ## 0.1.0-alpha.2 - 2026-10-30
 

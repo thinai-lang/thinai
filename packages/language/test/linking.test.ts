@@ -1159,6 +1159,10 @@ in bounded context Beta {
                         }
                     }
                 }
+
+                context map ShippingOrdering {
+                    customer Shipping -> supplier Ordering
+                }
             `
         );
         documents = [common, ordering, shipping];
@@ -1299,9 +1303,13 @@ in bounded context Beta {
         );
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-mirror.tni'),
-            `import "./ordering-part.tni"
+            `import "./ordering-context.tni"
+             import "./ordering-part.tni"
              bounded context Shipping in bounded context Shipping {
                  value object OrderId mirrors Ordering.Order.OrderId { raw: string }
+             }
+             context map ShippingOrdering {
+                 customer Shipping -> supplier Ordering
              }`
         );
         documents = [context, orderingPart, shipping];
