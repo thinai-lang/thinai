@@ -715,6 +715,59 @@ export class ThinaiReferencePolicy {
         }));
     }
 
+    /**
+     * Reports whether an explicit strategic relationship connects two
+     * contexts. A mirror is an identity dependency, so separate-ways does not
+     * qualify; customer-supplier, partnership, and shared kernel do.
+     */
+    hasContextRelationship(source: AstNode, target: AstNode): boolean {
+        const consumer = getOwningContextName(source);
+        const provider = getOwningContextName(target);
+        if (!consumer || !provider) {
+            return false;
+        }
+        if (consumer === provider) {
+            return true;
+        }
+        const document = AstUtils.getDocument(source);
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return false;
+        }
+        return this.getVisibleContextMaps(model).some(contextMap =>
+            contextMap.relationships.some(relationship =>
+                this.connectsContexts(relationship, consumer, provider)
+            )
+        );
+    }
+
+    private connectsContexts(
+        relationship: ContextRelationship,
+        consumer: string,
+        provider: string
+    ): boolean {
+        if (!isSyntacticallyComplete(relationship)) {
+            return false;
+        }
+        if (relationship.$type === 'CustomerSupplierRelationship') {
+            return relationship.customer.context?.ref?.name === consumer &&
+                relationship.supplier.context?.ref?.name === provider;
+        }
+        if (relationship.$type === 'PartnershipRelationship') {
+            const left = relationship.left.context?.ref?.name;
+            const right = relationship.right.context?.ref?.name;
+            return (left === consumer && right === provider) ||
+                (right === consumer && left === provider);
+        }
+        if (relationship.$type === 'SharedKernelRelationship') {
+            const participants = relationship.participants
+                .map(participant => participant.target?.ref?.name)
+                .filter((name): name is string => name !== undefined);
+            return participants.includes(consumer) && participants.includes(provider);
+        }
+        return false;
+    }
+
     hasAuthorizedEventRelationship(source: AstNode, event: IntegrationEvent): boolean {
         return this.isIntegrationEventExposed(event) && this.hasAuthorizedRelationship(source, event, 'event');
     }
