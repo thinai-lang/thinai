@@ -29,7 +29,7 @@ GitHub advisories, not in a public issue.
   coding with CLI, MCP, and LSP.
 - See the [Thinai language package](./packages/language/README.md),
   [CLI](./packages/cli/README.md), and
-  [VS Code extension development guide](./packages/extension/langium-quickstart.md).
+  [VS Code extension development guide](./packages/extension/extension-development.md).
 
 After installing dependencies and building the workspace (`npm install` then
 `npm run build`), generate a JavaScript summary of the example model and its
@@ -49,9 +49,8 @@ node packages/cli/bin/cli.js context examples/order-fulfillment/shipping.tni Agg
 ## Development
 
 This workspace targets Node.js 22 or later. To build and test the language
-package, run `npm run build` and `npm test` from the repository root. The
-language implementation uses [Langium](https://langium.org/); Thinai's grammar,
-validation, and language behavior are defined in this project.
+package, run `npm run build` and `npm test` from the repository root. Thinai's
+grammar, validation, and language behavior are defined in this project.
 
 ### LLM evaluations
 
