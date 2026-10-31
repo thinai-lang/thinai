@@ -555,8 +555,9 @@ behavior "Use [[Request.`value`]]."
 
 The same quoted form is available for field, parameter, method, type, and enum
 value names. Completion inserts the quoted form automatically for such names.
-Identifiers are ASCII-only, including quoted names; quoted names may contain
-spaces and hyphens but not non-ASCII letters.
+Identifiers accept Unicode letters, digits, and combining marks; quoted names
+may also contain spaces and hyphens. Normalize identifiers to Unicode NFC so
+visually identical names link to the same declaration.
 
 The language server provides keyword and cross-reference completion,
 navigation, references, document symbols, hover, diagnostics, import-path

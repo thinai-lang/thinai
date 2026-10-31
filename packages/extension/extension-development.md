@@ -26,13 +26,9 @@ fixes. This guide covers running the extension from this repository.
   bracket configuration.
 - [esbuild.mjs](./esbuild.mjs) — extension bundle configuration.
 
-The extension uses [Langium](https://langium.org/) for language services. To
-debug the extension-host runtime with the inspector enabled on port `9230`, run
-this from the workspace root:
+To debug the extension-host runtime with the inspector enabled on port `9230`,
+run this from the workspace root:
 
 ```bash
 code --inspect-extensions=9230 --extensionDevelopmentPath="$PWD/packages/extension" "$PWD"
 ```
-
-See the [Langium documentation](https://langium.org/) for framework-specific
-background.

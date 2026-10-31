@@ -70,6 +70,19 @@ export class ThinaiTokenBuilder extends DefaultTokenBuilder {
         const defaultSourceSet = new Set(defaultSources);
         const defaultMap = new Map<TokenType, TokenType>();
         for (const source of defaultSources) {
+            // Langium builds keywords with a LONGER_ALT of ID only when ID is a
+            // regular expression. A Unicode ID terminal uses the `u` flag, which
+            // Langium compiles to a function pattern, so restore the keyword
+            // alternative here. Otherwise `input` lexes as `in` + `put`.
+            if (source !== id && typeof source.PATTERN === 'string') {
+                const current = source.LONGER_ALT;
+                const alternatives = current === undefined
+                    ? []
+                    : Array.isArray(current) ? current : [current];
+                if (!alternatives.includes(id)) {
+                    source.LONGER_ALT = [...alternatives, id];
+                }
+            }
             // The default-mode variants are custom tokens, so explicitly retain
             // line tracking for whitespace and block comments. Otherwise the
             // CST records targets after a newline as line 0 with an absolute column.

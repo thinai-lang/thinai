@@ -7,8 +7,8 @@ const grammar = JSON.parse(original);
 // Keep TextMate identifier lexing aligned with the grammar's `ID` terminal:
 // a plain identifier or a backtick-delimited name that may contain spaces and
 // hyphens. The boundary avoids partially scoping plain identifiers.
-const identifierSource = '(?:[_a-zA-Z][\\w_]*|`[a-zA-Z0-9_ -]+`)';
-const identifierPattern = `(?<![\\w\`])${identifierSource}(?![\\w\`])`;
+const identifierSource = '(?:[\\p{L}_][\\p{L}\\p{N}\\p{M}_]*|`[\\p{L}\\p{N}\\p{M}_ -]+`)';
+const identifierPattern = `(?<![\\p{L}\\p{N}\\p{M}_\`])${identifierSource}(?![\\p{L}\\p{N}\\p{M}_\`])`;
 const qualifiedIdentifierSource = `${identifierSource}(?:\\.${identifierSource})*`;
 
 if (!grammar.patterns || !grammar.repository) {

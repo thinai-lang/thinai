@@ -70,7 +70,3 @@ import-connected model, including importers.
 - [src/model.ts](src/model.ts) — model export, context, impact, and validation actions.
 - [src/mcp.ts](src/mcp.ts) — read-only MCP server.
 - [src/util.ts](src/util.ts) — model document and destination utilities.
-
-Langium provides the parser and generation utilities used by this project. For
-general framework background, see the
-[Langium CLI tutorial](https://langium.org/docs/learn/minilogo/customizing_cli/).

@@ -1,9 +1,10 @@
 /**
  * Identifier lexing shared by editor features. The grammar's `ID` terminal
  * accepts either a plain identifier or a backtick-delimited name that may
- * contain spaces and hyphens.
+ * contain spaces and hyphens. Both forms allow Unicode identifiers.
  */
-export const THINAI_IDENTIFIER_SOURCE = '(?:[_a-zA-Z][\\w_]*|`[a-zA-Z0-9_ -]+`)';
+export const THINAI_IDENTIFIER_SOURCE =
+    '(?:[\\p{ID_Start}_][\\p{ID_Continue}]*|`[\\p{ID_Continue} _-]+`)';
 
 /** A dotted path of identifiers, including backtick-delimited segments. */
 export const THINAI_QUALIFIED_IDENTIFIER_SOURCE =
@@ -34,4 +35,4 @@ export function unquoteQualifiedName(text: string): string {
  * whether a cursor sits directly after a name, so backticks, spaces, and
  * hyphens from backtick-delimited names must be included.
  */
-export const THINAI_NAME_CHARACTER_REGEXP = /^[\w\p{L}` -]$/u;
+export const THINAI_NAME_CHARACTER_REGEXP = /^[\p{ID_Continue}` -]$/u;

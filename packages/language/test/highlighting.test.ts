@@ -52,7 +52,9 @@ describe('TextMate highlighting', () => {
             ['event OrderPlaced', 'OrderPlaced', 'entity.name.type.thinai'],
             ['repository OrderRepository', 'OrderRepository', 'entity.name.interface.thinai'],
             ['method placeOrder', 'placeOrder', 'entity.name.function.thinai'],
-            ['actor Customer', 'Customer', 'entity.name.variable.thinai']
+            ['actor Customer', 'Customer', 'entity.name.variable.thinai'],
+            ['bounded context ஆர்டர்', 'ஆர்டர்', 'entity.name.namespace.thinai'],
+            ['aggregate 订单', '订单', 'entity.name.class.thinai']
         ] as const;
 
         for (const [line, identifier, expectedScope] of examples) {
