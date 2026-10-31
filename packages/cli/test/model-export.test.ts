@@ -224,6 +224,58 @@ in bounded context Ordering {
         });
     });
 
+    test('traverses identifier mirrors in impact and context slices', async () => {
+        await withTempDirectory(async directory => {
+            const fileName = path.join(directory, 'mirror.tni');
+            await writeFile(fileName, `bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+        }
+        value object OrderId {
+            raw: string
+        }
+    }
+}
+
+bounded context Shipping
+in bounded context Shipping {
+    value object OrderId mirrors Ordering.Order.OrderId {
+        raw: string
+    }
+}
+
+context map ShippingOrdering {
+    customer Shipping -> supplier Ordering
+}
+`);
+
+            const model = await loadModel(fileName);
+            expect(model.diagnostics).toEqual([]);
+
+            const impact = computeImpact(model, 'ValueObject:Ordering.Order.OrderId');
+            expect(impact.affectedIds).toContain('ValueObject:Shipping.OrderId');
+            expect(impact.incoming).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    fromId: 'ValueObject:Shipping.OrderId',
+                    toId: 'ValueObject:Ordering.Order.OrderId',
+                    role: 'mirrors'
+                })
+            ]));
+
+            const slice = createContextSlice(model, 'ValueObject:Shipping.OrderId');
+            expect(slice.elements.map(element => element.id)).toContain('ValueObject:Ordering.Order.OrderId');
+            expect(slice.edges).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    fromId: 'ValueObject:Shipping.OrderId',
+                    toId: 'ValueObject:Ordering.Order.OrderId',
+                    role: 'mirrors'
+                })
+            ]));
+        });
+    });
+
     test('includes validation diagnostics without rejecting the model export', async () => {
         await withTempDirectory(async directory => {
             const fileName = path.join(directory, 'invalid.tni');
