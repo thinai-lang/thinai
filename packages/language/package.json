@@ -1,6 +1,6 @@
 {
     "name": "thinai-language",
-    "description": "Thinai language services, grammar, and validators",
+    "description": "Alpha: Thinai language services, grammar, and validators",
     "version": "0.1.0-alpha.3",
     "license": "MIT",
     "type": "module",

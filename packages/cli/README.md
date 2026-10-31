@@ -6,7 +6,7 @@ The Thinai CLI reads a `.tni` model and its imported files. It can generate a
 JavaScript summary, export the model graph, produce task-scoped context slices,
 report model impact, validate models, and run a read-only MCP server.
 
-> **Alpha:** This is the first Thinai alpha. CLI behavior and output may change
+> **Alpha:** Thinai is in alpha. CLI behavior and output may change
 > between alpha releases.
 
 Install it globally:

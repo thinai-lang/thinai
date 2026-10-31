@@ -1,6 +1,6 @@
 {
     "name": "thinai-cli",
-    "description": "Command-line tools for Thinai models",
+    "description": "Alpha: Command-line tools for Thinai models",
     "version": "0.1.0-alpha.3",
     "license": "MIT",
     "type": "module",

@@ -2,6 +2,8 @@
 
 <p><img src="packages/extension/icons/thinai-light.svg" alt="Thinai logo" width="96"></p>
 
+> **Alpha:** Thinai is in alpha. Syntax and tooling may change between releases.
+
 Thinai is a domain-specific language for modeling domain-driven design (DDD).
 Describe subdomains, bounded contexts, aggregates, services, events, and user
 journeys in a shared model that is easy to navigate and evolve across files.

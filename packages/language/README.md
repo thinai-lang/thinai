@@ -7,7 +7,7 @@ relationships, and behavioral intent in a shared, navigable model. It models
 strategic and tactical DDD, aggregates, application services, events, and journeys.
 Thinai uses braces for blocks and does not use semicolon terminators.
 
-> **Alpha:** This is the first Thinai alpha. Language rules and tooling may
+> **Alpha:** Thinai is in alpha. Language rules and tooling may
 > change between alpha releases; review the language guides and release notes
 > before relying on it in production.
 
