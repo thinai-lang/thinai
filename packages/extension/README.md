@@ -24,7 +24,7 @@ demonstrates strategic and tactical modeling, events, CQRS, and journeys.
 
 ## Documentation
 
-See the [Thinai language guides](https://thinai-lang.github.io/) for the full
+See the [Thinai language guides](https://thinai-lang.dev/) for the full
 language documentation.
 
 ## Source

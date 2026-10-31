@@ -19,7 +19,7 @@ GitHub advisories, not in a public issue.
 
 ## Get started
 
-- Explore the [language guides](https://thinai-lang.github.io/) for strategic and
+- Explore the [language guides](https://thinai-lang.dev/) for strategic and
   tactical modeling, events, and behavior.
 - Browse the [Order Fulfillment example](./examples/order-fulfillment/README.md)
   for a complete multi-file model.

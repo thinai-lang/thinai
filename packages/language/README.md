@@ -11,7 +11,7 @@ Thinai uses braces for blocks and does not use semicolon terminators.
 > change between alpha releases; review the language guides and release notes
 > before relying on it in production.
 
-For topic-based introductions, see the [Thinai language guides](https://thinai-lang.github.io/)
+For topic-based introductions, see the [Thinai language guides](https://thinai-lang.dev/)
 and the [complete Order Fulfillment example](https://github.com/thinai-lang/thinai-lang.github.io/blob/main/examples/order-fulfillment/README.md).
 
 ## File Model

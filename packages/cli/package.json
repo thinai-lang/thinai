@@ -28,7 +28,7 @@
         "thinai-language": "0.1.0-alpha.3",
         "zod": "^4.6.7"
     },
-    "homepage": "https://thinai-lang.github.io/",
+    "homepage": "https://thinai-lang.dev/",
     "bugs": {
         "url": "https://github.com/thinai-lang/issues"
     }

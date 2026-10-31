@@ -76,7 +76,7 @@
         "url": "git+https://github.com/thinai-lang/thinai.git",
         "directory": "packages/extension"
     },
-    "homepage": "https://thinai-lang.github.io/",
+    "homepage": "https://thinai-lang.dev/",
     "bugs": {
         "url": "https://github.com/thinai-lang/issues"
     }
