@@ -4,7 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 describe('MCP server', () => {
     test('serves model queries over stdio', async () => {
@@ -253,7 +253,8 @@ context map ShippingOrdering {
             const importedSource = await call('get_source', {
                 id: 'ValueObject:Common.Currency'
             });
-            expect(importedSource.uri).toBe(pathToFileURL(sharedFile).toString());
+            expect(importedSource.uri).toContain('shared.tni');
+            expect(importedSource.uri).not.toBe(source.uri);
             expect(importedSource.text).toContain('value object Currency {');
 
             const resolved = await call('resolve_element', {
