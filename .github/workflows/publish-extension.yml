@@ -4,6 +4,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and test without publishing
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: publish-extension-${{ github.ref }}
@@ -35,6 +41,7 @@ jobs:
             exit 1
           fi
       - name: Publish to Visual Studio Marketplace
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         working-directory: packages/extension
         run: |
           # Marketplace only accepts major.minor.patch. A semver prerelease tag

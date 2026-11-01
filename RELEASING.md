@@ -26,6 +26,7 @@ Open VSX keeps the source version (`0.1.5-alpha.1`).
   - Trigger: `v*` tag or manual dispatch.
   - Uses `@vscode/vsce publish --oidc`; no Marketplace PAT is stored.
   - Verifies that the tag matches the extension source version.
+  - Manual dispatch supports a `dry_run` input to build and test without publishing.
 - `.github/workflows/publish-openvsx.yml`
   - Manual dispatch only until the Open VSX namespace claim is approved.
   - Requires the `openvsx` GitHub environment and an `OVSX_PAT` secret.
