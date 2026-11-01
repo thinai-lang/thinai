@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5-alpha.5 - 2026-11-01
+
+- Add read-only MCP tools `get_source` and `resolve_element` for declaration text and exact qualified-name lookup.
+- Add `kind`, `role`, `offset`, and `limit` filters to MCP `get_dependencies`; qualifier edges are opt-in.
+- Add `depth` and `limit` to `impact_of_change` and `thinai-cli impact`, with `totalAffected` and truncation reporting.
+- Align the language, CLI, and extension on the shared `0.1.5-alpha.5` release version.
+- Refresh the `thinai-model` skill and agent workflow documentation.
+
 ## 0.1.0-alpha.3 - 2026-10-31
 
 - Accept Unicode identifiers in declarations and references, including quoted names.

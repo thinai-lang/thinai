@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5-alpha.5 - 2026-11-01
+
+- Add read-only MCP tools `get_source` and `resolve_element` for declaration text and exact qualified-name lookup.
+- Add `kind`, `role`, `offset`, and `limit` filters to MCP `get_dependencies`; qualifier edges are opt-in.
+- Add `depth` and `limit` to `impact_of_change` and `thinai-cli impact`, with `totalAffected` and truncation reporting.
+- Align the language, CLI, and extension on the shared `0.1.5-alpha.5` release version.
+- Refresh the `thinai-model` skill and agent workflow documentation.
+
 ## 0.1.4-alpha.1 - 2026-11-01
 
 - Remove the CLI JavaScript-summary generator; Thinai remains model-first with no code generation.

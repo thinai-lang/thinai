@@ -1,16 +1,24 @@
 # Releasing Thinai
 
-Thinai has two version lines:
+Thinai uses one shared version number per release train:
 
 | Artifact | Source version | Published version |
 | --- | --- | --- |
-| `thinai-language`, `thinai-cli` | `0.1.0-alpha.N` | Same version, published under npm tag `alpha`; `latest` is moved only intentionally |
-| VS Code extension | `0.1.M-alpha.1` | Marketplace `0.1.M` marked pre-release; Open VSX `0.1.M-alpha.1` |
+| `thinai-language`, `thinai-cli` | `0.1.N-alpha.N` | Same version, published under npm tag `alpha`; `latest` is moved only intentionally |
+| VS Code extension source / Open VSX | `0.1.N-alpha.N` | Open VSX keeps the source version |
+| VS Code Marketplace | — | `0.1.N` marked pre-release |
 
 Marketplace versions are `major.minor.patch` only. The GitHub workflow removes
 the semver pre-release suffix and publishes with `--pre-release`. For example,
-source `0.1.5-alpha.1` is published to Marketplace as **`0.1.5` pre-release**.
-Open VSX keeps the source version (`0.1.5-alpha.1`).
+source `0.1.5-alpha.5` is published to Marketplace as **`0.1.5` pre-release**,
+while npm and Open VSX keep `0.1.5-alpha.5`.
+
+The alpha counter is shared by npm, the extension source, Open VSX, and release
+notes. The Marketplace base version advances with every extension publish
+because Marketplace versions are immutable and only accept
+`major.minor.patch`. The current `0.1.4-alpha.1` extension release predates this
+policy; from `0.1.5` onward the extension source suffix tracks the shared alpha
+number.
 
 ## Publishing workflows
 
@@ -59,9 +67,9 @@ Open VSX keeps the source version (`0.1.5-alpha.1`).
 2. Create both tags on the same commit:
 
    ```bash
-   git tag v0.1.5-alpha.1
-   git tag npm-v0.1.0-alpha.5
-   git push origin v0.1.5-alpha.1 npm-v0.1.0-alpha.5
+   git tag v0.1.5-alpha.5
+   git tag npm-v0.1.5-alpha.5
+   git push origin v0.1.5-alpha.5 npm-v0.1.5-alpha.5
    ```
 
 3. Watch the workflows:
@@ -74,8 +82,8 @@ Open VSX keeps the source version (`0.1.5-alpha.1`).
 4. Verify the published artifacts:
 
    ```bash
-   npm view thinai-language@0.1.0-alpha.5 version
-   npm view thinai-cli@0.1.0-alpha.5 version
+   npm view thinai-language@0.1.5-alpha.5 version
+   npm view thinai-cli@0.1.5-alpha.5 version
    npx @vscode/vsce show thinai-lang.vscode-thinai --json
    ```
 
