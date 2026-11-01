@@ -16,8 +16,8 @@ references, document symbols, hover, formatting, and import quick fixes for
 
 Report bugs, documentation problems, and feature requests in the public
 [issue tracker](https://github.com/thinai-lang/issues). The source repository is
-private during the alpha. Report security vulnerabilities privately through
-GitHub advisories, not in a public issue.
+private during the alpha. Report security vulnerabilities privately to
+`security@thinai-lang.dev` or through GitHub advisories, not in a public issue.
 
 ## Get started
 
@@ -27,25 +27,20 @@ GitHub advisories, not in a public issue.
   for a complete multi-file model.
 - Use the [Language Tour](./examples/language-tour/README.md) to see individual
   syntax, module, and sharing features without following the full domain model.
-- See the [agent workflow guide](./docs/agent-workflow.md) for model-first
-  coding with CLI, MCP, and LSP.
+- See the [agent workflow guide](https://thinai-lang.dev/agent-workflow/) for
+  model-first coding with CLI, MCP, and LSP.
 - See the [Thinai language package](./packages/language/README.md),
   [CLI](./packages/cli/README.md), and
   [VS Code extension development guide](./packages/extension/extension-development.md).
 
 After installing dependencies and building the workspace (`npm install` then
-`npm run build`), generate a JavaScript summary of the example model and its
-imports from the repository root:
-
-```bash
-node packages/cli/bin/cli.js generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
-```
-
-Inspect the model graph or request an agent context slice:
+`npm run build`), inspect the model graph or request an agent context slice
+from the repository root:
 
 ```bash
 node packages/cli/bin/cli.js inspect examples/order-fulfillment/shipping.tni
 node packages/cli/bin/cli.js context examples/order-fulfillment/shipping.tni Aggregate:Shipping.Shipment --format md
+node packages/cli/bin/cli.js validate examples/order-fulfillment/shipping.tni
 ```
 
 ## Development

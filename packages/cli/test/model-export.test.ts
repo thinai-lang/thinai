@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { computeImpact, createContextSlice, renderContextMarkdown } from 'thinai-language';
 import { loadModel } from '../src/model.js';
 
@@ -292,6 +293,163 @@ in bounded context Ordering {
             const model = await loadModel(fileName);
             expect(model.elements.map(element => element.id)).toContain('Entity:Ordering.Order.Order');
             expect(model.diagnostics.some(diagnostic => diagnostic.severity === 1)).toBe(true);
+        });
+    });
+
+    test('aligns exposedBy, visibility, and publicApi with validator visibility', async () => {
+        await withTempDirectory(async directory => {
+            const fileName = path.join(directory, 'visibility.tni');
+            await writeFile(fileName, `bounded context C
+in bounded context C {
+    module ExposedAggregate {
+        exposes Agg
+        aggregate Agg {
+            root entity E {
+                identifier id: I
+            }
+            value object I {
+                raw: string
+            }
+        }
+    }
+
+    module ExposedMembers {
+        exposes Agg2, Agg2.E2, Agg2.I2
+        aggregate Agg2 {
+            root entity E2 {
+                identifier id: I2
+            }
+            value object I2 {
+                raw: string
+            }
+        }
+    }
+
+    module ExposedService {
+        exposes Api, Api.run
+        application service Api {
+            method run() {}
+        }
+    }
+
+    module HiddenNested {
+        module Outer {
+            module Inner {
+                exposes V
+                value object V {
+                    raw: string
+                }
+            }
+        }
+    }
+}
+`);
+
+            const model = await loadModel(fileName);
+            const element = (id: string) => model.elements.find(candidate => candidate.id === id);
+
+            expect(element('Module:C.ExposedAggregate')).toMatchObject({
+                visibility: 'context',
+                publicApi: true
+            });
+            expect(element('Entity:C.ExposedAggregate.Agg.E')).toMatchObject({
+                visibility: 'module-private',
+                publicApi: false,
+                exposedBy: []
+            });
+            expect(element('Field:C.ExposedAggregate.Agg.E.id')).toMatchObject({
+                visibility: 'module-private',
+                publicApi: false
+            });
+
+            expect(element('Entity:C.ExposedMembers.Agg2.E2')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true,
+                exposedBy: ['Module:C.ExposedMembers']
+            });
+            expect(element('Field:C.ExposedMembers.Agg2.E2.id')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true
+            });
+
+            expect(element('Method:C.ExposedService.Api.run')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true,
+                exposedBy: ['Module:C.ExposedService']
+            });
+
+            expect(element('Module:C.HiddenNested.Outer.Inner')).toMatchObject({
+                visibility: 'module-private',
+                publicApi: false
+            });
+            expect(element('ValueObject:C.HiddenNested.Outer.Inner.V')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: false,
+                exposedBy: ['Module:C.HiddenNested.Outer.Inner']
+            });
+        });
+    });
+
+    test('exports semantic edge roles and separates qualifier edges', async () => {
+        const fileName = fileURLToPath(new URL('../../../examples/order-fulfillment/ordering-events.tni', import.meta.url));
+        const model = await loadModel(fileName);
+        const edge = (fromId: string, toId: string, role: string) =>
+            model.edges.find(candidate =>
+                candidate.fromId === fromId &&
+                candidate.toId === toId &&
+                candidate.role === role
+            );
+
+        expect(edge(
+            'Method:Ordering.OrderApplication.placeOrder',
+            'Method:Ordering.Order.Order.place',
+            'invokes'
+        )).toMatchObject({ kind: 'reference' });
+        expect(edge(
+            'Method:Ordering.OrderApplication.publishOrderPlaced',
+            'IntegrationEvent:Ordering.Contracts.OrderPlacedV1',
+            'emits'
+        )).toMatchObject({ kind: 'reference' });
+        expect(edge(
+            'Method:Ordering.OrderQueries.canPlaceOrder',
+            'QueryRepository:Ordering.OrderSummaryRepository',
+            'readsFrom'
+        )).toMatchObject({ kind: 'reference' });
+        expect(edge(
+            'Method:Ordering.OrderSummaryProjector.onOrderPlaced',
+            'ReadModel:Ordering.OrderSummary',
+            'projects'
+        )).toMatchObject({ kind: 'reference' });
+        expect(edge(
+            'Field:Ordering.Order.Order.currency',
+            'SharedKernel:CommonTypes',
+            'qualifier'
+        )).toMatchObject({ kind: 'qualifier' });
+
+        const placeOrder = model.elements.find(element => element.id === 'Method:Ordering.OrderApplication.placeOrder');
+        expect(placeOrder?.properties.invokes).toContainEqual({
+            targetId: 'Method:Ordering.Order.Order.place',
+            when: '"The order is ready to be placed."'
+        });
+
+        const place = model.elements.find(element => element.id === 'Method:Ordering.Order.Order.place');
+        expect(place?.properties.emits).toContainEqual({
+            eventIds: ['DomainEvent:Ordering.OrderPlaced'],
+            when: '"The order is ready to be placed."'
+        });
+        expect(place?.properties.transitions).toContainEqual({
+            when: '"The order is ready to be placed."',
+            changes: [{
+                fieldId: 'Field:Ordering.Order.Order.status',
+                fromId: 'EnumValue:Ordering.Order.OrderStatus.Draft',
+                toId: 'EnumValue:Ordering.Order.OrderStatus.Placed'
+            }]
+        });
+
+        const canPlaceOrder = model.elements.find(element => element.id === 'Method:Ordering.OrderQueries.canPlaceOrder');
+        expect(canPlaceOrder?.properties.readsFrom).toContainEqual({
+            sourceIds: ['QueryRepository:Ordering.OrderSummaryRepository'],
+            when: '"The order summary is available for eligibility checks."'
         });
     });
 });

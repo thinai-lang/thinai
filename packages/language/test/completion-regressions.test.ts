@@ -2102,4 +2102,61 @@ in bounded context C {
         }));
         expect(actions?.map(action => action.title)).toContain("Import 'Customer' from './target.tni'");
     });
+
+    test('replaces an existing list item instead of duplicating it', async () => {
+        const result = await build(`bounded context C
+in bounded context C {
+    module Outer {
+        exposes ${marker}Inner, PublicValue
+        module Inner {
+            value object InnerValue {
+                raw: string
+            }
+        }
+        value object PublicValue {
+            raw: string
+        }
+    }
+}`);
+        const item = result.completion?.items.find(candidate => candidate.label === 'Inner');
+        expect(item).toBeDefined();
+
+        const edit = item!.textEdit;
+        const range = edit && 'range' in edit ? edit.range : edit?.replace;
+        expect(range).toBeDefined();
+        const start = result.document.textDocument.offsetAt(range!.start);
+        const end = result.document.textDocument.offsetAt(range!.end);
+        const applied = result.text.slice(0, start) + (edit?.newText ?? '') + result.text.slice(end);
+        const exposureLine = applied.split('\n').find(line => line.includes('exposes'));
+
+        expect(exposureLine?.trim()).toBe('exposes Inner, PublicValue');
+        expect(services.Thinai.parser.LangiumParser.parse(applied).parserErrors).toEqual([]);
+    });
+
+    test('replaces the complete backtick-quoted reference token', async () => {
+        const result = await build(`bounded context Ordering
+in bounded context Ordering {
+    value object Adjustment {
+        \`value\`: decimal
+    }
+    application service App {
+        method run() {
+            behavior "Use [[Adjustment.\`val${marker}ue\`]]."
+        }
+    }
+}`);
+        const item = result.completion?.items.find(candidate => candidate.label === 'value');
+        expect(item).toBeDefined();
+
+        const edit = item!.textEdit;
+        const range = edit && 'range' in edit ? edit.range : edit?.replace;
+        expect(range).toBeDefined();
+        const start = result.document.textDocument.offsetAt(range!.start);
+        const end = result.document.textDocument.offsetAt(range!.end);
+        const applied = result.text.slice(0, start) + (edit?.newText ?? '') + result.text.slice(end);
+
+        expect(applied).toContain('[[Adjustment.`value`]]');
+        expect(services.Thinai.parser.LangiumParser.parse(applied).lexerErrors).toEqual([]);
+        expect(services.Thinai.parser.LangiumParser.parse(applied).parserErrors).toEqual([]);
+    });
 });

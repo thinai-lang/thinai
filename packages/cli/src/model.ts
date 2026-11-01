@@ -48,9 +48,13 @@ export async function inspectAction(fileName: string, options: InspectOptions): 
 
 export async function contextAction(fileName: string, elementId: string, options: ContextOptions): Promise<void> {
     const model = await loadModel(fileName);
+    const format = options.format ?? 'json';
+    if (format !== 'json' && format !== 'md' && format !== 'markdown') {
+        throw new Error(`Unknown context format '${format}'. Expected json, md, or markdown.`);
+    }
     const depth = Number.parseInt(options.depth ?? '1', 10);
     const slice = createContextSlice(model, elementId, { depth: Number.isFinite(depth) ? depth : 1 });
-    const output = options.format === 'md' || options.format === 'markdown'
+    const output = format === 'md' || format === 'markdown'
         ? renderContextMarkdown(slice)
         : json(slice);
     await writeOutput(output, options.out);
@@ -59,7 +63,7 @@ export async function contextAction(fileName: string, elementId: string, options
 export async function impactAction(fileName: string, elementId: string, options: ImpactOptions): Promise<void> {
     const model = await loadModel(fileName);
     const impact = computeImpact(model, elementId);
-    await writeOutput(options.json === false ? impactSummary(impact) : json(impact), options.out);
+    await writeOutput(options.json ? json(impact) : impactSummary(impact), options.out);
 }
 
 export async function validateAction(fileName: string, options: ValidateOptions): Promise<void> {

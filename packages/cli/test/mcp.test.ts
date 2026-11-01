@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,9 +37,16 @@ in bounded context Ordering {
 
         try {
             await client.connect(transport);
+            const packageVersion = JSON.parse(await readFile(
+                fileURLToPath(new URL('../package.json', import.meta.url)),
+                'utf8'
+            )).version as string;
+            expect(client.getServerVersion()?.version).toBe(packageVersion);
+
             const tools = await client.listTools();
             expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
                 'list_elements',
+                'search_elements',
                 'get_element',
                 'get_context',
                 'get_dependencies',
@@ -58,6 +65,15 @@ in bounded context Ordering {
                     text: expect.stringContaining('Aggregate:Ordering.Order')
                 })
             ]);
+
+            const page = await client.callTool({
+                name: 'list_elements',
+                arguments: { limit: 1 }
+            });
+            const pageResult = JSON.parse((page.content as Array<{ text: string }>)[0]!.text);
+            expect(pageResult.total).toBeGreaterThan(1);
+            expect(pageResult.returned).toBe(1);
+            expect(pageResult.truncated).toBe(true);
 
             const context = await client.callTool({
                 name: 'get_context',

@@ -2,9 +2,9 @@
 
 <p><img src="https://raw.githubusercontent.com/thinai-lang/thinai-lang.github.io/main/public/assets/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
-The Thinai CLI reads a `.tni` model and its imported files. It can generate a
-JavaScript summary, export the model graph, produce task-scoped context slices,
-report model impact, validate models, and run a read-only MCP server.
+The Thinai CLI reads a `.tni` model and its imported files. It exports the model
+graph, produces task-scoped context slices, reports model impact, validates
+models, and runs a read-only MCP server.
 
 > **Alpha:** Thinai is in alpha. CLI behavior and output may change
 > between alpha releases.
@@ -25,7 +25,8 @@ npx thinai-cli@alpha --version
 Try it with the public [Order Fulfillment example](https://github.com/thinai-lang/thinai-lang.github.io/tree/main/examples/order-fulfillment):
 
 ```bash
-thinai-cli generate examples/order-fulfillment/shipping.tni -d examples/order-fulfillment/generated
+thinai-cli validate examples/order-fulfillment/shipping.tni
+thinai-cli inspect examples/order-fulfillment/shipping.tni --out model.json
 ```
 
 ## Agent and model inspection commands
@@ -65,8 +66,7 @@ import-connected model, including importers.
 
 - [package.json](./package.json) — package metadata and executable definition.
 - [bin/cli.js](bin/cli.js) — executable entry point.
-- [src/main.ts](src/main.ts) — command definition and generation action.
-- [src/generator.ts](src/generator.ts) — JavaScript summary generation.
+- [src/main.ts](src/main.ts) — command definition.
 - [src/model.ts](src/model.ts) — model export, context, impact, and validation actions.
 - [src/mcp.ts](src/mcp.ts) — read-only MCP server.
-- [src/util.ts](src/util.ts) — model document and destination utilities.
+- [src/util.ts](src/util.ts) — model document loading utilities.

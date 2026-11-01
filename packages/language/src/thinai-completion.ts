@@ -526,20 +526,62 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (item.textEdit) {
             item.textEdit = { ...item.textEdit, newText: insertText };
         }
-        if (target && typedPrefix.length > 0) {
+        if (target) {
             // Langium's default text-edit builder filters candidates with a fuzzy
             // match against the item label. Thinai may intentionally display a
             // short spelling while inserting a qualified path, so provide the edit
-            // explicitly and let `filterText` drive client-side filtering.
-            item.textEdit = {
-                range: {
-                    start: context.textDocument.positionAt(context.tokenOffset),
-                    end: context.position
-                },
-                newText: insertText
-            };
+            // explicitly and let `filterText` drive client-side filtering. The
+            // range also replaces an existing forward word so completion at a
+            // token boundary cannot duplicate or concatenate text.
+            const tokenStart = context.textDocument.positionAt(context.tokenOffset);
+            const tokenEnd = context.textDocument.positionAt(Math.max(context.tokenEndOffset, context.offset));
+            const tokenText = context.textDocument.getText({ start: tokenStart, end: tokenEnd });
+            // Replace the whole word or backtick-delimited token. Ending the edit
+            // at the cursor would leave a suffix behind when completion is invoked
+            // at the start of an existing token.
+            const replaceEnd = this.getReferenceReplaceEnd(context, tokenEnd, tokenText);
+            const replaceRange = { start: tokenStart, end: replaceEnd };
+            if (this.clientCapabilities?.completionItem?.insertReplaceSupport) {
+                item.textEdit = {
+                    newText: insertText,
+                    insert: replaceRange,
+                    replace: replaceRange
+                };
+            } else {
+                item.textEdit = {
+                    range: replaceRange,
+                    newText: insertText
+                };
+            }
         }
         return item;
+    }
+
+    private getReferenceReplaceEnd(context: CompletionContext, tokenEnd: Position, tokenText: string): Position {
+        if (tokenText.startsWith('`')) {
+            return tokenEnd;
+        }
+        const end = this.getForwardWordEndOffset(context.document, context.offset);
+        return end > context.offset ? context.textDocument.positionAt(end) : context.position;
+    }
+
+    private getForwardWordEndOffset(document: LangiumDocument, offset: number): number {
+        const text = document.textDocument.getText();
+        let end = offset;
+        while (end < text.length && (text[end] === ' ' || text[end] === '\t')) {
+            end++;
+        }
+        if (text[end] === '`') {
+            const close = text.indexOf('`', end + 1);
+            return close === -1 ? end : close + 1;
+        }
+        if (end < text.length && /\p{ID_Continue}/u.test(text[end]!)) {
+            while (end < text.length && /\p{ID_Continue}/u.test(text[end]!)) {
+                end++;
+            }
+            return end;
+        }
+        return offset;
     }
 
     private isJourneyPathContinuation(
@@ -578,7 +620,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private shouldAppendPathDot(refInfo: ReferenceInfo, context: CompletionContext): boolean {
         const document = AstUtils.getDocument(refInfo.container);
-        const following = document.textDocument.getText().slice(context.offset);
+        const end = this.getForwardWordEndOffset(context.document, context.offset);
+        const following = document.textDocument.getText().slice(end);
         return !/^\s*\./u.test(following);
     }
 
@@ -594,8 +637,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const indentation = await this.getClientIndentationOptions(document);
-        const completion = this.dedupeCompletionItems(
-            await this.getCompletionInternal(document, params, cancelToken)
+        const completion = this.expandTokenStartEdits(
+            document,
+            params.position,
+            this.dedupeCompletionItems(
+                await this.getCompletionInternal(document, params, cancelToken)
+            )
         );
         const serializable = completion
             ? { ...completion, items: completion.items.map(toSerializableCompletionItem) }
@@ -610,6 +657,69 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 )
             }
             : serializable;
+    }
+
+    /**
+     * Completion is often invoked immediately before an existing word. Expand
+     * zero-width/short edits to that word so accepting an item does not
+     * concatenate two tokens. Block insertions that contain line breaks are
+     * intentional and are left untouched.
+     */
+    private expandTokenStartEdits(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const endOffset = this.getForwardWordEndOffset(document, offset);
+        if (endOffset <= offset) {
+            return completion;
+        }
+        const end = document.textDocument.positionAt(endOffset);
+        let changed = false;
+        const items = completion.items.map(item => {
+            const edit = item.textEdit;
+            if (!edit || /[\r\n]/u.test(edit.newText)) {
+                return item;
+            }
+            if ('range' in edit) {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const currentEnd = document.textDocument.offsetAt(edit.range.end);
+                if (start <= offset && currentEnd <= offset) {
+                    changed = true;
+                    return {
+                        ...item,
+                        textEdit: {
+                            ...edit,
+                            range: { start: edit.range.start, end }
+                        }
+                    };
+                }
+                return item;
+            }
+            const insertStart = document.textDocument.offsetAt(edit.insert.start);
+            const insertEnd = document.textDocument.offsetAt(edit.insert.end);
+            if (insertStart <= offset && insertEnd <= offset) {
+                changed = true;
+                const replaceEnd = document.textDocument.offsetAt(edit.replace.end);
+                return {
+                    ...item,
+                    textEdit: {
+                        ...edit,
+                        insert: { start: edit.insert.start, end },
+                        replace: {
+                            start: edit.replace.start,
+                            end: document.textDocument.positionAt(Math.max(replaceEnd, endOffset))
+                        }
+                    }
+                };
+            }
+            return item;
+        });
+        return changed ? { ...completion, items } : completion;
     }
 
     /**
@@ -1265,14 +1375,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     insertText
                 };
                 const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
-                return langiumItem ?? {
+                const completionItem = langiumItem ?? {
                     ...item,
-                    label: description.name,
-                    textEdit: {
-                        range: { start: document.textDocument.positionAt(prefixStart), end: position },
-                        newText: insertText
-                    }
+                    label: description.name
                 };
+                const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
+                completionItem.textEdit = {
+                    range: {
+                        start: document.textDocument.positionAt(prefixStart),
+                        end: document.textDocument.positionAt(endOffset)
+                    },
+                    newText: insertText
+                };
+                return completionItem;
             });
     }
 
@@ -1385,10 +1500,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
         const context = useLangiumTokenEdit ? this.getLangiumCompletionContext(document, position) : undefined;
         const langiumItem = context ? this.fillCompletionItem(context, baseItem) : undefined;
-        if (langiumItem) {
-            return langiumItem;
-        }
-        return {
+        const completionItem: CompletionItem = langiumItem ?? {
             ...baseItem,
             label,
             textEdit: {
@@ -1396,6 +1508,23 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 newText: insertText
             }
         };
+        // A bare keyword accepted at the start of an existing word would
+        // otherwise concatenate with that word. Block/sibling insertions contain
+        // newlines and are deliberately left alone.
+        if (!/[\r\n]/u.test(insertText)) {
+            const offset = document.textDocument.offsetAt(position);
+            const end = this.getForwardWordEndOffset(document, offset);
+            if (end > offset) {
+                completionItem.textEdit = {
+                    range: {
+                        start: document.textDocument.positionAt(fallbackStart),
+                        end: document.textDocument.positionAt(end)
+                    },
+                    newText: insertText
+                };
+            }
+        }
+        return completionItem;
     }
 
     private getLangiumCompletionContext(document: LangiumDocument, position: Position): CompletionContext | undefined {

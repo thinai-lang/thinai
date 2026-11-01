@@ -17,7 +17,10 @@
     },
     "onEnterRules": [
         {
-            "beforeText": "^\\s*(?:identifier\\s+)?[A-Za-z_][A-Za-z0-9_]*\\??\\s*:\\s*\\S.*$",
+            "beforeText": {
+                "pattern": "^\\s*(?:identifier\\s+)?[\\p{ID_Start}_][\\p{ID_Continue}]*\\??\\s*:\\s*\\S.*$",
+                "flags": "u"
+            },
             "action": { "indent": "none" }
         }
     ],
@@ -37,6 +40,9 @@
         ["\"", "\""],
         ["'", "'"]
     ],
-    // Keep backtick-delimited names as one word for selection and rename.
-    "wordPattern": "`[^`]+`|[_a-zA-Z][\\w_]*"
+    // Keep backtick-delimited names and UAX #31 identifiers as one word for selection and rename.
+    "wordPattern": {
+        "pattern": "`[^`]+`|[\\p{ID_Start}_][\\p{ID_Continue}]*",
+        "flags": "gu"
+    }
 }

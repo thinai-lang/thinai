@@ -26,6 +26,12 @@ fixes. This guide covers running the extension from this repository.
   bracket configuration.
 - [esbuild.mjs](./esbuild.mjs) — extension bundle configuration.
 
+Package a VSIX with the current VS Code tooling:
+
+```bash
+npx @vscode/vsce package --no-dependencies
+```
+
 To debug the extension-host runtime with the inspector enabled on port `9230`,
 run this from the workspace root:
 

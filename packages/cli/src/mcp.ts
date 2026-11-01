@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createRequire } from 'node:module';
 import { z } from 'zod';
 import {
     computeImpact,
@@ -11,6 +12,8 @@ import {
 import { loadModel } from './model.js';
 
 const MODEL_TOOL_SCHEMA = z.string().min(1).describe('Thinai source file path');
+const require = createRequire(import.meta.url);
+const packageVersion = (require('../package.json') as { version: string }).version;
 
 export async function startMcpServer(fileName: string): Promise<void> {
     // Reload on every tool call so changes in imported files are visible.
@@ -23,7 +26,7 @@ export async function startMcpServer(fileName: string): Promise<void> {
 
     const server = new McpServer({
         name: 'thinai',
-        version: '0.1.0-alpha.1'
+        version: packageVersion
     });
 
     server.registerTool('list_elements', {
@@ -33,22 +36,31 @@ export async function startMcpServer(fileName: string): Promise<void> {
             kind: z.string().optional().describe('Element kind, such as Aggregate, Entity, or IntegrationEvent'),
             context: z.string().optional().describe('Context element ID or qualified-name prefix'),
             query: z.string().optional().describe('Case-insensitive text match against ID, name, and qualified name'),
+            offset: z.number().int().min(0).optional().describe('Zero-based result offset, default 0'),
             limit: z.number().int().positive().max(1000).optional().describe('Maximum number of elements, default 200')
         }
-    }, async ({ kind, context, query, limit }) => guarded(async () => {
+    }, async ({ kind, context, query, offset, limit }) => guarded(async () => {
         const { model } = await getAll();
         const normalizedKind = kind?.toLowerCase();
         const normalizedQuery = query?.toLowerCase();
-        const elements = model.elements
+        const filtered = model.elements
             .filter(element => !normalizedKind || element.kind.toLowerCase() === normalizedKind)
             .filter(element => !context || element.contextId === context || element.qualifiedName.startsWith(`${context}.`))
             .filter(element => !normalizedQuery ||
                 element.id.toLowerCase().includes(normalizedQuery) ||
                 element.name.toLowerCase().includes(normalizedQuery) ||
-                element.qualifiedName.toLowerCase().includes(normalizedQuery))
-            .slice(0, limit ?? 200)
-            .map(summarizeElement);
-        return text({ schemaVersion: model.schemaVersion, count: elements.length, elements });
+                element.qualifiedName.toLowerCase().includes(normalizedQuery));
+        const start = offset ?? 0;
+        const page = filtered.slice(start, start + (limit ?? 200));
+        const elements = page.map(summarizeElement);
+        return text({
+            schemaVersion: model.schemaVersion,
+            total: filtered.length,
+            offset: start,
+            returned: elements.length,
+            truncated: start + elements.length < filtered.length,
+            elements
+        });
     }));
 
     server.registerTool('search_elements', {
@@ -56,20 +68,29 @@ export async function startMcpServer(fileName: string): Promise<void> {
         description: 'Search Thinai elements by ID, name, or qualified name.',
         inputSchema: {
             query: z.string().min(1).describe('Case-insensitive search text'),
+            offset: z.number().int().min(0).optional().describe('Zero-based result offset, default 0'),
             limit: z.number().int().positive().max(1000).optional().describe('Maximum number of elements, default 100')
         }
-    }, async ({ query, limit }) => guarded(async () => {
+    }, async ({ query, offset, limit }) => guarded(async () => {
         const { model } = await getAll();
         const normalized = query.toLowerCase();
-        const elements = model.elements
+        const filtered = model.elements
             .filter(element =>
                 element.id.toLowerCase().includes(normalized) ||
                 element.name.toLowerCase().includes(normalized) ||
                 element.qualifiedName.toLowerCase().includes(normalized)
-            )
-            .slice(0, limit ?? 100)
-            .map(summarizeElement);
-        return text({ count: elements.length, elements });
+            );
+        const start = offset ?? 0;
+        const page = filtered.slice(start, start + (limit ?? 100));
+        const elements = page.map(summarizeElement);
+        return text({
+            schemaVersion: model.schemaVersion,
+            total: filtered.length,
+            offset: start,
+            returned: elements.length,
+            truncated: start + elements.length < filtered.length,
+            elements
+        });
     }));
 
     server.registerTool('get_element', {
@@ -85,6 +106,7 @@ export async function startMcpServer(fileName: string): Promise<void> {
             return error(`Unknown model element '${id}'.`);
         }
         return text({
+            schemaVersion: model.schemaVersion,
             element,
             incoming: model.edges.filter(edge => edge.toId === id),
             outgoing: model.edges.filter(edge => edge.fromId === id)
@@ -123,6 +145,7 @@ export async function startMcpServer(fileName: string): Promise<void> {
             (selected === 'incoming' || selected === 'both') && edge.toId === id
         );
         return text({
+            schemaVersion: model.schemaVersion,
             id,
             edges,
             related: [...new Set(edges.map(edge => edge.fromId === id ? edge.toId : edge.fromId))]
@@ -139,18 +162,20 @@ export async function startMcpServer(fileName: string): Promise<void> {
             id: z.string().min(1).describe('Stable element ID')
         }
     }, async ({ id }) => guarded(async () => {
-        const { byId } = await getAll();
+        const { model, byId } = await getAll();
         const element = byId.get(id);
         if (!element) {
             return error(`Unknown model element '${id}'.`);
         }
         return text({
+            schemaVersion: model.schemaVersion,
             id: element.id,
             kind: element.kind,
             contextId: element.contextId,
             moduleId: element.moduleId,
             modulePath: element.modulePath,
             visibility: element.visibility,
+            publicApi: element.publicApi,
             exposedBy: element.exposedBy
         });
     }));
@@ -230,6 +255,7 @@ function summarizeElement(element: ThinaiModelElement) {
         contextId: element.contextId,
         moduleId: element.moduleId,
         visibility: element.visibility,
+        publicApi: element.publicApi,
         source: element.source
     };
 }

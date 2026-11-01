@@ -1,10 +1,11 @@
 import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
 import type { Range } from 'vscode-languageserver-types';
-import { isModel } from './generated/ast.js';
-import { isInSharedKernel, resolveImportUri } from './thinai-scope-utils.js';
+import { isEnumValue, isField, isModel, isParameter } from './generated/ast.js';
+import { isInSharedKernel, isPublicApiDeclaration, resolveImportUri } from './thinai-scope-utils.js';
 
 export const THINAI_MODEL_SCHEMA_VERSION = 'thinai-model-v1';
 export const THINAI_CONTEXT_SCHEMA_VERSION = 'thinai-context-v1';
+export const THINAI_IMPACT_SCHEMA_VERSION = 'thinai-impact-v1';
 
 export type ThinaiElementVisibility = 'context' | 'module-exposed' | 'module-private';
 
@@ -29,6 +30,7 @@ export interface ThinaiModelElement {
     moduleId?: string;
     modulePath: string[];
     visibility: ThinaiElementVisibility;
+    publicApi: boolean;
     exposedBy: string[];
     source: ThinaiSource;
     properties: Record<string, unknown>;
@@ -38,6 +40,7 @@ export interface ThinaiModelEdge {
     fromId: string;
     toId: string;
     role: string;
+    kind: 'reference' | 'qualifier';
     source: ThinaiSource;
 }
 
@@ -66,6 +69,7 @@ export interface ThinaiContextSlice {
 }
 
 export interface ThinaiImpact {
+    schemaVersion: typeof THINAI_IMPACT_SCHEMA_VERSION;
     rootId: string;
     changedIds: string[];
     incoming: ThinaiModelEdge[];
@@ -137,7 +141,8 @@ export function exportThinaiModel(
         const parent = findElementAncestor(node, nodeToId);
         const context = findContextElement(node);
         const modulePath = findModulePath(node).map(module => nodeToId.get(module)).filter(isString);
-        const exposedBy = getExposedBy(node, id, nodeToId, directExposures);
+        const exposedBy = getExposedBy(node, nodeToId, directExposures);
+        const topLevelModule = node.$type === 'Module' && modulePath.length === 1;
         return {
             id,
             kind: node.$type,
@@ -147,11 +152,12 @@ export function exportThinaiModel(
             contextId: context ? nodeToId.get(context) : undefined,
             moduleId: modulePath.at(-1),
             modulePath,
-            visibility: modulePath.length === 0
+            visibility: modulePath.length === 0 || topLevelModule
                 ? 'context' as const
                 : exposedBy.length > 0
                     ? 'module-exposed' as const
                     : 'module-private' as const,
+            publicApi: isPublicApiDeclaration(node),
             exposedBy,
             source: sourceOf(node),
             properties: buildProperties(node, nodeToId)
@@ -322,6 +328,7 @@ export function computeImpact(model: ThinaiModelExport, rootId: string): ThinaiI
     const incoming = model.edges.filter(edge => changedIds.has(edge.toId));
     const affectedIds = [...new Set(incoming.map(edge => edge.fromId))].sort();
     return {
+        schemaVersion: THINAI_IMPACT_SCHEMA_VERSION,
         rootId,
         changedIds: [...changedIds].sort(),
         incoming,
@@ -453,26 +460,19 @@ function collectDirectExposures(
 
 function getExposedBy(
     node: AstNode,
-    id: string,
     nodeToId: WeakMap<AstNode, string>,
     directExposures: Map<string, Set<string>>
 ): string[] {
-    const exposedBy = new Set<string>(directExposures.get(id) ?? []);
-    let current: AstNode | undefined = node.$container;
-    while (current && !isModel(current)) {
-        if (current.$type === 'Module' || current.$type === 'BoundedContextPart' ||
-            current.$type === 'BoundedContext' || current.$type === 'SharedKernel') {
-            break;
-        }
-        const ancestorId = nodeToId.get(current);
-        if (ancestorId) {
-            for (const moduleId of directExposures.get(ancestorId) ?? []) {
-                exposedBy.add(moduleId);
-            }
-        }
-        current = current.$container;
-    }
-    return [...exposedBy].sort();
+    // Fields, parameters, and enum values inherit direct exposure from their
+    // immediate declaring container. Named declarations must be exposed
+    // directly; exposing an aggregate or service does not publish every member.
+    const declaration = isField(node) || isParameter(node) || isEnumValue(node)
+        ? node.$container
+        : node;
+    const declarationId = nodeToId.get(declaration);
+    return declarationId
+        ? [...(directExposures.get(declarationId) ?? [])].sort()
+        : [];
 }
 
 function buildProperties(node: AstNode, nodeToId: WeakMap<AstNode, string>): Record<string, unknown> {
@@ -542,14 +542,26 @@ function buildProperties(node: AstNode, nodeToId: WeakMap<AstNode, string>): Rec
                 parameters: ids(value.parameters?.map((parameter: any) => ({ ref: parameter }))),
                 returnType: describeTypeFrom(value, nodeToId),
                 clauses: clauses(value),
-                invokes: ids(value.invocations?.map((invocation: any) => invocation.target)),
-                emits: ids(value.emissions?.flatMap((emission: any) => emission.events?.map((event: any) => event.target) ?? [])),
-                transitions: (value.transitions ?? []).flatMap((transition: any) => transition.changes?.map((change: any) => ({
-                    fieldId: change.field?.ref ? nodeToId.get(change.field.ref) : undefined,
-                    fromId: change.from?.ref ? nodeToId.get(change.from.ref) : undefined,
-                    toId: change.to?.ref ? nodeToId.get(change.to.ref) : undefined
-                })) ?? []),
-                readsFrom: ids(value.reads?.flatMap((read: any) => read.sources?.map((source: any) => source.target) ?? [])),
+                invokes: (value.invocations ?? []).map((invocation: any) => ({
+                    targetId: invocation.target?.ref ? nodeToId.get(invocation.target.ref) : undefined,
+                    when: specificationText(invocation.guard)
+                })),
+                emits: (value.emissions ?? []).map((emission: any) => ({
+                    eventIds: ids(emission.events?.map((event: any) => event.target)),
+                    when: specificationText(emission.guard)
+                })),
+                transitions: (value.transitions ?? []).map((transition: any) => ({
+                    when: specificationText(transition.guard),
+                    changes: (transition.changes ?? []).map((change: any) => ({
+                        fieldId: change.field?.ref ? nodeToId.get(change.field.ref) : undefined,
+                        fromId: change.from?.ref ? nodeToId.get(change.from.ref) : undefined,
+                        toId: change.to?.ref ? nodeToId.get(change.to.ref) : undefined
+                    }))
+                })),
+                readsFrom: (value.reads ?? []).map((read: any) => ({
+                    sourceIds: ids(read.sources?.map((source: any) => source.target)),
+                    when: specificationText(read.guard)
+                })),
                 projects: ids(value.projects?.map((project: any) => project.target))
             };
         case 'Constructor':
@@ -736,6 +748,74 @@ function specificationText(value: unknown): string | undefined {
     return typeof text === 'string' ? text : undefined;
 }
 
+function describeEdgeRole(referenceInfo: { container: AstNode; property: string }): {
+    role: string;
+    kind: 'reference' | 'qualifier';
+} {
+    const { container, property } = referenceInfo;
+    // Qualified-name segments are navigation qualifiers, not semantic
+    // dependencies. Keep them separate so agents can choose whether to traverse
+    // namespaces and modules.
+    if (property.endsWith('Path') || property === 'path') {
+        return { role: 'qualifier', kind: 'qualifier' };
+    }
+
+    switch (container.$type) {
+        case 'SpecificationTextPart':
+            return { role: 'references', kind: 'reference' };
+        case 'EventEmission':
+        case 'EventReference':
+            return { role: 'emits', kind: 'reference' };
+        case 'MethodInvocation':
+            return { role: 'invokes', kind: 'reference' };
+        case 'ReadDependency':
+        case 'ReadSourceReference':
+        case 'AggregateReference':
+            return { role: 'readsFrom', kind: 'reference' };
+        case 'ReadModelReference':
+            return { role: 'projects', kind: 'reference' };
+        case 'Exposure':
+        case 'NamedDeclarationReference':
+            return { role: 'exposes', kind: 'reference' };
+        case 'ModuleReference':
+            return { role: 'dependsOn', kind: 'reference' };
+        case 'SubdomainReference':
+            return { role: 'realizes', kind: 'reference' };
+        case 'JourneyStep':
+            return { role: 'invokes', kind: 'reference' };
+        case 'JourneyActor':
+            return { role: 'actor', kind: 'reference' };
+        case 'ContextMapEndpoint':
+        case 'SeparateWaysRelationship':
+            return { role: 'endpoint', kind: 'reference' };
+        case 'BoundedContextReference':
+            return { role: 'participant', kind: 'reference' };
+        case 'SharedKernelRelationship':
+            return { role: property === 'sharedKernel' ? 'sharedKernel' : 'participant', kind: 'reference' };
+        case 'Repository':
+            return { role: 'manages', kind: 'reference' };
+        case 'QueryRepository':
+            return { role: property === 'readModel' ? 'serves' : 'readsFrom', kind: 'reference' };
+        case 'TransitionChange':
+            return {
+                role: property === 'field'
+                    ? 'transitionField'
+                    : property === 'from' ? 'transitionFrom' : 'transitionTo',
+                kind: 'reference'
+            };
+        case 'Field':
+            return { role: property === 'initialState' ? 'initialState' : 'type', kind: 'reference' };
+        case 'Parameter':
+            return { role: 'type', kind: 'reference' };
+        case 'Method':
+            return { role: 'returnType', kind: 'reference' };
+        case 'ValueObject':
+            return { role: 'mirrors', kind: 'reference' };
+        default:
+            return { role: property, kind: 'reference' };
+    }
+}
+
 function collectEdges(documents: LangiumDocument[], nodeToId: WeakMap<AstNode, string>): ThinaiModelEdge[] {
     const edges: ThinaiModelEdge[] = [];
     const seen = new Set<string>();
@@ -764,7 +844,8 @@ function collectEdges(documents: LangiumDocument[], nodeToId: WeakMap<AstNode, s
                     continue;
                 }
                 const range = reference.$refNode?.range ?? node.$cstNode?.range ?? sourceOf(node).range;
-                const key = `${fromId}\u0000${toId}\u0000${referenceInfo.property}`;
+                const { role, kind } = describeEdgeRole(referenceInfo);
+                const key = `${fromId}\u0000${toId}\u0000${role}`;
                 if (seen.has(key)) {
                     continue;
                 }
@@ -772,7 +853,8 @@ function collectEdges(documents: LangiumDocument[], nodeToId: WeakMap<AstNode, s
                 edges.push({
                     fromId,
                     toId,
-                    role: referenceInfo.property,
+                    role,
+                    kind,
                     source: { uri: document.uri.toString(), range }
                 });
             }
@@ -825,5 +907,5 @@ function isVisibleFromSlice(root: ThinaiModelElement, target: ThinaiModelElement
     if (!root.contextId || root.contextId === target.contextId) {
         return true;
     }
-    return target.visibility !== 'module-private';
+    return target.publicApi;
 }

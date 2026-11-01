@@ -15,6 +15,8 @@ import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 import { ThinaiFormatter } from './thinai-formatter.js';
 import { ThinaiHoverProvider } from './thinai-hover-provider.js';
+import { ThinaiLanguageServer } from './thinai-language-server.js';
+import { ThinaiRenameProvider } from './thinai-rename-provider.js';
 import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 
 /**
@@ -34,6 +36,7 @@ export type ThinaiServices = LangiumServices & ThinaiAddedServices
 
 export const ThinaiSharedModule: Module<LangiumSharedServices, PartialLangiumSharedServices> = {
     lsp: {
+        LanguageServer: services => new ThinaiLanguageServer(services),
         NodeKindProvider: () => new ThinaiNodeKindProvider()
     },
     workspace: {
@@ -67,6 +70,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         CompletionProvider: services => new ThinaiCompletionProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
         HoverProvider: services => new ThinaiHoverProvider(services),
+        RenameProvider: services => new ThinaiRenameProvider(services),
         SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)
     },
     validation: {

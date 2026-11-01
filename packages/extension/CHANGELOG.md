@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.4-alpha.1 - 2026-11-01
+
+- Remove the CLI JavaScript-summary generator; Thinai remains model-first with no code generation.
+- Disable rename until new-name validation and identifier quoting are implemented.
+- Treat UAX #31 Unicode identifiers as words in VS Code.
+- Replace the complete token when completing existing words and backtick-quoted references.
+- Align model-export visibility with validator public-API rules and export semantic relationship roles.
+
+## 0.1.3-alpha.1 - 2026-10-31
+
+- Add UAX #31 Unicode identifiers and NFC normalization warnings.
+- Validate mirror field shape, optionality, and context-map authorization.
+- Improve module visibility, journey contract, and query-contract validation.
+- Update the alpha documentation, package metadata, and support links.
+
+## 0.1.2-alpha.1 - 2026-10-30
+
+- Restore repository metadata used for Marketplace namespace verification.
+
+## 0.1.1-alpha.1 - 2026-10-29
+
+- Point package metadata and support links at the public documentation site.
+
 ## 0.1.0-alpha.1 - 2026-10-27
 
 - Add declaration hover and verify find-all-references, document symbols, and references.
