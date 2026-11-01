@@ -4,7 +4,7 @@ Thinai has two version lines:
 
 | Artifact | Source version | Published version |
 | --- | --- | --- |
-| `thinai-language`, `thinai-cli` | `0.1.0-alpha.N` | Same version, published under npm tag `alpha` |
+| `thinai-language`, `thinai-cli` | `0.1.0-alpha.N` | Same version, published under npm tag `alpha`; `latest` is moved only intentionally |
 | VS Code extension | `0.1.M-alpha.1` | Marketplace `0.1.M` marked pre-release; Open VSX `0.1.M-alpha.1` |
 
 Marketplace versions are `major.minor.patch` only. The GitHub workflow removes
