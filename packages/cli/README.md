@@ -38,8 +38,8 @@ thinai-cli inspect path/to/model.tni --out model.json
 # One aggregate or context and its visible dependencies
 thinai-cli context path/to/model.tni Aggregate:Ordering.Order --format md
 
-# Model elements that reference a declaration
-thinai-cli impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json
+# Model elements that reference a declaration, up to two levels
+thinai-cli impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json --depth 2
 
 # Validate the source file and its transitive imports
 thinai-cli validate path/to/model.tni
@@ -47,6 +47,10 @@ thinai-cli validate path/to/model.tni
 # Start a read-only MCP server over stdio
 thinai-cli mcp path/to/model.tni
 ```
+
+The MCP server exposes element discovery, exact resolution, dependency filters,
+context slices, impact traversal, and bounded declaration source access. It does
+not edit files or add write tools.
 
 The exported model uses the stable `thinai-model-v1` schema. Element IDs are
 canonical and kind-prefixed, for example `Aggregate:Ordering.Order` and
