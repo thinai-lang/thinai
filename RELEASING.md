@@ -20,6 +20,8 @@ Open VSX keeps the source version (`0.1.5-alpha.1`).
     the repository.
   - Builds and tests, packs both packages once, publishes `thinai-language`
     before `thinai-cli`, then verifies both versions.
+  - Manual dispatch supports a `dry_run` input to validate build, packaging, and
+    version checks without publishing.
 - `.github/workflows/publish-extension.yml`
   - Trigger: `v*` tag or manual dispatch.
   - Uses `@vscode/vsce publish --oidc`; no Marketplace PAT is stored.

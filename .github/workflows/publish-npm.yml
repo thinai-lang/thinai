@@ -13,6 +13,11 @@ on:
         options:
           - alpha
           - latest
+      dry_run:
+        description: Build and pack without publishing
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: publish-npm-${{ github.ref }}
@@ -69,14 +74,17 @@ jobs:
           name: npm-packages
           path: artifacts/*.tgz
       - name: Publish language package
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
           cd artifacts
           npm publish "thinai-language-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
       - name: Publish CLI package
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
           cd artifacts
           npm publish "thinai-cli-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
       - name: Verify published versions
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
           npm view "thinai-language@${VERSION}" version --prefer-online
           npm view "thinai-cli@${VERSION}" version --prefer-online
