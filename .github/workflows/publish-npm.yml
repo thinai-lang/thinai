@@ -77,12 +77,20 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
           cd artifacts
-          npm publish "thinai-language-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+          if npm view "thinai-language@${VERSION}" version --prefer-online >/dev/null 2>&1; then
+            echo "thinai-language@${VERSION} is already published; skipping."
+          else
+            npm publish "thinai-language-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+          fi
       - name: Publish CLI package
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
           cd artifacts
-          npm publish "thinai-cli-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+          if npm view "thinai-cli@${VERSION}" version --prefer-online >/dev/null 2>&1; then
+            echo "thinai-cli@${VERSION} is already published; skipping."
+          else
+            npm publish "thinai-cli-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+          fi
       - name: Verify published versions
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true'
         run: |
