@@ -28,6 +28,8 @@ export interface ContextOptions {
 export interface ImpactOptions {
     json?: boolean;
     out?: string;
+    depth?: string;
+    limit?: string;
 }
 
 export interface ValidateOptions {
@@ -62,7 +64,12 @@ export async function contextAction(fileName: string, elementId: string, options
 
 export async function impactAction(fileName: string, elementId: string, options: ImpactOptions): Promise<void> {
     const model = await loadModel(fileName);
-    const impact = computeImpact(model, elementId);
+    const depth = Number.parseInt(options.depth ?? '1', 10);
+    const limit = Number.parseInt(options.limit ?? '200', 10);
+    const impact = computeImpact(model, elementId, {
+        depth: Number.isFinite(depth) ? depth : 1,
+        limit: Number.isFinite(limit) ? limit : 200
+    });
     await writeOutput(options.json ? json(impact) : impactSummary(impact), options.out);
 }
 
@@ -110,10 +117,14 @@ function formatDiagnostic(diagnostic: ThinaiModelDiagnostic): string {
 function impactSummary(impact: ReturnType<typeof computeImpact>): string {
     const lines = [
         `Impact of ${impact.rootId}`,
+        `Depth: ${impact.depth}`,
         `Changed elements: ${impact.changedIds.length}`,
         `Incoming references: ${impact.incoming.length}`,
-        `Affected elements: ${impact.affectedIds.length}`
+        `Affected elements: ${impact.returned}`
     ];
+    if (impact.truncated) {
+        lines.push(`Truncated: ${impact.totalAffected - impact.returned} affected elements not shown`);
+    }
     if (impact.affectedIds.length > 0) {
         lines.push('', 'Affected:');
         for (const id of impact.affectedIds) {

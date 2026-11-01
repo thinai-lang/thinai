@@ -44,9 +44,11 @@ export default async function(): Promise<void> {
         .argument('<file>', `source file (possible file extensions: ${fileExtensions})`)
         .argument('<element>', 'model element ID')
         .option('--json', 'emit JSON')
+        .option('--depth <n>', 'reverse reference depth, default 1')
+        .option('--limit <n>', 'maximum affected elements, default 200')
         .option('--out <file>', 'write the impact report to a file')
         .description('reports model elements that reference an element')
-        .action(async (fileName: string, element: string, options: { json?: boolean; out?: string }) => {
+        .action(async (fileName: string, element: string, options: { json?: boolean; out?: string; depth?: string; limit?: string }) => {
             await runAction(() => impactAction(fileName, element, options));
         });
 

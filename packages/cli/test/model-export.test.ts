@@ -277,6 +277,92 @@ context map ShippingOrdering {
         });
     });
 
+    test('computes transitive impact with configurable depth and limit', async () => {
+        await withTempDirectory(async directory => {
+            const fileName = path.join(directory, 'transitive-impact.tni');
+            await writeFile(fileName, `bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order {
+            identifier id: OrderId
+        }
+        value object OrderId {
+            raw: string
+        }
+    }
+}
+
+bounded context Shipping
+in bounded context Shipping {
+    value object ShippingOrderId mirrors Ordering.Order.OrderId {
+        raw: string
+    }
+    data object Shipment {
+        orderId: ShippingOrderId
+    }
+}
+
+context map ShippingOrdering {
+    customer Shipping -> supplier Ordering
+}
+`);
+
+            const model = await loadModel(fileName);
+            expect(model.diagnostics).toEqual([]);
+
+            const shallow = computeImpact(model, 'ValueObject:Ordering.Order.OrderId');
+            expect(shallow.depth).toBe(1);
+            expect(shallow.affectedIds).toContain('ValueObject:Shipping.ShippingOrderId');
+            expect(shallow.affectedIds).not.toContain('Field:Shipping.Shipment.orderId');
+            expect(shallow.returned).toBe(shallow.affectedIds.length);
+            expect(shallow.totalAffected).toBe(shallow.affectedIds.length);
+            expect(shallow.truncated).toBe(false);
+
+            const deep = computeImpact(model, 'ValueObject:Ordering.Order.OrderId', { depth: 2 });
+            expect(deep.affectedIds).toEqual(expect.arrayContaining([
+                'ValueObject:Shipping.ShippingOrderId',
+                'Field:Shipping.Shipment.orderId'
+            ]));
+
+            const limited = computeImpact(model, 'ValueObject:Ordering.Order.OrderId', { depth: 2, limit: 1 });
+            expect(limited.affectedIds).toHaveLength(1);
+            expect(limited.returned).toBe(1);
+            expect(limited.totalAffected).toBeGreaterThan(1);
+            expect(limited.truncated).toBe(true);
+            expect(limited.incoming.every(edge => limited.affectedIds.includes(edge.fromId))).toBe(true);
+        });
+    });
+
+    test('includes qualifier edges in impact traversal', async () => {
+        await withTempDirectory(async directory => {
+            const fileName = path.join(directory, 'qualifier-impact.tni');
+            await writeFile(fileName, `bounded context Ordering
+in bounded context Ordering {
+    module Types {
+        exposes OrderId
+        value object OrderId {
+            raw: string
+        }
+    }
+    data object Input {
+        id: Types.OrderId
+    }
+}
+`);
+
+            const model = await loadModel(fileName);
+            const impact = computeImpact(model, 'Module:Ordering.Types');
+            expect(impact.incoming).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    fromId: 'Field:Ordering.Input.id',
+                    toId: 'Module:Ordering.Types',
+                    kind: 'qualifier'
+                })
+            ]));
+            expect(impact.affectedIds).toContain('Field:Ordering.Input.id');
+        });
+    });
+
     test('includes validation diagnostics without rejecting the model export', async () => {
         await withTempDirectory(async directory => {
             const fileName = path.join(directory, 'invalid.tni');

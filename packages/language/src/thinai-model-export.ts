@@ -71,13 +71,22 @@ export interface ThinaiContextSlice {
 export interface ThinaiImpact {
     schemaVersion: typeof THINAI_IMPACT_SCHEMA_VERSION;
     rootId: string;
+    depth: number;
     changedIds: string[];
     incoming: ThinaiModelEdge[];
     affectedIds: string[];
+    totalAffected: number;
+    returned: number;
+    truncated: boolean;
 }
 
 export interface ThinaiContextOptions {
     depth?: number;
+}
+
+export interface ThinaiImpactOptions {
+    depth?: number;
+    limit?: number;
 }
 
 const EXPORTABLE_TYPES = new Set([
@@ -308,7 +317,11 @@ export function renderContextMarkdown(slice: ThinaiContextSlice): string {
     return `${lines.join('\n')}\n`;
 }
 
-export function computeImpact(model: ThinaiModelExport, rootId: string): ThinaiImpact {
+export function computeImpact(
+    model: ThinaiModelExport,
+    rootId: string,
+    options: ThinaiImpactOptions = {}
+): ThinaiImpact {
     const elementById = new Map(model.elements.map(element => [element.id, element]));
     const root = elementById.get(rootId);
     if (!root) {
@@ -325,15 +338,54 @@ export function computeImpact(model: ThinaiModelExport, rootId: string): ThinaiI
             parentId = elementById.get(parentId)?.parentId;
         }
     }
-    const incoming = model.edges.filter(edge => changedIds.has(edge.toId));
-    const affectedIds = [...new Set(incoming.map(edge => edge.fromId))].sort();
+
+    const depth = clampInteger(options.depth ?? 1, 1, 10);
+    const limit = clampInteger(options.limit ?? 200, 1, 1000);
+
+    const affected = new Set<string>();
+    const incoming: ThinaiModelEdge[] = [];
+    const seenEdges = new Set<ThinaiModelEdge>();
+    let frontier = new Set(changedIds);
+    for (let level = 0; level < depth && frontier.size > 0; level++) {
+        const next = new Set<string>();
+        for (const edge of model.edges) {
+            if (!frontier.has(edge.toId)) {
+                continue;
+            }
+            if (!seenEdges.has(edge)) {
+                seenEdges.add(edge);
+                incoming.push(edge);
+            }
+            if (!affected.has(edge.fromId)) {
+                affected.add(edge.fromId);
+                next.add(edge.fromId);
+            }
+        }
+        frontier = next;
+    }
+
+    const allAffectedIds = [...affected].sort();
+    const totalAffected = allAffectedIds.length;
+    const affectedIds = allAffectedIds.slice(0, limit);
+    const returnedSet = new Set(affectedIds);
     return {
         schemaVersion: THINAI_IMPACT_SCHEMA_VERSION,
         rootId,
+        depth,
         changedIds: [...changedIds].sort(),
-        incoming,
-        affectedIds
+        incoming: incoming.filter(edge => returnedSet.has(edge.fromId)),
+        affectedIds,
+        totalAffected,
+        returned: affectedIds.length,
+        truncated: affectedIds.length < totalAffected
     };
+}
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+    if (!Number.isFinite(value)) {
+        return minimum;
+    }
+    return Math.min(maximum, Math.max(minimum, Math.trunc(value)));
 }
 
 function hasName(node: AstNode): boolean {

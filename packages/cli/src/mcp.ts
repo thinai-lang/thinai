@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRequire } from 'node:module';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import {
     computeImpact,
@@ -129,26 +131,44 @@ export async function startMcpServer(fileName: string): Promise<void> {
 
     server.registerTool('get_dependencies', {
         title: 'Get dependencies',
-        description: 'Return incoming, outgoing, or bidirectional relationships for an element.',
+        description: 'Return incoming, outgoing, or bidirectional relationships for an element, with semantic filters and pagination.',
         inputSchema: {
             id: z.string().min(1).describe('Stable element ID'),
-            direction: z.enum(['incoming', 'outgoing', 'both']).optional().describe('Relationship direction, default both')
+            direction: z.enum(['incoming', 'outgoing', 'both']).optional().describe('Relationship direction, default both'),
+            kind: z.enum(['reference', 'qualifier', 'all']).optional().describe('Edge kind, default reference; qualifier edges are opt-in'),
+            role: z.string().min(1).optional().describe('Exact edge role, such as invokes, emits, or type'),
+            offset: z.number().int().min(0).optional().describe('Zero-based edge offset, default 0'),
+            limit: z.number().int().positive().max(1000).optional().describe('Maximum number of edges, default 100')
         }
-    }, async ({ id, direction }) => guarded(async () => {
+    }, async ({ id, direction, kind, role, offset, limit }) => guarded(async () => {
         const { model, byId } = await getAll();
         if (!byId.has(id)) {
             return error(`Unknown model element '${id}'.`);
         }
-        const selected = direction ?? 'both';
-        const edges = model.edges.filter(edge =>
-            (selected === 'outgoing' || selected === 'both') && edge.fromId === id ||
-            (selected === 'incoming' || selected === 'both') && edge.toId === id
-        );
+        const selectedDirection = direction ?? 'both';
+        const selectedKind = kind ?? 'reference';
+        const filtered = model.edges.filter(edge => {
+            const inDirection =
+                (selectedDirection === 'outgoing' || selectedDirection === 'both') && edge.fromId === id ||
+                (selectedDirection === 'incoming' || selectedDirection === 'both') && edge.toId === id;
+            const inKind = selectedKind === 'all' || edge.kind === selectedKind;
+            const inRole = !role || edge.role === role;
+            return inDirection && inKind && inRole;
+        });
+        const start = offset ?? 0;
+        const page = filtered.slice(start, start + (limit ?? 100));
         return text({
             schemaVersion: model.schemaVersion,
             id,
-            edges,
-            related: [...new Set(edges.map(edge => edge.fromId === id ? edge.toId : edge.fromId))]
+            direction: selectedDirection,
+            kind: selectedKind,
+            role: role ?? null,
+            total: filtered.length,
+            offset: start,
+            returned: page.length,
+            truncated: start + page.length < filtered.length,
+            edges: page,
+            related: [...new Set(page.map(edge => edge.fromId === id ? edge.toId : edge.fromId))]
                 .map(relatedId => byId.get(relatedId))
                 .filter((element): element is ThinaiModelElement => element !== undefined)
                 .map(summarizeElement)
@@ -199,13 +219,79 @@ export async function startMcpServer(fileName: string): Promise<void> {
 
     server.registerTool('impact_of_change', {
         title: 'Impact of change',
-        description: 'Return elements affected by changing a model element and its descendants.',
+        description: 'Return elements affected by changing a model element and its descendants, with configurable depth and limits.',
         inputSchema: {
-            id: z.string().min(1).describe('Stable element ID')
+            id: z.string().min(1).describe('Stable element ID'),
+            depth: z.number().int().min(1).max(10).optional().describe('Reverse reference traversal depth, default 1'),
+            limit: z.number().int().positive().max(1000).optional().describe('Maximum number of affected elements, default 200')
         }
-    }, async ({ id }) => guarded(async () => {
+    }, async ({ id, depth, limit }) => guarded(async () => {
         const { model } = await getAll();
-        return text(computeImpact(model, id));
+        return text(computeImpact(model, id, { depth, limit }));
+    }));
+
+    server.registerTool('resolve_element', {
+        title: 'Resolve element',
+        description: 'Resolve an element by exact qualified name, such as Ordering.Order or CommonTypes.Currency.',
+        inputSchema: {
+            qualifiedName: z.string().min(1).describe('Exact, case-sensitive qualified name'),
+            kind: z.string().optional().describe('Optional element kind filter, such as Aggregate or ValueObject'),
+            context: z.string().optional().describe('Optional context element ID or qualified-name prefix')
+        }
+    }, async ({ qualifiedName, kind, context }) => guarded(async () => {
+        const { model } = await getAll();
+        const normalizedKind = kind?.toLowerCase();
+        const matches = model.elements.filter(element =>
+            element.qualifiedName === qualifiedName &&
+            (!normalizedKind || element.kind.toLowerCase() === normalizedKind) &&
+            (!context || element.contextId === context || element.qualifiedName.startsWith(`${context}.`))
+        );
+        const capped = matches.slice(0, 50);
+        return text({
+            schemaVersion: model.schemaVersion,
+            query: qualifiedName,
+            count: matches.length,
+            resolved: matches.length === 1 ? matches[0] : undefined,
+            matches: capped.map(summarizeElement),
+            returned: capped.length,
+            truncated: capped.length < matches.length
+        });
+    }));
+
+    server.registerTool('get_source', {
+        title: 'Get element source',
+        description: 'Return the exact source declaration for a model element from a document in the loaded model.',
+        inputSchema: {
+            id: z.string().min(1).describe('Stable element ID'),
+            maxCharacters: z.number().int().positive().max(50000).optional().describe('Maximum characters to return, default 8000')
+        }
+    }, async ({ id, maxCharacters }) => guarded(async () => {
+        const { model, byId } = await getAll();
+        const element = byId.get(id);
+        if (!element) {
+            return error(`Unknown model element '${id}'.`);
+        }
+        if (!model.documents.some(document => document.uri === element.source.uri)) {
+            return error(`Element '${id}' does not belong to a loaded model document.`);
+        }
+        if (!element.source.uri.startsWith('file:')) {
+            return error(`Element '${id}' does not have a local file source.`);
+        }
+        const fileText = await readFile(fileURLToPath(element.source.uri), 'utf8');
+        const declaration = sliceSource(fileText, element.source.range);
+        const totalCharacters = declaration.length;
+        const limit = Math.min(50000, maxCharacters ?? 8000);
+        const sourceText = declaration.slice(0, limit);
+        return text({
+            schemaVersion: model.schemaVersion,
+            id,
+            uri: element.source.uri,
+            range: element.source.range,
+            characters: sourceText.length,
+            totalCharacters,
+            truncated: sourceText.length < totalCharacters,
+            text: sourceText
+        });
     }));
 
     const transport = new StdioServerTransport();
@@ -243,6 +329,18 @@ function error(message: string): ToolTextResult {
             text: message
         }]
     };
+}
+
+function sliceSource(text: string, range: ThinaiModelElement['source']['range']): string {
+    const lineStarts = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '\n') {
+            lineStarts.push(index + 1);
+        }
+    }
+    const start = (lineStarts[range.start.line] ?? 0) + range.start.character;
+    const end = (lineStarts[range.end.line] ?? text.length) + range.end.character;
+    return text.slice(start, Math.max(start, end));
 }
 
 function summarizeElement(element: ThinaiModelElement) {
