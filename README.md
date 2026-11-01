@@ -49,6 +49,9 @@ This workspace targets Node.js 22 or later. To build and test the language
 package, run `npm run build` and `npm test` from the repository root. Thinai's
 grammar, validation, and language behavior are defined in this project.
 
+See [RELEASING.md](./RELEASING.md) for the CI publishing workflows, version
+mapping, and release checklist.
+
 ### LLM evaluations
 
 Evaluations use an API that implements the OpenAI-compatible chat completions

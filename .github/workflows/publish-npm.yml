@@ -1,0 +1,82 @@
+name: Publish npm packages
+
+on:
+  push:
+    tags: ['npm-v*']
+  workflow_dispatch:
+    inputs:
+      dist_tag:
+        description: npm dist-tag
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - latest
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - name: Use npm with trusted-publishing support
+        run: npm install --global npm@11.19.0
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Validate release versions
+        run: |
+          language_version=$(node -p "require('./packages/language/package.json').version")
+          cli_version=$(node -p "require('./packages/cli/package.json').version")
+          cli_dependency=$(node -p "require('./packages/cli/package.json').dependencies['thinai-language']")
+          if [ "$language_version" != "$cli_version" ]; then
+            echo "Language version ($language_version) and CLI version ($cli_version) differ." >&2
+            exit 1
+          fi
+          if [ "$language_version" != "$cli_dependency" ]; then
+            echo "CLI depends on thinai-language@$cli_dependency, expected $language_version." >&2
+            exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag_version="${GITHUB_REF_NAME#npm-v}"
+            if [ "$tag_version" != "$language_version" ]; then
+              echo "Tag version ($tag_version) does not match package version ($language_version)." >&2
+              exit 1
+            fi
+          fi
+          echo "VERSION=$language_version" >> "$GITHUB_ENV"
+          echo "NPM_DIST_TAG=${{ github.event.inputs.dist_tag || 'alpha' }}" >> "$GITHUB_ENV"
+      - name: Pack npm packages
+        run: |
+          mkdir -p artifacts
+          (cd packages/language && npm pack --pack-destination ../../artifacts)
+          (cd packages/cli && npm pack --pack-destination ../../artifacts)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-packages
+          path: artifacts/*.tgz
+      - name: Publish language package
+        run: |
+          cd artifacts
+          npm publish "thinai-language-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+      - name: Publish CLI package
+        run: |
+          cd artifacts
+          npm publish "thinai-cli-${VERSION}.tgz" --tag "$NPM_DIST_TAG" --access public
+      - name: Verify published versions
+        run: |
+          npm view "thinai-language@${VERSION}" version --prefer-online
+          npm view "thinai-cli@${VERSION}" version --prefer-online

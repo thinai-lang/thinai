@@ -1,0 +1,45 @@
+name: Publish to Open VSX
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "publish" to confirm an Open VSX release
+        required: true
+        type: string
+
+concurrency:
+  group: publish-openvsx-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.inputs.confirm == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: openvsx
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Package VSIX
+        run: |
+          mkdir -p artifacts
+          version=$(node -p "require('./packages/extension/package.json').version")
+          echo "VSIX_VERSION=$version" >> "$GITHUB_ENV"
+          (cd packages/extension && npx --yes @vscode/vsce@4.1.0 package --no-dependencies --out "$GITHUB_WORKSPACE/artifacts/thinai-${version}.vsix")
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT is not configured in the openvsx environment." >&2
+            exit 1
+          fi
+          npx --yes ovsx@1.3.0 publish "artifacts/thinai-${VSIX_VERSION}.vsix" -p "$OVSX_PAT"
