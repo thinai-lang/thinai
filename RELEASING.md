@@ -36,8 +36,11 @@ number.
   - Verifies that the tag matches the extension source version.
   - Manual dispatch supports a `dry_run` input to build and test without publishing.
 - `.github/workflows/publish-openvsx.yml`
-  - Manual dispatch only until the Open VSX namespace claim is approved.
+  - Manual dispatch; enter `publish` to confirm.
   - Requires the `openvsx` GitHub environment and an `OVSX_PAT` secret.
+  - Pre-release versions are marked at package time
+    (`vsce package --pre-release`). The `ovsx publish --pre-release` flag is
+    ignored for an already-packaged VSIX.
 - Documentation deploys separately from `thinai-lang.github.io` on `main`.
 
 ## One-time setup
@@ -52,10 +55,13 @@ number.
    - The existing OIDC publisher workflow is already configured.
    - No local `vsce login` or publisher PAT is needed.
 3. **Open VSX**
-   - Wait for namespace claim `EclipseFdn/open-vsx.org#14952`.
-   - Create the `openvsx` GitHub environment.
-   - Add an `OVSX_PAT` environment secret and protect the environment with a
-     required reviewer.
+   - The `thinai-lang` namespace claim is complete
+     (`EclipseFdn/open-vsx.org#14952`).
+   - The `openvsx` GitHub environment and the `OVSX_PAT` environment secret are
+     configured.
+   - Required reviewers are not available for private repositories below GitHub
+     Enterprise, so the environment has no protection rule. The manual dispatch
+     plus the `confirm=publish` input is the intended gate.
 
 ## Release steps
 
@@ -85,12 +91,22 @@ number.
    npm view thinai-language@0.1.5-alpha.5 version
    npm view thinai-cli@0.1.5-alpha.5 version
    npx @vscode/vsce show thinai-lang.vscode-thinai --json
+   curl -s https://open-vsx.org/api/thinai-lang/vscode-thinai/pre-release \
+     | jq '{version, preRelease, verified}'
    ```
 
-5. After the Open VSX claim is approved, publish manually:
+5. Publish to Open VSX from the release tag, so the extension payload matches
+   npm and Marketplace:
 
    - GitHub Actions → **Publish to Open VSX** → **Run workflow**
-   - Enter `publish` and approve the `openvsx` environment.
+   - Choose the release tag as the ref, enter `publish`, and run.
+   - Dispatch on the tag, not on `main`: the tag and `main` may differ by
+     documentation or CI commits.
+
+   ```bash
+   gh workflow run publish-openvsx.yml -R thinai-lang/thinai \
+     --ref v0.1.5-alpha.5 -f confirm=publish
+   ```
 
 ## Retrying
 
@@ -99,5 +115,10 @@ number.
   than retrying the same version.
 - If Marketplace fails, rerun the Marketplace workflow with
   `workflow_dispatch`; it will rebuild from `main`.
+- Open VSX versions are immutable. Deleting a version does **not** free the
+  version number: the identity stays reserved and the same version cannot be
+  republished. Only an Open VSX administrator can purge it. If a version must
+  be replaced, prefer advancing the version; use a purge request only when the
+  release train requires the same number.
 - Do not publish from a developer machine for a normal release. Local publishing
   is reserved for emergency recovery and requires the appropriate credentials.
