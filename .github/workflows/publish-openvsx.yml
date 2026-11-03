@@ -33,7 +33,11 @@ jobs:
           mkdir -p artifacts
           version=$(node -p "require('./packages/extension/package.json').version")
           echo "VSIX_VERSION=$version" >> "$GITHUB_ENV"
-          (cd packages/extension && npx --yes @vscode/vsce@4.1.0 package --no-dependencies --out "$GITHUB_WORKSPACE/artifacts/thinai-${version}.vsix")
+          pre_release=""
+          case "$version" in
+            *-*) pre_release="--pre-release" ;;
+          esac
+          (cd packages/extension && npx --yes @vscode/vsce@4.1.0 package --no-dependencies $pre_release --out "$GITHUB_WORKSPACE/artifacts/thinai-${version}.vsix")
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -42,9 +46,5 @@ jobs:
             echo "OVSX_PAT is not configured in the openvsx environment." >&2
             exit 1
           fi
-          pre_release=""
-          case "$VSIX_VERSION" in
-            *-*) pre_release="--pre-release" ;;
-          esac
           npx --yes ovsx@1.3.0 publish "artifacts/thinai-${VSIX_VERSION}.vsix" \
-            -p "$OVSX_PAT" --skip-duplicate $pre_release
+            -p "$OVSX_PAT" --skip-duplicate
