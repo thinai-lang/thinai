@@ -5247,6 +5247,40 @@ in bounded context Ordering {
         )).toBe(true);
     });
 
+    test('allows one exposes clause anywhere in a module, but not two', async () => {
+        const valid = await parse(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        application service Service {
+            method run() {
+                behavior "Run."
+            }
+        }
+        exposes Service
+    }
+}`);
+        expect(valid.parseResult.parserErrors).toEqual([]);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            String(diagnostic.message).includes("exposes")
+        )).toEqual([]);
+
+        const duplicate = await parse(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        application service Service {
+            method run() {
+                behavior "Run."
+            }
+        }
+        exposes Service
+        exposes Service
+    }
+}`);
+        expect(semanticDiagnostics(duplicate).some(diagnostic =>
+            String(diagnostic.message).includes("A module may declare 'exposes' at most once.")
+        )).toBe(true);
+    });
+
 });
 
 function checkDocumentValid(document: LangiumDocument): string | undefined {

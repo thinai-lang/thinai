@@ -451,6 +451,30 @@ in bounded context Ordering {
         expect(formatted).toContain('module Data depends on First, Second {}');
     });
 
+    test('preserves an exposes clause placed after module members', async () => {
+        const source = 'bounded context Sample in bounded context Sample {module Api{application service Service{method run(){behavior "Run."}}exposes Service}}';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/exposes-ordering-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted.indexOf('application service Service')).toBeLessThan(formatted.indexOf('exposes Service'));
+    });
+
     test('separates member groups without splitting adjacent fields and preserves comments and text', async () => {
         const source = 'bounded context Sample in bounded context Sample {aggregate Thing{root entity Item{\n// Keep this; note\nmethod first(){behavior "Preserve; this text"}method second(){}identifier id:string name:string}}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(

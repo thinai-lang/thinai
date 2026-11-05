@@ -26,6 +26,21 @@ describe('Parsing tests', () => {
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 
+    test('parses an exposes clause after module members', async () => {
+        const document = await parse(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        application service Service {
+            method run() {
+                behavior "Run."
+            }
+        }
+        exposes Service
+    }
+}`);
+        expect(document.parseResult.parserErrors).toEqual([]);
+    });
+
     test('rejects aliases on file-level imports', async () => {
         const document = await parse('import "./contexts.tni" as Contexts');
         expect(document.parseResult.lexerErrors.length + document.parseResult.parserErrors.length).toBeGreaterThan(0);

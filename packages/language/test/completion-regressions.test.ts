@@ -433,7 +433,7 @@ journey Checkout {
         expect(priorResultCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining(['Draft', 'Placed']));
     });
 
-    test('offers exposes before module members but not after them', async () => {
+    test('offers exposes before and after module members, but not twice', async () => {
         const emptyModule = await build(`bounded context Ordering
 in bounded context Ordering {
     module Api {
@@ -449,7 +449,17 @@ in bounded context Ordering {
         ${marker}
     }
 }`);
-        expect(afterMember.completion?.items.map(item => item.label)).not.toContain('exposes');
+        expect(afterMember.completion?.items.map(item => item.label)).toContain('exposes');
+
+        const alreadyExposed = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes Value
+        value object Value { raw: string }
+        ${marker}
+    }
+}`);
+        expect(alreadyExposed.completion?.items.map(item => item.label)).not.toContain('exposes');
     });
 
     test('filters exposure candidates to declarations owned by the module', async () => {
