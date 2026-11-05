@@ -25,6 +25,7 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    type Module,
     type Parameter,
     isAggregate,
     isApplicationService,
@@ -845,10 +846,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 inProgressKeywordCompletions
             );
         const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
+        const exposureScopedCompletion = this.filterRepeatedExposesKeyword(document, params.position, scopedDefaultCompletion);
         const completionWithBlockKeywords = this.contextMapCompletion.filterKeywords(
             document,
             params.position,
-            this.addFallbackKeywords(scopedDefaultCompletion, blockKeywords)
+            this.addFallbackKeywords(exposureScopedCompletion, blockKeywords)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
         const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(
@@ -1425,20 +1427,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const offset = document.textDocument.offsetAt(position);
-        const module = AstUtils.streamAst(root)
-            .filter(isModule)
-            .filter(isInSharedKernel)
-            .filter(candidate => {
-                const cstNode = candidate.$cstNode;
-                if (!cstNode || cstNode.offset > offset) {
-                    return false;
-                }
-                const closingBrace = [...CstUtils.flattenCst(cstNode)].reverse()
-                    .find(leaf => leaf.text === '}');
-                return offset < cstNode.end || closingBrace === undefined || closingBrace.offset >= offset;
-            })
-            .toArray()
-            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))[0];
+        const module = this.findEnclosingModule(root, offset, isInSharedKernel);
         if (!module) {
             return completion;
         }
@@ -1456,6 +1445,49 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     inTypePosition && typeKeywords.has(item.label);
             })
         };
+    }
+
+    private filterRepeatedExposesKeyword(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        const root = document.parseResult.value;
+        if (!root || !completion) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const module = this.findEnclosingModule(root, offset);
+        if (!module || module.exposures.length === 0) {
+            return completion;
+        }
+        return {
+            ...completion,
+            items: completion.items.filter(item =>
+                item.kind !== CompletionItemKind.Keyword || item.label !== 'exposes'
+            )
+        };
+    }
+
+    private findEnclosingModule(
+        root: AstNode,
+        offset: number,
+        predicate: (module: Module) => boolean = () => true
+    ): Module | undefined {
+        return AstUtils.streamAst(root)
+            .filter(isModule)
+            .filter(predicate)
+            .filter(candidate => {
+                const cstNode = candidate.$cstNode;
+                if (!cstNode || cstNode.offset > offset) {
+                    return false;
+                }
+                const closingBrace = [...CstUtils.flattenCst(cstNode)].reverse()
+                    .find(leaf => leaf.text === '}');
+                return offset < cstNode.end || closingBrace === undefined || closingBrace.offset >= offset;
+            })
+            .toArray()
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))[0];
     }
 
     private isTypeKeywordCompletionPosition(document: LangiumDocument, position: Position): boolean {

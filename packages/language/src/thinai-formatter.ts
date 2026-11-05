@@ -405,8 +405,9 @@ export class ThinaiFormatter extends AbstractFormatter {
             this.separateSiblings(formatter, declaration.methods);
         } else if (node.$type === 'Module') {
             const module = node as AstNode & { exposures?: AstNode[]; members?: AstNode[] };
-            this.separateGroup(formatter, module.exposures, module.members);
-            this.separateSiblings(formatter, module.members);
+            const items = [...(module.exposures ?? []), ...(module.members ?? [])]
+                .sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
+            this.separateSiblings(formatter, items);
         }
 
         if (['BoundedContextPart', 'SharedKernel'].includes(node.$type)) {
@@ -460,16 +461,6 @@ export class ThinaiFormatter extends AbstractFormatter {
                 continue;
             }
             this.prependSiblingSpacing(formatter, previous, current, this.blankLineIndent());
-        }
-    }
-
-    private separateGroup(
-        formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>,
-        previous?: AstNode[],
-        next?: AstNode[]
-    ): void {
-        if (previous?.length && next?.length) {
-            this.prependSiblingSpacing(formatter, previous.at(-1), next[0]!, this.blankLineIndent());
         }
     }
 

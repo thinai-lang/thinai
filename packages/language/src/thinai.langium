@@ -94,8 +94,7 @@ Module:
     'module' name=ID
     ('depends' 'on' dependencies+=ModuleReference (',' dependencies+=ModuleReference)*)?
     '{'
-        exposures+=Exposure*
-        members+=ModuleMember*
+        (exposures+=Exposure | members+=ModuleMember)*
     '}' ;
 
 Exposure:

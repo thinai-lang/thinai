@@ -534,19 +534,15 @@ export class ThinaiKeywordContinuations {
         return [];
     }
 
-    getSiblingKeywordLabelsAt(container: AstNode, offset: number): readonly string[] {
+    getSiblingKeywordLabelsAt(container: AstNode, _offset: number): readonly string[] {
         const labels = this.getSiblingKeywordLabels(container);
         if (!isModule(container) || !labels.includes('exposes')) {
             return labels;
         }
-        // Exposures must precede the module members. Once a member has been
-        // parsed before the cursor, `exposes` is no longer a valid insertion.
-        const members = container.members ?? [];
-        const hasMemberBeforeCursor = members.some(member => {
-            const cstNode = member.$cstNode;
-            return cstNode !== undefined && cstNode.offset < offset;
-        });
-        return hasMemberBeforeCursor ? labels.filter(label => label !== 'exposes') : labels;
+        // A module declares at most one `exposes` clause, anywhere in its body.
+        return (container.exposures?.length ?? 0) > 0
+            ? labels.filter(label => label !== 'exposes')
+            : labels;
     }
 
     getSiblingKeywordLabels(container: AstNode): readonly string[] {

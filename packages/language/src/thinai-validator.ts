@@ -1499,7 +1499,13 @@ export class ThinaiValidator {
             }
         }
         const seenExposures = new Set<AstNode>();
-        for (const exposure of module.exposures) {
+        for (const [clauseIndex, exposure] of module.exposures.entries()) {
+            if (clauseIndex > 0) {
+                accept('error', "A module may declare 'exposes' at most once.", {
+                    node: exposure,
+                    property: 'declarations'
+                });
+            }
             for (const [index, declaration] of exposure.declarations.entries()) {
                 const target = declaration.target.ref;
                 if (target) {
