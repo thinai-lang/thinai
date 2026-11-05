@@ -38,6 +38,15 @@ jobs:
             *-*) pre_release="--pre-release" ;;
           esac
           (cd packages/extension && npx --yes @vscode/vsce@4.1.0 package --no-dependencies $pre_release --out "$GITHUB_WORKSPACE/artifacts/thinai-${version}.vsix")
+      - name: Verify pre-release manifest
+        run: |
+          case "$VSIX_VERSION" in
+            *-*)
+              unzip -p "artifacts/thinai-${VSIX_VERSION}.vsix" extension.vsixmanifest \
+                | grep -q 'Microsoft.VisualStudio.Code.PreRelease" Value="true"'
+              echo "VSIX manifest marks ${VSIX_VERSION} as pre-release."
+              ;;
+          esac
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
