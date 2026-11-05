@@ -2,7 +2,7 @@
     "name": "vscode-thinai",
     "publisher": "thinai-lang",
     "description": "Alpha: Thinai language support for VS Code",
-    "version": "0.1.5-alpha.5",
+    "version": "0.1.6-alpha.6",
     "license": "MIT",
     "displayName": "Thinai",
     "icon": "./icon.png",

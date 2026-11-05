@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.6-alpha.6 - 2026-11-05
+
+- Allow `exposes` anywhere in a module body; a module may declare it at most once.
+- Preserve the export clause position when formatting.
+- Offer `exposes` after module members and suppress a second clause in completion.
+- Align the language, CLI, and extension on the shared `0.1.6-alpha.6` release version.
+
 ## 0.1.5-alpha.5 - 2026-11-01
 
 - Add read-only MCP tools `get_source` and `resolve_element` for declaration text and exact qualified-name lookup.
