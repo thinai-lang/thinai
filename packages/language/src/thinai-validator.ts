@@ -1455,8 +1455,17 @@ export class ThinaiValidator {
 
     checkModule(module: Module, accept: ValidationAcceptor): void {
         this.checkDuplicateDeclaration(module, accept);
+        if (module.dependencyClauses.length > 1) {
+            for (const clause of module.dependencyClauses.slice(1)) {
+                accept('error', "A module may declare 'depends on' at most once.", {
+                    node: clause,
+                    property: 'modules'
+                });
+            }
+        }
         const seenDependencies = new Set<AstNode>();
-        for (const [index, dependency] of module.dependencies.entries()) {
+        const dependencies = module.dependencyClauses.flatMap(clause => clause.modules);
+        for (const dependency of dependencies) {
             const target = dependency.target.ref;
             if (target) {
                 if (seenDependencies.has(target)) {
@@ -1469,9 +1478,8 @@ export class ThinaiValidator {
             }
             if (dependency.target.ref === module) {
                 accept('error', 'A module cannot depend on itself.', {
-                    node: module,
-                    property: 'dependencies',
-                    index
+                    node: dependency,
+                    property: 'target'
                 });
             }
             if (dependency.target.ref && getOwningContextName(dependency.target.ref) !== getOwningContextName(module)) {
@@ -1483,17 +1491,15 @@ export class ThinaiValidator {
                         ? "A shared kernel cannot depend on a bounded context's private model."
                         : "A shared kernel cannot depend on another shared kernel's private model.";
                 accept('error', message, {
-                    node: module,
-                    property: 'dependencies',
-                    index
+                    node: dependency,
+                    property: 'target'
                 });
             }
             if (dependency.target.ref && dependency.target.ref !== module &&
                 moduleDependsTransitivelyOn(dependency.target.ref, module)) {
                 accept('error', 'Module dependencies cannot contain a cycle.', {
-                    node: module,
-                    property: 'dependencies',
-                    index
+                    node: dependency,
+                    property: 'target'
                 });
                 break;
             }

@@ -65,6 +65,7 @@ import {
     isTransitionChange,
     isModel,
     isModule,
+    isModuleDependency,
     isModuleReference,
     isImportComponent,
     isExposure,
@@ -94,6 +95,7 @@ import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiPathScope } from './thinai-path-scope.js';
 import {
     getExportedName,
+    getModuleDependencies,
     getOwningAggregate,
     getOwningContextName,
     getOwningModule,
@@ -203,8 +205,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             referenceType,
             this.externalScope.getDocumentSymbols(context, document, referenceType)
         ), result);
-        const dependencyReference = isModuleReference(context.container) &&
-            context.container.$containerProperty === 'dependencies';
+        const dependencyReference = isModuleReference(context.container);
         const moduleSymbols = dependencyReference
             ? []
             : this.externalScope.getModuleSymbols(context, referenceType);
@@ -783,11 +784,15 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const specificationPathContainer = isSpecificationTextPart(context.container) &&
             this.isStructuralSpecificationPathTarget(target) && !this.isTerminalSpecificationSegment(context);
         if (isModuleReference(context.container) && context.property === 'target') {
-            const dependencySource = context.container.$container;
+            const dependencyClause = context.container.$container;
+            if (!isModuleDependency(dependencyClause)) {
+                return false;
+            }
+            const dependencySource = dependencyClause.$container;
             if (!isModule(dependencySource)) {
                 return false;
             }
-            const alreadyDependsOn = dependencySource.dependencies.some(dependency =>
+            const alreadyDependsOn = getModuleDependencies(dependencySource).some(dependency =>
                 dependency !== context.container && dependency.target?.ref === target
             );
             return isModule(target) && target !== dependencySource && !alreadyDependsOn &&

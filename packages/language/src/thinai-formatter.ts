@@ -9,6 +9,7 @@ const commaSeparatedTypes = new Set([
     'Import',
     'BoundedContext',
     'Module',
+    'ModuleDependency',
     'ContextMap',
     'SharedKernelRelationship',
     'ContextMapEndpoint',
@@ -252,7 +253,7 @@ export class ThinaiFormatter extends AbstractFormatter {
         }
         formatter.keywords(...keywordValueSeparators).append(Formatting.oneSpace());
         formatter.keywords(
-            'depends', 'from', 'initial', 'kind', 'manages', 'mirrors', 'on', 'realizes', 'returns', 'serves', 'to'
+            'from', 'initial', 'kind', 'manages', 'mirrors', 'on', 'realizes', 'returns', 'serves', 'to'
         ).prepend(Formatting.oneSpace());
         formatter.keyword('initial').surround(Formatting.oneSpace());
         if (commaSeparatedTypes.has(node.$type)) {
@@ -404,8 +405,8 @@ export class ThinaiFormatter extends AbstractFormatter {
             const declaration = node as AstNode & { methods?: AstNode[] };
             this.separateSiblings(formatter, declaration.methods);
         } else if (node.$type === 'Module') {
-            const module = node as AstNode & { exposures?: AstNode[]; members?: AstNode[] };
-            const items = [...(module.exposures ?? []), ...(module.members ?? [])]
+            const module = node as AstNode & { dependencyClauses?: AstNode[]; exposures?: AstNode[]; members?: AstNode[] };
+            const items = [...(module.dependencyClauses ?? []), ...(module.exposures ?? []), ...(module.members ?? [])]
                 .sort((left, right) => (left.$cstNode?.offset ?? 0) - (right.$cstNode?.offset ?? 0));
             this.separateSiblings(formatter, items);
         }

@@ -91,11 +91,12 @@ SharedKernelMember:
     | Module;
 
 Module:
-    'module' name=ID
-    ('depends' 'on' dependencies+=ModuleReference (',' dependencies+=ModuleReference)*)?
-    '{'
-        (exposures+=Exposure | members+=ModuleMember)*
+    'module' name=ID '{'
+        (dependencyClauses+=ModuleDependency | exposures+=Exposure | members+=ModuleMember)*
     '}' ;
+
+ModuleDependency:
+    'depends' 'on' modules+=ModuleReference (',' modules+=ModuleReference)* ;
 
 Exposure:
     'exposes' declarations+=NamedDeclarationReference (',' declarations+=NamedDeclarationReference)* ;

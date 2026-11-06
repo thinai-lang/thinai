@@ -846,11 +846,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 inProgressKeywordCompletions
             );
         const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
-        const exposureScopedCompletion = this.filterRepeatedExposesKeyword(document, params.position, scopedDefaultCompletion);
+        const clauseScopedCompletion = this.filterRepeatedModuleClauseKeywords(document, params.position, scopedDefaultCompletion);
         const completionWithBlockKeywords = this.contextMapCompletion.filterKeywords(
             document,
             params.position,
-            this.addFallbackKeywords(exposureScopedCompletion, blockKeywords)
+            this.addFallbackKeywords(clauseScopedCompletion, blockKeywords)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
         const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(
@@ -1447,7 +1447,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
-    private filterRepeatedExposesKeyword(
+    private filterRepeatedModuleClauseKeywords(
         document: LangiumDocument,
         position: Position,
         completion: CompletionList | undefined
@@ -1458,13 +1458,26 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const offset = document.textDocument.offsetAt(position);
         const module = this.findEnclosingModule(root, offset);
-        if (!module || module.exposures.length === 0) {
+        if (!module) {
+            return completion;
+        }
+        const hidden = new Set<string>();
+        if (module.exposures.length > 0) {
+            hidden.add('exposes');
+        }
+        if (module.dependencyClauses.length > 0) {
+            hidden.add('depends');
+            hidden.add('depends on');
+        }
+        if (hidden.size === 0) {
             return completion;
         }
         return {
             ...completion,
             items: completion.items.filter(item =>
-                item.kind !== CompletionItemKind.Keyword || item.label !== 'exposes'
+                item.kind !== CompletionItemKind.Keyword ||
+                typeof item.label !== 'string' ||
+                !hidden.has(item.label)
             )
         };
     }

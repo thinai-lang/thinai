@@ -508,11 +508,6 @@ export class ThinaiKeywordContinuations {
         if (isSubdomain(node)) {
             return node.kind === undefined ? ['kind'] : [];
         }
-        if (isModule(node)) {
-            const start = node.$cstNode?.offset;
-            const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
-            return node.dependencies.length === 0 && !source.includes('{') ? ['depends'] : [];
-        }
         if (isValueObject(node)) {
             const start = node.$cstNode?.offset;
             const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
@@ -536,13 +531,18 @@ export class ThinaiKeywordContinuations {
 
     getSiblingKeywordLabelsAt(container: AstNode, _offset: number): readonly string[] {
         const labels = this.getSiblingKeywordLabels(container);
-        if (!isModule(container) || !labels.includes('exposes')) {
+        if (!isModule(container)) {
             return labels;
         }
-        // A module declares at most one `exposes` clause, anywhere in its body.
-        return (container.exposures?.length ?? 0) > 0
-            ? labels.filter(label => label !== 'exposes')
-            : labels;
+        const hidden = new Set<string>();
+        if ((container.exposures?.length ?? 0) > 0) {
+            hidden.add('exposes');
+        }
+        if ((container.dependencyClauses?.length ?? 0) > 0) {
+            hidden.add('depends');
+            hidden.add('depends on');
+        }
+        return hidden.size > 0 ? labels.filter(label => !hidden.has(label)) : labels;
     }
 
     getSiblingKeywordLabels(container: AstNode): readonly string[] {

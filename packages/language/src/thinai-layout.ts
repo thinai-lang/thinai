@@ -53,14 +53,14 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
         statement: { block: 'required' }
     },
     Module: {
-        properties: new Set(['exposures', 'members']),
+        properties: new Set(['dependencyClauses', 'exposures', 'members']),
         completionKeywords: [
-            'exposes', 'application service', 'query service', 'projector', 'aggregate', 'domain service',
+            'depends', 'exposes', 'application service', 'query service', 'projector', 'aggregate', 'domain service',
             'repository', 'query repository', 'factory', 'event', 'integration event', 'module',
             'value object', 'enum', 'read model', 'data object'
         ],
-        sharedKernelCompletionKeywords: ['exposes', 'domain service', 'module', 'value object', 'enum'],
-        statement: { block: 'required', incompleteSuffixes: ['depends', 'depends on'] }
+        sharedKernelCompletionKeywords: ['depends', 'exposes', 'domain service', 'module', 'value object', 'enum'],
+        statement: { block: 'required' }
     },
     Aggregate: {
         properties: new Set(['members', 'invariants']),
@@ -142,6 +142,13 @@ export const siblingContainerPolicies: Record<string, SiblingContainerPolicy> = 
             bareNameBoundary: true,
             referenceLists: [{ property: 'declarations', targetProperty: 'target' }],
             incompleteSuffixes: ['exposes']
+        }
+    },
+    ModuleDependency: {
+        statement: {
+            bareNameBoundary: true,
+            referenceLists: [{ property: 'modules', targetProperty: 'target' }],
+            incompleteSuffixes: ['depends', 'depends on']
         }
     },
     Field: { statement: { bareNameBoundary: true, incompleteSuffixes: ['initial'] } },

@@ -28,6 +28,7 @@ import {
     type Import,
     type Model,
     type Module,
+    type ModuleReference,
     type SharedKernel,
     type ValueObject
 } from './generated/ast.js';
@@ -185,6 +186,10 @@ export function isIdentifierValueObject(valueObject: ValueObject, visited = new 
         isIdentifierValueObject(valueObject.mirrors.ref, visited));
 }
 
+export function getModuleDependencies(module: Module): ModuleReference[] {
+    return module.dependencyClauses.flatMap(clause => clause.modules);
+}
+
 export function moduleDependsTransitivelyOn(module: Module, target: Module, visited = new Set<Module>()): boolean {
     if (module === target) {
         return true;
@@ -193,7 +198,7 @@ export function moduleDependsTransitivelyOn(module: Module, target: Module, visi
         return false;
     }
     visited.add(module);
-    return module.dependencies.some(dependency => dependency.target.ref !== undefined &&
+    return getModuleDependencies(module).some(dependency => dependency.target.ref !== undefined &&
         moduleDependsTransitivelyOn(dependency.target.ref, target, visited));
 }
 
@@ -336,7 +341,7 @@ export function isModulePubliclyVisible(source: Module, target: Module): boolean
     if (getModulePublicApi(source).includes(target)) {
         return true;
     }
-    for (const dependency of source.dependencies) {
+    for (const dependency of getModuleDependencies(source)) {
         const dependencyModule = dependency.target.ref;
         if (!dependencyModule) {
             continue;

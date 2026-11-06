@@ -25,6 +25,7 @@ import {
     getComponentAliasNames,
     getComponentAliases,
     getExportedName,
+    getModuleDependencies,
     getModulePublicApi,
     getOwningContextName,
     getOwningModule,
@@ -58,7 +59,7 @@ export class ThinaiExternalScope {
         // Dependencies contribute their public API, including recursively
         // exposed nested modules.
         const publicApiRoots: AstNode[] = [];
-        for (const dependency of module.dependencies) {
+        for (const dependency of getModuleDependencies(module)) {
             if (dependency.target.ref) {
                 publicApiRoots.push(dependency.target.ref);
             }

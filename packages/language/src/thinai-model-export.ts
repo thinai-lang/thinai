@@ -539,7 +539,8 @@ function buildProperties(node: AstNode, nodeToId: WeakMap<AstNode, string>): Rec
             return { relationships: (value.relationships ?? []).map((relationship: any) => describeRelationship(relationship, nodeToId)) };
         case 'Module':
             return {
-                dependsOn: ids(value.dependencies?.map((dependency: any) => dependency.target)),
+                dependsOn: ids(value.dependencyClauses?.flatMap((clause: any) =>
+                    clause.modules?.map((dependency: any) => dependency.target) ?? [])),
                 exposes: ids(value.exposures?.flatMap((exposure: any) => exposure.declarations?.map((declaration: any) => declaration.target) ?? [])),
                 sharedKernel: isInSharedKernel(node),
                 parentModuleId: parentModuleId(node, nodeToId)
