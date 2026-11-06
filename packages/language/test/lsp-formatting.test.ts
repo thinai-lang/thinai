@@ -422,7 +422,9 @@ in bounded context Ordering {
     });
 
     test('normalizes import, reference, constructor, and enum separators', async () => {
-        const source = 'import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second: integer){}method combine(first:string,second: integer){}identifier id:string}enum Status{Draft ,Placed}}module Data   depends   on First,Second{}}';
+        const source = `import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second: integer){}method combine(first:string,second: integer){}identifier id:string}enum Status{Draft ,Placed}}module Data {
+    depends on First,Second
+}}`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/list-formatting.tni'), source
         );
@@ -448,7 +450,7 @@ in bounded context Ordering {
         expect(formatted).toContain('constructor(first: string, second: integer) {}');
         expect(formatted).toContain('method combine(first: string, second: integer) {}');
         expect(formatted).toContain('Draft,\n      Placed');
-        expect(formatted).toContain('module Data depends on First, Second {}');
+        expect(formatted).toMatch(/module Data \{\s+depends on First, Second\s+\}/);
     });
 
     test('preserves an exposes clause placed after module members', async () => {
@@ -473,6 +475,30 @@ in bounded context Ordering {
             }, source);
 
         expect(formatted.indexOf('application service Service')).toBeLessThan(formatted.indexOf('exposes Service'));
+    });
+
+    test('preserves a depends on clause placed after module members', async () => {
+        const source = 'bounded context Sample in bounded context Sample {module Api{value object V{raw: string}depends on Domain}module Domain{value object W{raw: string}}}';
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/depends-ordering-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted.indexOf('value object V')).toBeLessThan(formatted.indexOf('depends on Domain'));
     });
 
     test('separates member groups without splitting adjacent fields and preserves comments and text', async () => {

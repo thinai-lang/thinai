@@ -1153,7 +1153,9 @@ in bounded context Beta {
                         }
                     }
 
-                    module Consumer depends on Public {
+                    module Consumer {
+    depends on Public
+
                         value object LocalCode {
                             publicCode: PublicCode
                         }
@@ -1237,7 +1239,9 @@ in bounded context Beta {
                     exposes OrderPlaced
                     event OrderPlaced
                 }
-                module Api depends on Ordering.Contracts { value object ApiCode { raw: string } }
+                module Api {
+    depends on Ordering.Contracts
+ value object ApiCode { raw: string } }
                 aggregate Order {
                     root entity Order {
                         method place() { emits Contracts.OrderPlaced }
@@ -1705,7 +1709,9 @@ in bounded context Beta {
                     exposes DeliveryCode
                     value object DeliveryCode { raw: string }
                 }
-                module Api depends on Contracts {
+                module Api {
+    depends on Contracts
+
                     value object ApiCode { code: Contracts.DeliveryCode }
                 }
                 application service InvoiceApplication {
@@ -1757,7 +1763,7 @@ in bounded context Beta {
             }) ?? [];
 
         expect(orderIdReference).toBe(orderId);
-        expect(api?.dependencies[0].target.ref).toBe(localContracts);
+        expect(api?.dependencyClauses[0].modules[0].target.ref).toBe(localContracts);
         expect(application?.methods[0].parameters[1].type?.ref).toBe(localDeliveryCode);
         expect(behaviorTargets.map(target => [target.$type, 'name' in target ? target.name : undefined])).toEqual([
             ['Field', 'raw'],

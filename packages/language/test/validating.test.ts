@@ -1986,7 +1986,9 @@ in bounded context Ordering {
                         value object Payload { raw: string }
                     }
                 }
-                module Contracts depends on Outer.Inner {
+                module Contracts {
+    depends on Outer.Inner
+
                     exposes E
                     integration event E {
                         items: List<Inner.Payload>
@@ -2302,7 +2304,9 @@ in bounded context Ordering {
                     exposes Payload
                     value object Payload { raw: string }
                 }
-                module Contracts depends on Types {
+                module Contracts {
+    depends on Types
+
                     exposes E
                     integration event E { payload: Payload }
                 }
@@ -2886,7 +2890,9 @@ context map Fulfillment {
                 module Dependency {
                     value object External { raw: string }
                 }
-                module Main depends on Dependency, Dependency {
+                module Main {
+    depends on Dependency, Dependency
+
                     exposes Value, Value
                     value object Value { raw: string }
                 }
@@ -2924,7 +2930,9 @@ context map Fulfillment {
     test('reports a shared-kernel module depending on a bounded-context module', async () => {
         const document = await parse(`
             shared kernel Common {
-                module Client depends on Ordering.Internal {
+                module Client {
+    depends on Ordering.Internal
+
                     value object ClientCode { raw: string }
                 }
             }
@@ -3002,7 +3010,9 @@ context map Fulfillment {
                 module Types {
                     value object Code { raw: string }
                 }
-                module Consumer depends on Types {
+                module Consumer {
+    depends on Types
+
                     value object UsesCode {
                         code: Code
                     }
@@ -3020,7 +3030,9 @@ context map Fulfillment {
                     exposes Code
                     value object Code { raw: string }
                 }
-                module Consumer depends on Types {
+                module Consumer {
+    depends on Types
+
                     value object UsesCode {
                         code: Code
                     }
@@ -3051,8 +3063,12 @@ context map Fulfillment {
     test('rejects circular module dependencies', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
-                module Orders depends on Pricing {}
-                module Pricing depends on Orders {}
+                module Orders {
+    depends on Pricing
+}
+                module Pricing {
+    depends on Orders
+}
             }
         `);
 
@@ -3312,7 +3328,9 @@ context map Fulfillment {
                         }
                     }
                 }
-                module Consumer depends on Api {
+                module Consumer {
+    depends on Api
+
                     domain service Inspector {
                         method inspect(order: Order.Order)
                     }
@@ -3898,7 +3916,9 @@ in bounded context Ordering {
                         text: string
                     }
                 }
-                module Services depends on Contracts {
+                module Services {
+    depends on Contracts
+
                     exposes Queries
                     query service Queries {
                         method find() returns Result
@@ -4165,7 +4185,9 @@ in bounded context Ordering {
                         value object Value { raw: string }
                     }
                 }
-                module Consumer depends on Api {
+                module Consumer {
+    depends on Api
+
                     data object D { item: Agg.Value }
                     application service S {
                         method run() {
@@ -4189,7 +4211,9 @@ in bounded context Ordering {
                         method run() {}
                     }
                 }
-                module Consumer depends on Api {
+                module Consumer {
+    depends on Api
+
                     event Trigger
                     application service App {
                         method onTrigger(source: Trigger) {
@@ -4211,7 +4235,9 @@ in bounded context Ordering {
                     exposes Payload
                     value object Payload { raw: string }
                 }
-                module Contracts depends on Types {
+                module Contracts {
+    depends on Types
+
                     exposes OrderPlacedV1
                     integration event OrderPlacedV1 { payload: Payload }
                 }
@@ -4232,7 +4258,9 @@ in bounded context Ordering {
                     value object Address { city: string }
                     data object Result { status: Status address: Address }
                 }
-                module Services depends on Contracts {
+                module Services {
+    depends on Contracts
+
                     exposes Queries
                     query service Queries { method find() returns Result }
                 }
@@ -4902,7 +4930,9 @@ in bounded context Ordering {
                         data object Result { status: string }
                     }
                 }
-                module Api depends on Inner {
+                module Api {
+    depends on Inner
+
                     exposes Queries
                     query service Queries { method find() returns Outer.Inner.Result }
                 }
@@ -5279,6 +5309,47 @@ in bounded context Ordering {
         expect(semanticDiagnostics(duplicate).some(diagnostic =>
             String(diagnostic.message).includes("A module may declare 'exposes' at most once.")
         )).toBe(true);
+    });
+
+    test('places module dependencies in the body and allows only one clause', async () => {
+        const valid = await parse(`bounded context X
+in bounded context X {
+    module Domain {
+        value object W { raw: string }
+    }
+    module Api {
+        depends on Domain
+        value object V { raw: string }
+    }
+}`);
+        expect(valid.parseResult.parserErrors).toEqual([]);
+        expect(semanticDiagnostics(valid).filter(diagnostic =>
+            String(diagnostic.message).includes('depend')
+        )).toEqual([]);
+
+        const duplicate = await parse(`bounded context X
+in bounded context X {
+    module Domain {
+        value object W { raw: string }
+    }
+    module Api {
+        depends on Domain
+        depends on Domain
+        value object V { raw: string }
+    }
+}`);
+        expect(semanticDiagnostics(duplicate).some(diagnostic =>
+            String(diagnostic.message).includes("A module may declare 'depends on' at most once.")
+        )).toBe(true);
+
+        const header = await parse(`bounded context X
+in bounded context X {
+    module Api depends on Domain {}
+    module Domain {
+        value object W { raw: string }
+    }
+}`);
+        expect(header.parseResult.parserErrors.length).toBeGreaterThan(0);
     });
 
 });

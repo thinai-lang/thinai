@@ -126,7 +126,9 @@ in bounded context Catalog {
 }`,
             'consumer.tni': `import { Catalog as Ctx } from "./catalog.tni"
 in bounded context Ctx {
-    module A depends on Ctx.B {
+    module A {
+    depends on Ctx.B
+
         value object Holder {
             money: B.Money
         }
@@ -454,7 +456,9 @@ in bounded context C {
             }
         }
     }
-    module D depends on A {
+    module D {
+    depends on A
+
         data object E {
             v: B.V
         }
@@ -468,7 +472,9 @@ in bounded context C {
         const docs = await build({
             'a.tni': `bounded context C
 in bounded context C {
-    module A depends on B {
+    module A {
+    depends on B
+
     }
     module B {
         exposes V
@@ -476,7 +482,9 @@ in bounded context C {
             raw: string
         }
     }
-    module D depends on A {
+    module D {
+    depends on A
+
         data object E {
             v: B.V
         }
@@ -587,7 +595,9 @@ in bounded context C {
             }
         }
     }
-    module B depends on A {
+    module B {
+    depends on A
+
         application service Consumer {
             method run() {
                 behavior "Use [[A.Service.privateHelper.amount]]."
@@ -621,7 +631,9 @@ in bounded context C {
             }
         }
     }
-    module B depends on A {
+    module B {
+    depends on A
+
         application service Consumer {
             method run() {
                 behavior "Use [[A.Service.publicHelper.amount]]."
@@ -645,7 +657,9 @@ in bounded context C {
             }
         }
     }
-    module Sibling depends on Outer.Inner {
+    module Sibling {
+    depends on Outer.Inner
+
         application service App {
             method run() {
                 behavior "Use [[Inner.V.raw]]."

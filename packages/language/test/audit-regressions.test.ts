@@ -347,7 +347,9 @@ in bounded context C {
 `,
             'b.tni': `import "./a.tni"
 in bounded context C {
-    module B depends on A {
+    module B {
+    depends on A
+
         value object X {
             fromB: string
         }

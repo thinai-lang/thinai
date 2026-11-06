@@ -462,6 +462,31 @@ in bounded context Ordering {
         expect(alreadyExposed.completion?.items.map(item => item.label)).not.toContain('exposes');
     });
 
+    test('offers depends inside a module body but not twice', async () => {
+        const empty = await build(`bounded context X
+in bounded context X {
+    module Api {
+        ${marker}
+    }
+    module Domain {
+        value object W { raw: string }
+    }
+}`);
+        expect(empty.completion?.items.map(item => item.label)).toContain('depends on');
+
+        const existing = await build(`bounded context X
+in bounded context X {
+    module Api {
+        depends on Domain
+        ${marker}
+    }
+    module Domain {
+        value object W { raw: string }
+    }
+}`);
+        expect(existing.completion?.items.map(item => item.label)).not.toContain('depends on');
+    });
+
     test('filters exposure candidates to declarations owned by the module', async () => {
         const emptyExposure = await build(`bounded context Ordering
 in bounded context Ordering {
@@ -558,7 +583,9 @@ in bounded context O {
         exposes Payload
         value object Payload { raw: string }
     }
-    module Contracts depends on Types {
+    module Contracts {
+    depends on Types
+
         exposes OrderPlacedV1
         integration event OrderPlacedV1 { payload: ${marker} }
     }
@@ -909,7 +936,9 @@ in bounded context O {
         const dependency = await build(`bounded context O
 in bounded context O {
     module A {}
-    module B depends on A, ${marker} {}
+    module B {
+    depends on A, ${marker}
+}
 }`);
         expect(dependency.completion?.items.map(item => item.label)).not.toEqual(
             expect.arrayContaining(['A', 'O.A'])
@@ -1080,7 +1109,9 @@ in bounded context Api {
         value object Address { city: string }
         data object Result { status: Status address: Address }
     }
-    module Services depends on Contracts {
+    module Services {
+    depends on Contracts
+
         exposes Queries
         query service Queries { method find() returns Result }
     }
@@ -1214,9 +1245,10 @@ ${marker}
 in bounded context C {
     module A { value object X { raw: string } }
     module B { value object Y { raw: string } }
-    module D depends on A,
+    module D {
+    depends on A,
     ${marker}
-    { value object Z { raw: string } }
+ value object Z { raw: string } }
 }`);
         const dependencyLabels = dependencies.completion?.items.map(item => item.label) ?? [];
         expect(dependencyLabels).toContain('B');
@@ -1451,7 +1483,9 @@ in bounded context P {
             data object Result { status: string }
         }
     }
-    module Api depends on Inner {
+    module Api {
+    depends on Inner
+
         exposes Queries
         query service Queries { method find() returns Outer.Inner.Result }
     }

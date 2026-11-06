@@ -2106,7 +2106,7 @@ in bounded context ${name} {
         const cases = [
             { name: 'bounded-context realizes', keyword: 'realizes', source: `subdomain Commerce\nbounded context Ordering ${marker}` },
             { name: 'subdomain kind', keyword: 'kind', source: `subdomain Commerce ${marker}` },
-            { name: 'module dependencies', keyword: 'depends on', source: `bounded context Ordering\nin bounded context Ordering { module Api ${marker} {} }` },
+            { name: 'module dependencies', keyword: 'depends on', source: `bounded context Ordering\nin bounded context Ordering { module Api {\n${marker}\n} }` },
             { name: 'value-object mirrors', keyword: 'mirrors', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { value object Base { raw: string }\nvalue object Mirror ${marker} { raw: string } } }` },
             { name: 'method return type', keyword: 'returns', source: `bounded context Ordering\nin bounded context Ordering { application service Queries { method find() ${marker} } }` },
             { name: 'field initial state', keyword: 'initial', source: `bounded context Ordering\nin bounded context Ordering { aggregate Order { root entity Order { identifier id: Id\nstatus: Status ${marker} }\nvalue object Id { raw: string }\nenum Status { Draft, Placed } } }` }
@@ -2173,7 +2173,7 @@ in bounded context ${name} {
             { name: 'root entity', source: 'bounded context X\nin bounded context X { aggregate A {\nroot ', expected: ['entity'] },
             { name: 'query service and repository', source: 'bounded context X\nin bounded context X {\nquery ', expected: ['repository', 'service'] },
             { name: 'integration event', source: 'bounded context X\nin bounded context X {\nintegration ', expected: ['event'] },
-            { name: 'module depends on', source: 'bounded context X\nin bounded context X {\nmodule M depends ', expected: ['on'] },
+            { name: 'module depends on', source: 'bounded context X\nin bounded context X {\nmodule M {\ndepends ', expected: ['on'] },
             { name: 'repository manages', source: 'bounded context X\nin bounded context X {\nrepository R { ', expected: ['manages'] },
             { name: 'query repository serves', source: 'bounded context X\nin bounded context X {\nquery repository R { ', expected: ['serves'] },
             { name: 'import from', source: 'import { Foo } ', expected: ['from'] }

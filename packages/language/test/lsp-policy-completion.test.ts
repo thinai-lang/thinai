@@ -307,9 +307,13 @@ describe('LSP policy completion', () => {
     test('completes valid module dependencies and excludes self, foreign, and cyclic modules', async () => {
         const marker = '__completion_position__';
         const markedText = `bounded context Ordering in bounded context Ordering {
-            module A depends on ${marker} {}
+            module A {
+    depends on ${marker}
+}
             module B {}
-            module C depends on A {}
+            module C {
+    depends on A
+}
         }
         bounded context Shipping in bounded context Shipping { module Foreign {} }`;
         const offset = markedText.indexOf(marker);
@@ -526,7 +530,9 @@ describe('LSP policy completion', () => {
                 exposes ExposedCode
                 value object ExposedCode { raw: string }
             }
-            module Consumer depends on Producer {
+            module Consumer {
+    depends on Producer
+
                 data object Request {
                     code: ExposedC
                     rootCode: RootC

@@ -96,7 +96,9 @@ in bounded context Ordering {
         }
     }
 
-    module Api depends on Types {
+    module Api {
+    depends on Types
+
         data object Input {
             id: Types.OrderId
         }
