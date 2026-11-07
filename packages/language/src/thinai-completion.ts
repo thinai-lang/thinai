@@ -14,6 +14,7 @@ import {
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
 import {
     CompletionItemKind,
+    TextEdit,
     type CompletionItem,
     type CompletionList,
     type CompletionParams,
@@ -25,6 +26,7 @@ import {
     type CollectionType,
     type Exposure,
     type Field,
+    type ImportComponent,
     type Module,
     type Parameter,
     isAggregate,
@@ -63,7 +65,8 @@ import {
     getExportedName,
     isInSharedKernel,
     resolveAstNodeDescription,
-    resolveImportUri
+    resolveImportUri,
+    toImportPath
 } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { INTEGRATION_PATTERNS } from './thinai-constants.js';
@@ -210,6 +213,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     typedPrefix
                 );
             }
+            return stream(this.getAutoImportComponentCandidates(refInfo, context, typedPrefix));
         }
         if ((isJourneyStep(container) || isMethodInvocation(container)) &&
             (property === 'path' || property === 'target')) {
@@ -246,6 +250,64 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     private getTypedPrefix(context: CompletionContext): string {
         const prefix = context.textDocument.getText().slice(context.tokenOffset, context.offset);
         return normalizeIdentifierText(prefix);
+    }
+
+    private getAutoImportComponentCandidates(
+        refInfo: ReferenceInfo,
+        context: CompletionContext,
+        typedPrefix: string
+    ): AstNodeDescription[] {
+        if (typedPrefix.length === 0) {
+            return [];
+        }
+        const importComponent = AstUtils.getContainerOfType(
+            refInfo.container,
+            (node): node is ImportComponent => isImportComponent(node) && node.$cstNode !== undefined
+        );
+        if (!importComponent?.$cstNode) {
+            return [];
+        }
+        const importDeclaration = AstUtils.getContainerOfType(importComponent, isImport);
+        if (!importDeclaration?.$cstNode) {
+            return [];
+        }
+        if (GrammarUtils.findNodeForProperty(importDeclaration.$cstNode, 'path')) {
+            return [];
+        }
+        if (importDeclaration.components.some(component => component !== importComponent)) {
+            // Auto-import is only unambiguous for the first component in the list.
+            return [];
+        }
+
+        const importedUris = new Set<string>();
+        const model = context.document.parseResult.value;
+        if (isModel(model)) {
+            for (const declaration of model.imports) {
+                const uri = resolveImportUri(context.document, declaration);
+                if (uri) {
+                    importedUris.add(uri.toString());
+                }
+            }
+        }
+
+        return this.thinaiServices.shared.workspace.IndexManager
+            .allElements('ImportableComponent')
+            .filter(description => !UriUtils.equals(description.documentUri, context.document.uri))
+            .filter(description => !importedUris.has(description.documentUri.toString()))
+            .filter(description => this.matchesCompletionPrefix(description.name, typedPrefix))
+            .distinct(description => `${description.documentUri.toString()}#${description.path}`)
+            .toArray()
+            .sort((left, right) =>
+                left.name.localeCompare(right.name) ||
+                left.documentUri.toString().localeCompare(right.documentUri.toString())
+            )
+            .map(description => ({
+                ...description,
+                thinaiAutoImportPath: toImportPath(
+                    UriUtils.dirname(context.document.uri),
+                    description.documentUri
+                )
+            } as AstNodeDescription));
     }
 
     private isAdditionalEventHandlerParameter(parameter: Parameter): boolean {
@@ -488,7 +550,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         context: CompletionContext
     ): CompletionValueItem {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
-        item.detail = this.completionDetails.getCompletionDetail(nodeDescription);
+        const autoImportPath = (nodeDescription as AstNodeDescription & { thinaiAutoImportPath?: string })
+            .thinaiAutoImportPath;
+        const detail = this.completionDetails.getCompletionDetail(nodeDescription);
+        item.detail = autoImportPath ? `${detail} from ${autoImportPath}` : detail;
+        if (autoImportPath) {
+            const suffixEdit = this.getAutoImportSuffixEdit(refInfo, context, autoImportPath);
+            if (suffixEdit) {
+                item.additionalTextEdits = [...(item.additionalTextEdits ?? []), suffixEdit];
+            }
+        }
         const spelling = nodeDescription as AstNodeDescription & {
             thinaiCompletionLabel?: string;
             thinaiFilterText?: string;
@@ -527,7 +598,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (item.textEdit) {
             item.textEdit = { ...item.textEdit, newText: insertText };
         }
-        if (target) {
+        if (target || autoImportPath) {
             // Langium's default text-edit builder filters candidates with a fuzzy
             // match against the item label. Thinai may intentionally display a
             // short spelling while inserting a qualified path, so provide the edit
@@ -539,8 +610,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             const tokenText = context.textDocument.getText({ start: tokenStart, end: tokenEnd });
             // Replace the whole word or backtick-delimited token. Ending the edit
             // at the cursor would leave a suffix behind when completion is invoked
-            // at the start of an existing token.
-            const replaceEnd = this.getReferenceReplaceEnd(context, tokenEnd, tokenText);
+            // at the start of an existing token. Import components end at their
+            // reference token; the following `as` alias is a separate keyword.
+            const replaceEnd = isImportComponent(refInfo.container)
+                ? tokenEnd
+                : this.getReferenceReplaceEnd(context, tokenEnd, tokenText);
             const replaceRange = { start: tokenStart, end: replaceEnd };
             if (this.clientCapabilities?.completionItem?.insertReplaceSupport) {
                 item.textEdit = {
@@ -558,12 +632,86 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return item;
     }
 
+    private getAutoImportSuffixEdit(
+        refInfo: ReferenceInfo,
+        context: CompletionContext,
+        importPath: string
+    ): TextEdit | undefined {
+        const importComponent = AstUtils.getContainerOfType(
+            refInfo.container,
+            (node): node is ImportComponent => isImportComponent(node) && node.$cstNode !== undefined
+        );
+        const importDeclaration = importComponent
+            ? AstUtils.getContainerOfType(importComponent, isImport)
+            : undefined;
+        const importCst = importDeclaration?.$cstNode;
+        if (!importComponent?.$cstNode || !importCst) {
+            return undefined;
+        }
+        if (GrammarUtils.findNodeForProperty(importCst, 'path')) {
+            return undefined;
+        }
+
+        const quotedPath = `"${importPath}"`;
+        const fromKeyword = GrammarUtils.findNodeForKeyword(importCst, 'from');
+        if (fromKeyword) {
+            return this.createAutoImportEdit(context.document, fromKeyword.end, quotedPath, true);
+        }
+        const closingBrace = GrammarUtils.findNodeForKeyword(importCst, '}');
+        if (closingBrace) {
+            return this.createAutoImportEdit(
+                context.document,
+                closingBrace.end,
+                `from ${quotedPath}`,
+                true
+            );
+        }
+        const componentEnd = importComponent.$cstNode.end;
+        const source = context.textDocument.getText();
+        return this.createAutoImportEdit(
+            context.document,
+            componentEnd,
+            `} from ${quotedPath}`,
+            componentEnd === 0 || !/[ \t]/u.test(source[componentEnd - 1] ?? '')
+        );
+    }
+
+    private createAutoImportEdit(
+        document: LangiumDocument,
+        anchorEnd: number,
+        text: string,
+        leadingSpace: boolean
+    ): TextEdit {
+        const source = document.textDocument.getText();
+        let insertEnd = anchorEnd;
+        while (insertEnd < source.length && (source[insertEnd] === ' ' || source[insertEnd] === '\t')) {
+            insertEnd++;
+        }
+        const start = document.textDocument.positionAt(anchorEnd);
+        const end = document.textDocument.positionAt(insertEnd);
+        const newText = `${leadingSpace ? ' ' : ''}${text}`;
+        return insertEnd > anchorEnd
+            ? TextEdit.replace({ start, end }, newText)
+            : TextEdit.insert(start, newText);
+    }
+
     private getReferenceReplaceEnd(context: CompletionContext, tokenEnd: Position, tokenText: string): Position {
         if (tokenText.startsWith('`')) {
             return tokenEnd;
         }
         const end = this.getForwardWordEndOffset(context.document, context.offset);
         return end > context.offset ? context.textDocument.positionAt(end) : context.position;
+    }
+
+    private isImportComponentPosition(document: LangiumDocument, offset: number): boolean {
+        const cst = document.parseResult.value?.$cstNode;
+        if (!cst) {
+            return false;
+        }
+        const leaf = CstUtils.findLeafNodeAtOffset(cst, offset)
+            ?? CstUtils.findLeafNodeBeforeOffset(cst, offset);
+        return leaf?.astNode !== undefined &&
+            AstUtils.getContainerOfType(leaf.astNode, isImportComponent) !== undefined;
     }
 
     private getForwardWordEndOffset(document: LangiumDocument, offset: number): number {
@@ -675,6 +823,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const offset = document.textDocument.offsetAt(position);
+        if (this.isImportComponentPosition(document, offset)) {
+            return completion;
+        }
         const endOffset = this.getForwardWordEndOffset(document, offset);
         if (endOffset <= offset) {
             return completion;

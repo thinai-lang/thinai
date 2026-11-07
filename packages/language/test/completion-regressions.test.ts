@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { AstUtils, EmptyFileSystem, isReference, type LangiumDocument, URI } from 'langium';
 import { clearDocuments } from 'langium/test';
-import { CompletionItemKind, type CompletionList } from 'vscode-languageserver';
+import { CompletionItemKind, type CompletionItem, type CompletionList, type TextEdit } from 'vscode-languageserver';
 import { createThinaiServices, isField } from '../src/index.js';
 import { getTypeReferences } from '../src/thinai-type-utils.js';
 
@@ -39,6 +39,26 @@ async function build(markedText: string, validation = false): Promise<{
         position: document.textDocument.positionAt(offset)
     });
     return { document, completion, text, offset };
+}
+
+function applyCompletionItem(document: LangiumDocument, source: string, item: CompletionItem): string {
+    const edit = item.textEdit;
+    if (!edit) {
+        return source;
+    }
+    const edits: TextEdit[] = [{
+        range: 'range' in edit ? edit.range : edit.replace,
+        newText: edit.newText
+    }, ...(item.additionalTextEdits ?? [])];
+    return edits
+        .sort((left, right) =>
+            document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start)
+        )
+        .reduce((text, textEdit) => {
+            const start = document.textDocument.offsetAt(textEdit.range.start);
+            const end = document.textDocument.offsetAt(textEdit.range.end);
+            return text.slice(0, start) + textEdit.newText + text.slice(end);
+        }, source);
 }
 
 describe('Completion regressions', () => {
@@ -2146,6 +2166,196 @@ in bounded context Ordering {
             const labels = completion?.items.map(item => item.label) ?? [];
             expect(labels.includes('Ordering'), sourceText).toBe(expected);
         }
+    });
+
+    test('auto-imports importable components from other files', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-common/common.tni'),
+            `shared kernel Common {
+    value object V { raw: string }
+}`
+        );
+        const extra = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-common/extra.tni'),
+            `shared kernel Extra {
+    value object W { raw: string }
+}`
+        );
+        documents.push(common, extra);
+        await services.shared.workspace.DocumentBuilder.build([common, extra], { validation: false });
+
+        const cases = [
+            {
+                name: 'partial component',
+                source: `import { Com${marker}\n`,
+                expected: 'import { Common } from "./common.tni"\n'
+            },
+            {
+                name: 'existing alias',
+                source: `import { Com${marker} as Shared\n`,
+                expected: 'import { Common as Shared } from "./common.tni"\n'
+            },
+            {
+                name: 'existing closing brace',
+                source: `import { Com${marker} }\n`,
+                expected: 'import { Common } from "./common.tni"\n'
+            },
+            {
+                name: 'existing from keyword',
+                source: `import { Com${marker} } from\n`,
+                expected: 'import { Common } from "./common.tni"\n'
+            }
+        ];
+
+        for (const [index, { name, source, expected }] of cases.entries()) {
+            const offset = source.indexOf(marker);
+            const text = source.replace(marker, '');
+            const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/auto-import-common/consumer-${index}.tni`),
+                text
+            );
+            documents.push(consumer);
+            await services.shared.workspace.DocumentBuilder.build([consumer], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+                textDocument: { uri: consumer.uri.toString() },
+                position: consumer.textDocument.positionAt(offset)
+            });
+            const item = completion?.items.find(candidate => candidate.label === 'Common');
+            expect(item, name).toBeDefined();
+            expect(item?.detail, name).toContain('from ./common.tni');
+            expect(applyCompletionItem(consumer, text, item!), name).toBe(expected);
+        }
+    });
+
+    test('excludes current, imported, and ambiguous auto-import candidates', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-filter/common.tni'),
+            `shared kernel Common {
+    value object V { raw: string }
+}`
+        );
+        const extra = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-filter/extra.tni'),
+            `shared kernel Extra {
+    value object W { raw: string }
+}`
+        );
+        documents.push(common, extra);
+        await services.shared.workspace.DocumentBuilder.build([common, extra], { validation: false });
+
+        const cases = [
+            {
+                name: 'current file',
+                source: `shared kernel Local {
+    value object V { raw: string }
+}
+import { Loc${marker}\n`,
+                unexpected: ['Local']
+            },
+            {
+                name: 'already imported file',
+                source: `import "./common.tni"
+import { Com${marker}\n`,
+                unexpected: ['Common']
+            },
+            {
+                name: 'previous component without a path',
+                source: `import { Common, ${marker}\n`,
+                unexpected: ['Common', 'Extra']
+            },
+            {
+                name: 'empty component list',
+                source: `import { ${marker}\n`,
+                unexpected: ['Common', 'Extra']
+            }
+        ];
+
+        for (const [index, { name, source, unexpected }] of cases.entries()) {
+            const offset = source.indexOf(marker);
+            const text = source.replace(marker, '');
+            const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/auto-import-filter/consumer-${index}.tni`),
+                text
+            );
+            documents.push(consumer);
+            await services.shared.workspace.DocumentBuilder.build([consumer], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+                textDocument: { uri: consumer.uri.toString() },
+                position: consumer.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            for (const label of unexpected) {
+                expect(labels, name).not.toContain(label);
+            }
+        }
+    });
+
+    test('keeps duplicate auto-import names distinct by their paths', async () => {
+        const first = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-duplicate/first.tni'),
+            `shared kernel Common {
+    value object V { raw: string }
+}`
+        );
+        const second = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-duplicate/second.tni'),
+            `shared kernel Common {
+    value object W { raw: string }
+}`
+        );
+        documents.push(first, second);
+        await services.shared.workspace.DocumentBuilder.build([first, second], { validation: false });
+
+        const source = `import { Com${marker}\n`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/auto-import-duplicate/consumer.tni'),
+            text
+        );
+        documents.push(consumer);
+        await services.shared.workspace.DocumentBuilder.build([consumer], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        const items = completion?.items.filter(item => item.label === 'Common') ?? [];
+        expect(items).toHaveLength(2);
+        expect(items.map(item => item.detail).sort()).toEqual([
+            'SharedKernel Common from ./first.tni',
+            'SharedKernel Common from ./second.tni'
+        ]);
+    });
+
+    test('keeps path-filtered import completion free of auto-import edits', async () => {
+        const common = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-alias-common/common.tni'),
+            `shared kernel Common {
+    value object V { raw: string }
+}`
+        );
+        documents.push(common);
+        await services.shared.workspace.DocumentBuilder.build([common], { validation: false });
+
+        const source = `import { Com${marker} as Shared } from "./common.tni"\n`;
+        const offset = source.indexOf(marker);
+        const text = source.replace(marker, '');
+        const consumer = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/import-alias-common/consumer.tni'),
+            text
+        );
+        documents.push(consumer);
+        await services.shared.workspace.DocumentBuilder.build([consumer], { validation: false });
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(consumer, {
+            textDocument: { uri: consumer.uri.toString() },
+            position: consumer.textDocument.positionAt(offset)
+        });
+        const item = completion?.items.find(candidate => candidate.label === 'Common');
+        expect(item).toBeDefined();
+        expect(item?.additionalTextEdits).toBeUndefined();
+        expect(applyCompletionItem(consumer, text, item!)).toBe(
+            'import { Common as Shared } from "./common.tni"\n'
+        );
     });
 
     test('offers a bare import quick fix for an unowned actor', async () => {
