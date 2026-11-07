@@ -3105,7 +3105,12 @@ context map Fulfillment {
         expect(document.diagnostics?.some(diagnostic =>
             String(diagnostic.message).startsWith('An error occurred during validation')
         )).toBe(false);
-        expect(document.diagnostics?.some(diagnostic => String(diagnostic.message).includes("Expecting token of type 'ID'"))).toBe(true);
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes('An `in bounded context` clause needs a bounded context name.')
+        )).toBe(true);
+        expect(document.diagnostics?.some(diagnostic =>
+            String(diagnostic.message).includes("Expecting token of type 'ID'")
+        )).toBe(false);
     });
 
     test('rejects another aggregate root in an entity method signature', async () => {

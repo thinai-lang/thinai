@@ -80,6 +80,81 @@ in bounded context Ordering {
         )).toHaveLength(2);
     });
 
+    test('explains missing declaration, member, and clause names', async () => {
+        const context = (body: string) => `bounded context X\nin bounded context X {\n${body}\n}\n`;
+        const moduleBody = (body: string) => context(`  module M {\n${body}\n  }`);
+        const aggregateBody = (body: string) => context(`  aggregate A {\n${body}\n  }`);
+        const serviceBody = (body: string) => context(`  application service S {\n${body}\n  }`);
+        const entityBody = (body: string) => aggregateBody(`    root entity E {\n${body}\n    }`);
+
+        const cases: Array<{ name: string; source: string; message: string }> = [
+            { name: 'value object name', source: aggregateBody('    value object {\n    }'), message: 'A value object needs a name before `{`.' },
+            { name: 'entity name', source: aggregateBody('    entity {\n    }'), message: 'An entity needs a name before `{`.' },
+            { name: 'root entity name', source: aggregateBody('    root entity {\n    }'), message: 'An entity needs a name before `{`.' },
+            { name: 'module name', source: context('  module {\n  }'), message: 'A module needs a name before `{`.' },
+            { name: 'aggregate name', source: context('  aggregate {\n  }'), message: 'An aggregate needs a name before `{`.' },
+            { name: 'enum name', source: aggregateBody('    enum {\n    }'), message: 'An enum needs a name before `{`.' },
+            { name: 'event name', source: moduleBody('    event {\n    }'), message: 'A domain event needs a name before `{`.' },
+            { name: 'integration event name', source: moduleBody('    integration event {\n    }'), message: 'An integration event needs a name before `{`.' },
+            { name: 'application service name', source: context('  application service {\n  }'), message: 'An application service needs a name before `{`.' },
+            { name: 'domain service name', source: context('  domain service {\n  }'), message: 'A domain service needs a name before `{`.' },
+            { name: 'query service name', source: context('  query service {\n  }'), message: 'A query service needs a name before `{`.' },
+            { name: 'repository name', source: context('  repository {\n  }'), message: 'A repository needs a name before `{`.' },
+            { name: 'query repository name', source: context('  query repository {\n  }'), message: 'A query repository needs a name before `{`.' },
+            { name: 'factory name', source: moduleBody('    factory {\n    }'), message: 'A factory needs a name before `{`.' },
+            { name: 'projector name', source: moduleBody('    projector {\n    }'), message: 'A projector needs a name before `{`.' },
+            { name: 'read model name', source: moduleBody('    read model {\n    }'), message: 'A read model needs a name before `{`.' },
+            { name: 'data object name', source: moduleBody('    data object {\n    }'), message: 'A data object needs a name before `{`.' },
+            { name: 'actor name', source: 'actor\n', message: 'An actor needs a name.' },
+            { name: 'journey name', source: 'journey {\n}\n', message: 'A journey needs a name before `{`.' },
+            { name: 'subdomain name', source: 'subdomain\n', message: 'A subdomain needs a name.' },
+            { name: 'bounded context name', source: 'bounded context\n', message: 'A bounded context needs a name.' },
+            { name: 'context map name', source: 'context map {\n}\n', message: 'A context map needs a name before `{`.' },
+            { name: 'shared kernel name', source: 'shared kernel {\n}\n', message: 'A shared kernel needs a name before `{`.' },
+            { name: 'field name', source: entityBody('      : string'), message: 'A field needs a name before `:`.' },
+            { name: 'method name', source: serviceBody('    method () {\n    }'), message: 'A method needs a name before `(`.' },
+            { name: 'parameter name', source: serviceBody('    method run(: string) {\n    }'), message: 'A parameter needs a name before `:`.' },
+            { name: 'enum value name', source: aggregateBody('    enum Status { }'), message: 'An enum value needs a name.' },
+            { name: 'initial value name', source: aggregateBody('    enum Status { Draft }\n    root entity E {\n      status: Status initial\n    }'), message: 'An `initial` value needs an enum value name.' },
+            { name: 'field type', source: entityBody('      raw:'), message: 'A field needs a type.' },
+            { name: 'parameter type', source: serviceBody('    method run(a:) {\n    }'), message: 'A parameter needs a type.' },
+            { name: 'return type', source: serviceBody('    method run() returns'), message: 'A method needs a return type.' },
+            { name: 'collection element type', source: entityBody('      raw: List<'), message: 'A collection needs an element type.' },
+            { name: 'import component', source: 'import { } from "./x.tni"\n', message: 'An import needs a component name.' },
+            { name: 'import alias', source: 'import { A as } from "./x.tni"\n', message: 'An import alias needs a name.' },
+            { name: 'depends on target', source: moduleBody('    depends on {\n    }'), message: 'A `depends on` clause needs a module name.' },
+            { name: 'exposes target', source: moduleBody('    exposes {\n    }'), message: 'An `exposes` clause needs a declaration name.' },
+            { name: 'by target', source: 'actor A\njourney J {\n  by {\n  }\n}\n', message: 'A `by` clause needs an actor name.' },
+            { name: 'realizes target', source: 'bounded context X realizes {\n}\n', message: 'A `realizes` clause needs a subdomain name.' },
+            { name: 'participants target', source: 'bounded context A\nbounded context B\ncontext map M {\n  sharedKernel SK {\n    participants: []\n  }\n}\nshared kernel SK {\n}\n', message: 'A `participants` entry needs a bounded context name.' },
+            { name: 'emits target', source: serviceBody('    method run() {\n      emits\n    }'), message: 'An `emits` clause needs an event name.' },
+            { name: 'reads from target', source: serviceBody('    method run() {\n      reads from\n    }'), message: 'A `reads from` clause needs a declaration name.' },
+            { name: 'projects target', source: serviceBody('    method run() {\n      projects\n    }'), message: 'A `projects` clause needs a read model name.' },
+            { name: 'invokes target', source: serviceBody('    method run() {\n      invokes\n    }'), message: 'An `invokes` clause needs a method name.' },
+            { name: 'manages target', source: context('  repository R {\n    manages\n  }'), message: 'A `manages` clause needs an entity name.' },
+            { name: 'serves target', source: context('  query repository R {\n    serves\n  }'), message: 'A `serves` clause needs a read model name.' },
+            { name: 'aggregate reads from target', source: context('  query repository R {\n    serves A\n    reads from\n  }'), message: 'A `reads from` clause needs an aggregate name.' },
+            { name: 'transition field', source: serviceBody('    method run() {\n      transition from Draft to Placed\n    }'), message: 'A `transition` clause needs a field name.' },
+            { name: 'transition from value', source: serviceBody('    method run() {\n      transition status from to Placed\n    }'), message: 'A `transition` clause needs a `from` enum value name.' },
+            { name: 'transition to value', source: serviceBody('    method run() {\n      transition status from Draft to\n    }'), message: 'A `transition` clause needs a `to` enum value name.' },
+            { name: 'specification reference', source: 'actor A\njourney J {\n  by A {\n    invoke A.run with """Go [[ ]]."""\n  }\n}\n', message: 'A specification reference needs a declaration name.' },
+            { name: 'invoke target', source: 'bounded context X\nin bounded context X {\n  application service S {\n    method run() {}\n  }\n}\nactor A\njourney J {\n  by A {\n    invoke\n  }\n}\n', message: 'A journey step needs a command path after `invoke`.' },
+            { name: 'bounded context contribution', source: 'in bounded context {\n}\n', message: 'An `in bounded context` clause needs a bounded context name.' },
+            { name: 'context map endpoint', source: 'bounded context A\ncontext map M {\n  customer A -> supplier\n}\n', message: 'A context map relationship needs a bounded context name.' },
+            { name: 'separateWays endpoint', source: 'bounded context A\ncontext map M {\n  separateWays A -x-\n}\n', message: 'A `separateWays` relationship needs a bounded context name.' },
+            { name: 'shared kernel relationship', source: 'bounded context A\ncontext map M {\n  sharedKernel {\n    participants: [A]\n  }\n}\n', message: 'A `sharedKernel` relationship needs a shared kernel name.' },
+            { name: 'mirrors reference', source: aggregateBody('    value object V mirrors Foo.'), message: 'A `mirrors` reference needs a value object name.' },
+            { name: 'collection type reference', source: entityBody('      raw: List<Foo.>'), message: 'A collection type reference needs a type name.' },
+            { name: 'manages reference', source: context('  repository R {\n    manages Foo.\n  }'), message: 'A `manages` reference needs an entity name.' },
+            { name: 'serves reference', source: context('  query repository R {\n    serves Foo.\n  }'), message: 'A `serves` reference needs a read model name.' }
+        ];
+
+        for (const { name, source, message } of cases) {
+            const document = await parse(source);
+            expect(document.parseResult.parserErrors[0]?.message, name).toBe(message);
+        }
+    });
+
     test('requires commas between enum values', async () => {
         const missingComma = await parse(`bounded context Sample
 in bounded context Sample {
