@@ -501,6 +501,58 @@ in bounded context Ordering {
         expect(formatted.indexOf('value object V')).toBeLessThan(formatted.indexOf('depends on Domain'));
     });
 
+    test('preserves blank lines inside blocks', async () => {
+        const source = `bounded context X
+in bounded context X {
+  module M {
+    depends on N
+
+    value object V {
+      raw: string
+
+      other: string
+    }
+
+  }
+  module N {
+    value object W {
+      raw: string
+    }
+  }
+}
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/blank-lines-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('raw: string\n\n      other: string');
+        expect(formatted).toContain('    }\n\n  }');
+
+        const lines = source.split('\n');
+        const blankLine = lines.findIndex((line, index) =>
+            line === '' && lines[index - 1]?.includes('raw: string')
+        );
+        expect(blankLine).toBeGreaterThan(-1);
+        expect(edits.some(edit =>
+            edit.range.start.line <= blankLine && blankLine <= edit.range.end.line
+        )).toBe(false);
+    });
+
     test('separates member groups without splitting adjacent fields and preserves comments and text', async () => {
         const source = 'bounded context Sample in bounded context Sample {aggregate Thing{root entity Item{\n// Keep this; note\nmethod first(){behavior "Preserve; this text"}method second(){}identifier id:string name:string}}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(

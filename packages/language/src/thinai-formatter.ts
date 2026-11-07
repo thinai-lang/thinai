@@ -370,7 +370,7 @@ export class ThinaiFormatter extends AbstractFormatter {
             if (children.length > 0 || comments.length > 0 || hasProjectTargets ||
                 node.$type === 'Repository' || node.$type === 'QueryRepository' ||
                 node.$type === 'SharedKernelRelationship' || node.$type === 'ContextMapEndpoint') {
-                formatter.nodes(...children).prepend(Formatting.indent());
+                formatter.nodes(...children).prepend(Formatting.indent({ allowMore: true }));
                 formatter.cst(comments).prepend(Formatting.indent());
                 if (node.$type === 'SharedKernelRelationship') {
                     formatter.keyword('participants').prepend(Formatting.indent());
@@ -382,7 +382,7 @@ export class ThinaiFormatter extends AbstractFormatter {
                     formatter.keyword('projects').prepend(Formatting.indent());
                     formatter.keyword('projects').append(Formatting.oneSpace());
                 }
-                close.prepend(Formatting.newLine());
+                close.prepend(Formatting.newLine({ allowMore: true }));
             } else {
                 open.append(Formatting.noSpace());
                 close.prepend(Formatting.noSpace());
@@ -496,7 +496,7 @@ export class ThinaiFormatter extends AbstractFormatter {
     }
 
     private blankLineIndent() {
-        return { options: {}, moves: [{ lines: 2, tabs: 1 }] };
+        return { options: { allowMore: true }, moves: [{ lines: 2, tabs: 1 }] };
     }
 
     private getBlockIndentation(node: AstNode): number {
