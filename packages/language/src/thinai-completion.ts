@@ -75,7 +75,7 @@ import {
     isBlockNodeType,
     isLineSeparatedSibling
 } from './thinai-layout.js';
-import { scanThinaiSource } from './thinai-source-scanner.js';
+import { scanThinaiSource, findPreviousImportStart } from './thinai-source-scanner.js';
 import { ThinaiImportCompletion } from './thinai-import-completion.js';
 import { ThinaiContextMapCompletion } from './thinai-context-map-completion.js';
 import { ThinaiOptionalClauseCompletion } from './thinai-optional-clause-completion.js';
@@ -278,8 +278,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         const text = context.textDocument.getText();
-        const importStart = text.lastIndexOf('import', context.offset);
-        if (importStart < 0) {
+        const importStart = findPreviousImportStart(text, context.offset);
+        if (importStart === undefined) {
             return undefined;
         }
         const statement = text.slice(importStart);
@@ -1723,8 +1723,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         // Incomplete imports are often absent from the parse tree. Fall back to
         // the source text so top-level declaration keywords do not leak into an
         // unclosed component list.
-        const importStart = text.lastIndexOf('import', offset);
-        if (importStart < 0) {
+        const importStart = findPreviousImportStart(text, offset);
+        if (importStart === undefined) {
             return false;
         }
         const source = text.slice(importStart, offset);
@@ -1734,8 +1734,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private isImportAliasPosition(document: LangiumDocument, offset: number): boolean {
         const text = document.textDocument.getText();
-        const importStart = text.lastIndexOf('import', offset);
-        if (importStart < 0) {
+        const importStart = findPreviousImportStart(text, offset);
+        if (importStart === undefined) {
             return false;
         }
         const source = text.slice(importStart, offset);

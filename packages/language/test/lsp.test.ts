@@ -3530,6 +3530,58 @@ bounded context Billing realizes Payments`;
         }
     });
 
+    test('completes shared kernel members when a preceding comment or string contains import', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'comment with imported',
+                source: `// A second kernel, imported later without an alias
+shared kernel Extra {
+  ${marker}
+}`
+            },
+            {
+                name: 'comment with import keyword',
+                source: `// import these later
+shared kernel Extra {
+  ${marker}
+}`
+            },
+            {
+                name: 'block comment with import',
+                source: `/* import these later */
+shared kernel Extra {
+  ${marker}
+}`
+            },
+            {
+                name: 'string with import',
+                source: `shared kernel Common {
+  value object Marker { raw: "import" }
+}
+shared kernel Extra {
+  ${marker}
+}`
+            }
+        ];
+
+        for (const [index, { name, source }] of cases.entries()) {
+            const offset = source.indexOf(marker);
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/shared-kernel-import-comment-${index}.tni`),
+                source.replace(marker, '')
+            );
+            documents.push(document);
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(completion?.items.map(item => item.label), name).toEqual(expect.arrayContaining([
+                'value object', 'enum', 'domain service', 'module'
+            ]));
+        }
+    });
+
     test('does not treat inherited object properties as compound keywords', () => {
         const provider = new ThinaiCompletionProvider(services.Thinai) as unknown as {
             withCompoundKeywordCompletions: (

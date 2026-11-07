@@ -29,6 +29,7 @@ import { isInSharedKernel } from './thinai-scope-utils.js';
 import { hasReferenceText } from './thinai-ast-utils.js';
 import { THINAI_IDENTIFIER_SOURCE, THINAI_QUALIFIED_IDENTIFIER_SOURCE } from './thinai-identifiers.js';
 import { getLineStartOffset } from './thinai-text-utils.js';
+import { findPreviousImportStart } from './thinai-source-scanner.js';
 
 const identifierSource = THINAI_IDENTIFIER_SOURCE;
 const qualifiedIdentifierSource = THINAI_QUALIFIED_IDENTIFIER_SOURCE;
@@ -287,8 +288,8 @@ export class ThinaiKeywordContinuations {
                 const cstNode = node.$cstNode;
                 return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
             });
-        const importStart = importDeclaration?.$cstNode?.offset ?? text.lastIndexOf('import', offset);
-        if (importStart < 0) {
+        const importStart = importDeclaration?.$cstNode?.offset ?? findPreviousImportStart(text, offset);
+        if (importStart === undefined) {
             return undefined;
         }
         const source = text.slice(importStart, offset);

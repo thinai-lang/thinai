@@ -97,3 +97,22 @@ export function scanThinaiSource(source: string): ThinaiSourceStructure {
         openStringDelimiterLength: stringDelimiterLength
     };
 }
+
+/**
+ * Returns the offset of the last real `import` keyword before `offset`.
+ * Occurrences inside comments, strings, or longer identifiers such as
+ * `imported` are ignored.
+ */
+export function findPreviousImportStart(source: string, offset: number): number | undefined {
+    const prefix = source.slice(0, offset);
+    const pattern = /\bimport\b/gu;
+    let last: number | undefined;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(prefix)) !== null) {
+        const state = scanThinaiSource(prefix.slice(0, match.index));
+        if (!state.inComment && !state.unterminatedString) {
+            last = match.index;
+        }
+    }
+    return last;
+}
