@@ -22,8 +22,6 @@
                 "editor.detectIndentation": false,
                 "editor.insertSpaces": true,
                 "editor.quickSuggestions": {
-                    "other": "on",
-                    "comments": "off",
                     "strings": "on"
                 },
                 "editor.tabSize": 2,
