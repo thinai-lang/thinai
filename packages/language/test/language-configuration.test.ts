@@ -44,4 +44,16 @@ describe('VS Code language configuration', () => {
         }
         expect(beforeText.test('method place() {')).toBe(false);
     });
+
+    test('sets Thinai editor defaults for suggestions and whitespace', async () => {
+        const path = fileURLToPath(new URL('../../extension/package.json', import.meta.url));
+        const pkg = JSON.parse(await readFile(path, 'utf8')) as {
+            contributes: {
+                configurationDefaults: Record<string, Record<string, unknown>>;
+            };
+        };
+        const defaults = pkg.contributes.configurationDefaults['[thinai]'];
+        expect(defaults?.['editor.wordBasedSuggestions']).toBe('off');
+        expect(defaults?.['files.trimTrailingWhitespace']).toBe(false);
+    });
 });
