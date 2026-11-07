@@ -433,6 +433,45 @@ journey Checkout {
         expect(priorResultCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining(['Draft', 'Placed']));
     });
 
+    test('offers clause keywords only after a declaration name is complete', async () => {
+        const valueObjectName = await build(`bounded context X
+in bounded context X {
+    aggregate A {
+        value object Ord${marker}er {
+            raw: string
+        }
+    }
+}`);
+        expect(valueObjectName.completion?.items.map(item => item.label)).not.toContain('mirrors');
+
+        const valueObjectClause = await build(`bounded context X
+in bounded context X {
+    aggregate A {
+        value object Order ${marker}{
+            raw: string
+        }
+    }
+}`);
+        expect(valueObjectClause.completion?.items.map(item => item.label)).toContain('mirrors');
+
+        const contextName = await build(`bounded context Ord${marker}ering
+`);
+        expect(contextName.completion?.items.map(item => item.label)).not.toContain('realizes');
+
+        const contextClause = await build(`bounded context Ordering ${marker}realizes Commerce
+subdomain Commerce
+`);
+        expect(contextClause.completion?.items.map(item => item.label)).toContain('realizes');
+
+        const subdomainName = await build(`subdomain Sal${marker}es kind core
+`);
+        expect(subdomainName.completion?.items.map(item => item.label)).not.toContain('kind');
+
+        const subdomainClause = await build(`subdomain Sales ${marker}kind core
+`);
+        expect(subdomainClause.completion?.items.map(item => item.label)).toContain('kind');
+    });
+
     test('offers exposes before and after module members, but not twice', async () => {
         const emptyModule = await build(`bounded context Ordering
 in bounded context Ordering {

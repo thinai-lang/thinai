@@ -503,15 +503,25 @@ export class ThinaiKeywordContinuations {
 
     getSameLineContinuationKeywords(node: AstNode, document: LangiumDocument, position: Position): string[] {
         if (isBoundedContext(node)) {
-            return node.subdomains.length === 0 ? ['realizes'] : [];
+            if (node.subdomains.length > 0) {
+                return [];
+            }
+            const start = node.$cstNode?.offset;
+            const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
+            return /\s$/u.test(source) ? ['realizes'] : [];
         }
         if (isSubdomain(node)) {
-            return node.kind === undefined ? ['kind'] : [];
+            if (node.kind !== undefined) {
+                return [];
+            }
+            const start = node.$cstNode?.offset;
+            const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
+            return /\s$/u.test(source) ? ['kind'] : [];
         }
         if (isValueObject(node)) {
             const start = node.$cstNode?.offset;
             const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
-            return node.mirrors === undefined && !source.includes('{') ? ['mirrors'] : [];
+            return node.mirrors === undefined && !source.includes('{') && /\s$/u.test(source) ? ['mirrors'] : [];
         }
         if (isField(node) && isEntity(node.$container) && !node.optional && !hasReferenceText(node.initialState) && isEnumType(node.type?.ref)) {
             return ['initial'];
