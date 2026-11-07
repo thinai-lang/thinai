@@ -786,7 +786,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (sourceStructure.inComment) {
             return { isIncomplete: false, items: [] };
         }
-        const defaultCompletion = await super.getCompletion(document, params, cancelToken);
         const specificationContext = getSpecificationCompletionContext(
             document,
             offset
@@ -794,6 +793,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (specificationContext === 'text') {
             return { isIncomplete: false, items: [] };
         }
+        const defaultCompletion = await super.getCompletion(document, params, cancelToken);
         if (specificationContext === 'reference') {
             return defaultCompletion
                 ? { ...defaultCompletion, items: defaultCompletion.items.filter(item => item.kind !== CompletionItemKind.Keyword) }

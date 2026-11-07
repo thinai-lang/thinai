@@ -55,5 +55,6 @@ describe('VS Code language configuration', () => {
         const defaults = pkg.contributes.configurationDefaults['[thinai]'];
         expect(defaults?.['editor.wordBasedSuggestions']).toBe('off');
         expect(defaults?.['files.trimTrailingWhitespace']).toBe(false);
+        expect(defaults?.['editor.quickSuggestions']).toEqual({ strings: 'on' });
     });
 });

@@ -21,6 +21,9 @@
             "[thinai]": {
                 "editor.detectIndentation": false,
                 "editor.insertSpaces": true,
+                "editor.quickSuggestions": {
+                    "strings": "on"
+                },
                 "editor.tabSize": 2,
                 "editor.wordBasedSuggestions": "off",
                 "files.insertFinalNewline": true,
