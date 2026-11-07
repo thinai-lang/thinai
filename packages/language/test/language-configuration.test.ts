@@ -7,9 +7,17 @@ interface RegexConfiguration {
     flags: string;
 }
 
+interface AutoClosingPair {
+    open: string;
+    close: string;
+    notIn?: string[];
+    beforeText?: RegexConfiguration;
+}
+
 interface LanguageConfiguration {
     wordPattern: RegexConfiguration;
     onEnterRules: Array<{ beforeText: RegexConfiguration }>;
+    autoClosingPairs: AutoClosingPair[];
 }
 
 async function readLanguageConfiguration(): Promise<LanguageConfiguration> {
@@ -43,6 +51,31 @@ describe('VS Code language configuration', () => {
             expect(beforeText.test(line), line).toBe(true);
         }
         expect(beforeText.test('method place() {')).toBe(false);
+    });
+
+    test('auto-closes Thinai reference brackets only outside comments', async () => {
+        const configuration = await readLanguageConfiguration();
+        const pair = configuration.autoClosingPairs.find(candidate =>
+            candidate.open === '[[' && candidate.close === ']]'
+        );
+        expect(pair).toBeDefined();
+        expect(pair?.notIn).toEqual(['comment']);
+
+        const beforeText = pair?.beforeText;
+        expect(beforeText).toBeDefined();
+        const beforeTextPattern = new RegExp(beforeText!.pattern, beforeText!.flags);
+
+        for (const text of ['[[', 'a[[', 'A [[', String.raw`\\[[`]) {
+            expect(beforeTextPattern.test(text), text).toBe(true);
+        }
+        for (const text of [String.raw`\[[`, String.raw`\\\[[`]) {
+            expect(beforeTextPattern.test(text), text).toBe(false);
+        }
+
+        const singleBracket = configuration.autoClosingPairs.find(candidate =>
+            candidate.open === '[' && candidate.close === ']'
+        );
+        expect(singleBracket?.notIn).toEqual(['string', 'comment']);
     });
 
     test('sets Thinai editor defaults for suggestions and whitespace', async () => {
