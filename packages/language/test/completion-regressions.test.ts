@@ -1921,6 +1921,39 @@ in bounded context C {
         expect(toLabels).not.toContain('emits');
     });
 
+    test('does not continue transition keywords in a later method statement', async () => {
+        const source = (emitsText: string, withEvent: boolean): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        enum Status { Draft, Placed }
+        root entity Order {
+            identifier id: string
+            status: Status
+            method place() {
+                transition status from Draft to Placed when "ready"
+                ${emitsText}${marker}
+            }
+        }
+    }
+    ${withEvent ? 'event OrderPlaced' : ''}
+}`;
+
+        const withoutEvent = await build(source('emits ', false));
+        const withoutEventLabels = withoutEvent.completion?.items.map(item => item.label) ?? [];
+        expect(withoutEventLabels).not.toContain('from');
+        expect(withoutEventLabels).not.toContain('to');
+
+        const forwardEvent = await build(source('emits ', true));
+        const forwardEventLabels = forwardEvent.completion?.items.map(item => item.label) ?? [];
+        expect(forwardEventLabels).toContain('OrderPlaced');
+        expect(forwardEventLabels).not.toContain('from');
+
+        const partialForwardEvent = await build(source('emits Ord', true));
+        const partialForwardEventLabels = partialForwardEvent.completion?.items.map(item => item.label) ?? [];
+        expect(partialForwardEventLabels).toContain('OrderPlaced');
+        expect(partialForwardEventLabels).not.toContain('from');
+    });
+
     test('treats a quoted transition-named field as a field, not the clause keyword', async () => {
         const from = await build(`bounded context C
 in bounded context C {

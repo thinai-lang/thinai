@@ -448,7 +448,14 @@ export class ThinaiKeywordContinuations {
         }
         const transition = AstUtils.streamAst(method)
             .filter(isTransition)
-            .filter(candidate => candidate.$cstNode !== undefined && candidate.$cstNode.offset <= offset)
+            .filter(candidate => {
+                const cstNode = candidate.$cstNode;
+                if (!cstNode || cstNode.offset > offset) {
+                    return false;
+                }
+                return offset <= cstNode.end ||
+                    /^\s*$/u.test(document.textDocument.getText().slice(cstNode.end, offset));
+            })
             .toArray()
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
         const change = transition && AstUtils.streamAst(transition)
