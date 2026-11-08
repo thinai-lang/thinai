@@ -1030,11 +1030,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             this.addFallbackKeywords(clauseScopedCompletion, blockKeywords)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
-        const rawCompletionWithKeywords = this.withCompoundKeywordCompletions(
-            completionWithModelGapKeywords,
-            inProgressKeywordCompletions,
-            document,
-            params.position
+        // Compound rewriting can invalidate the parser's keyword (for example
+        // `bounded` while typing `in` inside a bounded context). Restore the
+        // container's keyword when that leaves no keyword completion.
+        const rawCompletionWithKeywords = this.addFallbackKeywords(
+            this.withCompoundKeywordCompletions(
+                completionWithModelGapKeywords,
+                inProgressKeywordCompletions,
+                document,
+                params.position
+            ),
+            blockKeywords
         );
         const offersCompoundReadsFrom = [...blockKeywords, ...inProgressKeywordCompletions]
             .some(item => item.label === 'reads from');
@@ -1453,7 +1459,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return completion;
         }
         const items = completion?.items ?? [];
-        return { isIncomplete: completion?.isIncomplete ?? false, items: [...items, ...fallbacks] };
+        const labels = new Set(items.map(item => item.label));
+        return {
+            isIncomplete: completion?.isIncomplete ?? false,
+            items: [...items, ...fallbacks.filter(item => !labels.has(item.label))]
+        };
     }
 
     private getReadSourceContinuationCompletions(

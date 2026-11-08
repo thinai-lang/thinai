@@ -2859,6 +2859,34 @@ in bounded context X {
         expect(queryRepository.completion?.items.map(item => item.label) ?? []).toContain('serves');
     });
 
+    test('keeps integration event completion available while typing its prefix', async () => {
+        const moduleSource = (typed: string): string => `bounded context X
+in bounded context X {
+    module M {
+        ${typed}${marker}
+    }
+}`;
+        const contextSource = (typed: string): string => `bounded context X
+in bounded context X {
+    ${typed}${marker}
+}`;
+
+        for (const typed of ['i', 'in', 'in ', 'int', 'integration']) {
+            for (const source of [moduleSource, contextSource]) {
+                const result = await build(source(typed));
+                const labels = result.completion?.items.map(item => item.label) ?? [];
+                expect(labels, JSON.stringify(typed)).toContain('integration event');
+                expect(labels.filter(label => label === 'integration event'), JSON.stringify(typed)).toHaveLength(1);
+            }
+        }
+
+        const afterFirstWord = await build(contextSource('integration '));
+        expect(afterFirstWord.completion?.items.map(item => item.label) ?? []).toContain('event');
+
+        const modelLevel = await build(`in${marker}`);
+        expect(modelLevel.completion?.items.map(item => item.label) ?? []).toContain('in bounded context');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),
