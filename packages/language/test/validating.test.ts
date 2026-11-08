@@ -1357,6 +1357,152 @@ in bounded context Ordering {
         expect(checkDocumentValid(document) || semanticDiagnostics(document).map(diagnosticToString).join('\n')).toHaveLength(0);
     });
 
+    test('allows a command-led journey to invoke a visible query service as a read step', async () => {
+        const document = await parse(`
+            actor Customer
+            bounded context Ordering in bounded context Ordering {
+                read model OrderSummary {
+                    orderId: string
+                }
+                query repository OrderSummaryRepository {
+                    serves OrderSummary
+                }
+                query service OrderQueries {
+                    method findOrder(orderId: string) returns OrderSummary {
+                        reads from OrderSummaryRepository
+                    }
+                }
+                application service OrderApplication {
+                    method placeOrder(orderId: string) {
+                        behavior "Place the selected order."
+                    }
+                }
+            }
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderQueries.findOrder
+                        with "the order selected by the customer"
+                    invoke Ordering.OrderApplication.placeOrder
+                        with "the order identified by [[Ordering.OrderQueries.findOrder.result.orderId]]"
+                        when "The summary is available."
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows an exposed cross-context query service as a journey read step', async () => {
+        const document = await parse(`
+            bounded context Source
+            in bounded context Source {
+                module Api {
+                    exposes Queries
+                    query service Queries {
+                        method find() returns string
+                    }
+                }
+            }
+            bounded context Consumer
+            in bounded context Consumer {
+                application service App {
+                    method run() {
+                        behavior "Run the consumer action."
+                    }
+                }
+            }
+            actor Customer
+            journey ReadValue {
+                by Customer {
+                    invoke Source.Api.Queries.find
+                    invoke Consumer.App.run
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('rejects a hidden module-nested query service as a journey step', async () => {
+        const document = await parse(`
+            actor Customer
+            bounded context Ordering in bounded context Ordering {
+                module Internal {
+                    query service HiddenQueries {
+                        method find() returns string
+                    }
+                }
+                application service OrderApplication {
+                    method placeOrder() {
+                        behavior "Place the order."
+                    }
+                }
+            }
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.Internal.HiddenQueries.find
+                    invoke Ordering.OrderApplication.placeOrder
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => String(diagnostic.message))).toContain(
+            'A journey query step must target a context-level or module-exposed query service.'
+        );
+    });
+
+    test('rejects an event handler as a journey step', async () => {
+        const document = await parse(`
+            actor Customer
+            bounded context Ordering in bounded context Ordering {
+                event OrderPlaced
+                application service OrderApplication {
+                    method placeOrder() {
+                        behavior "Place the order."
+                    }
+                    method onOrderPlaced(source: OrderPlaced) {
+                        behavior "React to the placed order."
+                    }
+                }
+            }
+            journey PlaceOrder {
+                by Customer {
+                    invoke Ordering.OrderApplication.onOrderPlaced
+                    invoke Ordering.OrderApplication.placeOrder
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => String(diagnostic.message))).toContain(
+            'A journey may invoke only application-service commands and visible query-service methods, not event handlers or other operations.'
+        );
+    });
+
+    test('keeps journeys command-led when an actor block contains only a query step', async () => {
+        const document = await parse(`
+            actor Customer
+            bounded context Ordering in bounded context Ordering {
+                query service OrderQueries {
+                    method find() returns string
+                }
+                application service OrderApplication {
+                    method placeOrder() {
+                        behavior "Place the order."
+                    }
+                }
+            }
+            journey ReadOrder {
+                by Customer {
+                    invoke Ordering.OrderQueries.find
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).map(diagnostic => String(diagnostic.message))).toContain(
+            'An actor block in a journey must contain at least one command step.'
+        );
+    });
+
     test('does not require repository choreography in application-service methods', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {

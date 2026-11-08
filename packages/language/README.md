@@ -231,11 +231,13 @@ Use value objects or identifiers inside entity, value-object, factory, and
 domain-service methods and constructors; DataObjects belong at application and
 query boundaries.
 Multiple application services may invoke the same aggregate. A top-level
-`journey` sequences non-event application-service commands across bounded
-contexts. Any application-service method without an event parameter is treated
-as a command; a method with an event parameter is an event handler. Its order is
-descriptive; background event handoffs stay with the
-contexts' event declarations and handlers.
+`journey` sequences non-event application-service commands, with optional
+query-service reads, across bounded contexts. Any application-service method
+without an event parameter is treated as a command; a method with an event
+parameter is an event handler. Journeys remain command-led: each actor block
+must contain at least one command, and query steps document supporting reads.
+Its order is descriptive; background event handoffs stay with the contexts'
+event declarations and handlers.
 
 An incoming integration event can invoke a local command method:
 
@@ -457,7 +459,8 @@ its dependencies.
 | Published query result | A module-exposed query service with a primitive or context-visible or module-exposed DataObject result, a customer-supplier or partnership relationship, and an imported context. Link the result type or field, not the query operation. |
 | Value object, data object, read model, or enum as a signature type | Not directly. Use a local `mirrors` identifier for identity, an IntegrationEvent payload, or a shared-kernel type; read published query result contracts for cross-context read data. |
 | Application-service command in a journey | Journeys are model-level timelines; invoking a command does not require module exposure or a context map. |
-| Query service | Must be module-exposed; a context-level query service is local and journey-visible only. |
+| Query service in a journey | A context-level query service is journey-visible; a module-nested query service must be exposed. |
+| Query service used by a method | Must be module-exposed; a context-level query service is local and journey-visible only. |
 | Repository, factory, domain service, aggregate, or entity | Not directly. Go through a local service, a shared kernel, or a published contract. |
 
 A `mirrors` identifier may name an identifier value object that is private to
@@ -510,68 +513,80 @@ formatter indents continuation text and aligns the closing delimiter with its
 specification clause. Existing multiline single- and double-quoted strings
 remain accepted for compatibility.
 
-Journeys are top-level, actor-led timelines of non-event application-service
-commands that may cross bounded contexts. Any application-service method
-without an event parameter is treated as a command; a method with an event
-parameter is an event handler. Declare each `actor` once at model
-scope, then reference it in a `by Actor { ... }` block. Each actor may have at
-most one `by` block per journey. A step names at least a service or context
-segment before the command; bare command names are not valid journey syntax. A journey does not
-represent background event handoffs, a synchronous remote call, or a shared
-transaction; event-triggered reactions remain in their contexts. Steps may
-include optional descriptive `with "..."` input text and `when "..."` guard
-text with linked references; commands enforce their own invariants.
+Journeys are top-level, actor-led, command-led timelines of non-event
+application-service commands and optional query-service reads that may cross
+bounded contexts. Any application-service method without an event parameter is
+treated as a command; a method with an event parameter is an event handler.
+Query-service methods may appear as read steps when their query service is
+context-level or module-exposed. Declare each `actor` once at model scope, then
+reference it in a `by Actor { ... }` block. Each actor may have at most one `by`
+block per journey, and each block must contain at least one command step; a
+read-only use case belongs in a query service rather than a journey. A step
+names at least a service or context segment before the operation; bare
+operation names are not valid journey syntax. A journey does not represent
+background event handoffs, a synchronous remote call, or a shared transaction;
+event-triggered reactions remain in their contexts. Steps may include optional
+descriptive `with "..."` input text and `when "..."` guard text with linked
+references; commands enforce their own invariants, while query steps describe
+reads.
 
-A journey is a model-level command timeline, not a module or a bounded context.
-Steps are ordered in source order across actor blocks. A later step's `with` or
-`when` prose may refer to inputs or results of earlier command invocations.
-The current command's result binding becomes visible only to later steps. A
-command operation invoked later in the same journey is not visible from an
-earlier step. Visibility is additive: a declaration that is independently
+A journey is a model-level command-led operation timeline, not a module or a
+bounded context. Steps are ordered in source order across actor blocks. A later
+step's `with` or `when` prose may refer to inputs or results of earlier command
+invocations and to visible query results. A command's result binding becomes
+visible only to later steps. A command operation invoked later in the same
+journey is not visible from an earlier step. Query results are public contract
+links rather than private step bindings: a visible query result may be linked
+even when the query is not invoked, and a query step does not gate result
+access. Visibility is additive: a declaration that is independently
 context-level, exposed, or part of a visible query result remains linkable even
 if a future command also uses it; only the future operation and its private
 contract internals are hidden. In a later step, a prior command result is
 referenced through that command's qualified path, such as
 `[[Ordering.App.place.result.status]]`; bare `result` is not an implicit
-prior-command binding. References to
-a command result name the nearest earlier invocation of that command; a journey
-that invokes the same command more than once produces a warning because those
-references are inherently ambiguous. The language deliberately has no step
-variables, step labels, result aliases, or executable condition blocks.
+prior-command binding. References to a command result name the nearest earlier
+invocation of that command; a journey that invokes the same command more than
+once produces a warning because those references are inherently ambiguous.
+Duplicate query reads are allowed because they name the same public query
+contract. The language deliberately has no step variables, step labels, result
+aliases, or executable condition blocks.
 
-Journey command targets are application-service commands and do not require
-module exposure merely because a journey invokes them. The invoked command's
-declared input/output contract is visible to the journey, including nested
-fields, collections, field types, and enum values, even when those types live in
-nested modules or aggregates. Aggregate-owned value objects and enums are
-therefore reusable in command contracts without creating duplicate DTOs.
-Visibility is based on the command contract and timeline, not on blanket module
-exposure. Private aggregate internals that are not reachable through a command
-contract and private DomainEvent internals remain off-limits. An exposed
-command whose contract publishes aggregate-owned or otherwise private contract
-types produces a warning, because the command is effectively publishing those
-types; use public or shared contract types if that is not intended. Journey prose is
-cross-context by design and does not require a context-map authorization;
-context maps remain relevant to actual event and query consumption.
+Journey step targets are application-service commands or visible query-service
+operations. Command targets do not require module exposure merely because a
+journey invokes them. Query targets must be context-level or exposed by their
+module, matching journey prose visibility. The invoked command's declared
+input/output contract is visible to the journey, including nested fields,
+collections, field types, and enum values, even when those types live in nested
+modules or aggregates. Aggregate-owned value objects and enums are therefore
+reusable in command contracts without creating duplicate DTOs. Visibility is
+based on the command contract, query contract, and timeline, not on blanket
+module exposure. Private aggregate internals that are not reachable through a
+command or query contract and private DomainEvent internals remain off-limits.
+An exposed command whose contract publishes aggregate-owned or otherwise private
+contract types produces a warning, because the command is effectively
+publishing those types; use public or shared contract types if that is not
+intended. Journey prose is cross-context by design and does not require a
+context-map authorization; context maps remain relevant to actual event and
+query consumption.
 
 Application-service event handlers, query repositories, repositories, domain
 services, projectors, factories, entity fields, and DomainEvents are not
-journey-visible. Query services are visible when they are context-level or
-exposed by their module; the result shape of a visible query operation is
-visible as part of that operation's contract. Read models, data objects, value
-objects, and enums are visible when they are context-level or exposed by their
-module; aggregate-owned declarations remain visible only through command or
-query contract closure. Shared-kernel declarations do not require a context-map
-relationship in journey prose, but module-nested shared-kernel declarations
-still require module exposure. Integration events follow their usual rule:
-context-level events are public, and module-nested events require exposure.
-Journey prose may also link visible read models, query results, data
-objects, value objects, enums, public integration events, and user-facing
-operations from imported contexts. Links follow the journey timeline: a command
-operation invoked later in the same journey is not visible from an earlier
-step. `with` describes the inputs of the step;
-`when` describes the conditions under which the command is invoked. Both are
-descriptive prose, not executable expressions.
+journey step targets or journey-visible declarations. Query services are visible
+when they are context-level or exposed by their module; the result shape of a
+visible query operation is visible as part of that operation's contract. Read
+models, data objects, value objects, and enums are visible when they are
+context-level or exposed by their module; aggregate-owned declarations remain
+visible only through command or query contract closure. Shared-kernel
+declarations do not require a context-map relationship in journey prose, but
+module-nested shared-kernel declarations still require module exposure.
+Integration events follow their usual rule: context-level events are public, and
+module-nested events require exposure. Journey prose may also link visible read
+models, query results, data objects, value objects, enums, public integration
+events, and user-facing application or query operations from imported contexts.
+Links follow the journey timeline for command operations: a command operation
+invoked later in the same journey is not visible from an earlier step. `with`
+describes the inputs of the step; `when` describes the conditions under which
+the step is performed. Both are descriptive prose, not executable expressions.
 
 Thinai supports modules, aggregates, root and child entities, identifiers and
 mirrored value objects, data objects, read models, projectors, query services and repositories,
@@ -619,7 +634,7 @@ visually identical names link to the same declaration.
 The language server provides keyword and cross-reference completion,
 navigation, references, document symbols, hover, diagnostics, rename, import-path
 completion and links, call hierarchy for method invocations and journey
-commands, document formatting, and quick fixes for unresolved
+steps, document formatting, and quick fixes for unresolved
 declarations that can be imported and for missing module dependencies or
 exposures. Renaming or moving a `.tni` file updates relative import paths. Formatting uses the
 editor's indentation options; the VS Code extension defaults Thinai files to two

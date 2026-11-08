@@ -1870,7 +1870,7 @@ in bounded context ${name} {
 
     test('does not offer optional clauses after method effects disallowed for their owner', async () => {
         const marker = '__completion_position__';
-        const text = `bounded context Ordering in bounded context Ordering {
+        const source = `bounded context Ordering in bounded context Ordering {
             aggregate OrderAggregate {
                 root entity Order {
                     identifier id: OrderId
@@ -1880,44 +1880,77 @@ in bounded context ${name} {
                 enum OrderStatus { Draft, Placed }
             }
             event OrderPlaced
-            query service OrderQueries {
-                method findOrder() returns string { emits OrderPlaced ${marker} }
-            }
             domain service Pricing { method calculate() returns decimal }
             projector OrderProjector {
                 method onOrderPlaced(source: OrderPlaced) { invokes Pricing.calculate ${marker} }
             }
             application service OrderCommands {
-                method place() { transition status from Draft to Placed ${marker} }
+                method place() {
+                    emits OrderPlaced ${marker}
+                    transition status from Draft to Placed ${marker}
+                }
             }
-        }
-        actor Customer
-        journey ReadOrder {
-            by Customer { invoke Ordering.OrderQueries.findOrder ${marker} }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/disallowed-optional-specification-clauses.tni'), text.split(marker).join('')
+            URI.file('/workspace/disallowed-optional-specification-clauses.tni'), source.split(marker).join('')
         );
         documents = [document];
         await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
 
         let searchFrom = 0;
-        for (const source of [
+        for (const clause of [
             'emits OrderPlaced ',
             'invokes Pricing.calculate ',
-            'transition status from Draft to Placed ',
-            'invoke Ordering.OrderQueries.findOrder '
+            'transition status from Draft to Placed '
         ]) {
-            const offset = text.indexOf(source, searchFrom) + source.length;
+            const offset = source.indexOf(clause, searchFrom) + clause.length;
             searchFrom = offset;
             const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
                 textDocument: { uri: document.uri.toString() },
                 position: document.textDocument.positionAt(offset)
             });
-            expect(completion?.items.map(item => item.label), source).not.toContain('when');
-            if (source.startsWith('invoke ')) {
-                expect(completion?.items.map(item => item.label), source).not.toContain('with');
+            expect(completion?.items.map(item => item.label), clause).not.toContain('when');
+        }
+    });
+
+    test('offers optional clauses after command and query journey steps', async () => {
+        const marker = '__completion_position__';
+        const source = `bounded context Ordering in bounded context Ordering {
+            application service OrderCommands {
+                method place() { behavior "Place." }
             }
+            query service OrderQueries {
+                method findOrder() returns string
+            }
+        }
+        actor Customer
+        journey PlaceOrder {
+            by Customer {
+                invoke Ordering.OrderCommands.place ${marker}
+                invoke Ordering.OrderQueries.findOrder ${marker}
+            }
+        }`;
+        const sourceText = source.split(marker).join('');
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-optional-clauses.tni'), sourceText
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        let searchFrom = 0;
+        for (const clause of [
+            'invoke Ordering.OrderCommands.place ',
+            'invoke Ordering.OrderQueries.findOrder '
+        ]) {
+            const offset = sourceText.indexOf(clause, searchFrom) + clause.length;
+            searchFrom = offset;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => item.label) ?? [];
+            expect(labels, clause).toContain('with');
+            expect(labels, clause).toContain('when');
         }
     });
 

@@ -20,7 +20,7 @@ import { getNavigableTypeReferences, getTypeReferences } from './thinai-type-uti
 export type JourneySpecificationKind = 'with' | 'when';
 
 export interface JourneyStepContracts {
-    command: Method | undefined;
+    operation: Method | undefined;
     inputs: Set<AstNode>;
     outputs: Set<AstNode>;
 }
@@ -49,32 +49,34 @@ export function getPriorJourneySteps(step: JourneyStep): JourneyStep[] {
     return index < 0 ? [] : getJourneyStepsFor(step).slice(0, index);
 }
 
-export function getJourneyStepCommand(step: JourneyStep): Method | undefined {
+export function getJourneyStepOperation(step: JourneyStep): Method | undefined {
     const target = step.target?.ref;
     return isMethod(target) ? target : undefined;
 }
 
 /**
- * Computes the recursively reachable value contract of a command.
- *
- * Entity and event instances are intentionally not part of this closure: they
- * are not valid application-service contract types and must remain private.
+ * Computes the recursively reachable value contract of a journey step
+ * operation. Entity and event instances are intentionally not part of this
+ * closure: they are not valid application-service contract types and must
+ * remain private.
  */
 export function getJourneyStepContracts(step: JourneyStep): JourneyStepContracts {
-    const command = getJourneyStepCommand(step);
-    const contracts = command ? getCommandContractTypes(command) : { inputs: new Set<AstNode>(), outputs: new Set<AstNode>() };
-    return { command, ...contracts };
+    const operation = getJourneyStepOperation(step);
+    const contracts = operation
+        ? getOperationContractTypes(operation)
+        : { inputs: new Set<AstNode>(), outputs: new Set<AstNode>() };
+    return { operation, ...contracts };
 }
 
-/** Computes the recursive input and output contract of a command method. */
-export function getCommandContractTypes(
-    command: Method,
+/** Computes the recursive input and output contract of a method. */
+export function getOperationContractTypes(
+    operation: Method,
     navigable = true
 ): { inputs: Set<AstNode>; outputs: Set<AstNode> } {
     const inputs = new Set<AstNode>();
     const outputs = new Set<AstNode>();
     const inputVisited = new Set<AstNode>();
-    for (const parameter of command.parameters) {
+    for (const parameter of operation.parameters) {
         inputs.add(parameter);
         for (const reference of (navigable ? getNavigableTypeReferences : getTypeReferences)(
             parameter.type as import('langium').Reference<TypeDeclaration> | undefined,
@@ -86,8 +88,8 @@ export function getCommandContractTypes(
 
     const outputVisited = new Set<AstNode>();
     for (const reference of (navigable ? getNavigableTypeReferences : getTypeReferences)(
-        command.returnType,
-        command.returnCollection
+        operation.returnType,
+        operation.returnCollection
     )) {
         collectContractType(reference.ref, outputs, outputVisited, navigable);
     }
@@ -97,7 +99,7 @@ export function getCommandContractTypes(
 /**
  * Determines whether a contract target belongs to the current step, a prior
  * step, or a future step. A target can belong to multiple steps when the same
- * type or field is shared by several command contracts.
+ * type or field is shared by several step contracts.
  */
 export function getJourneyContractTargetSteps(
     referenceStep: JourneyStep,

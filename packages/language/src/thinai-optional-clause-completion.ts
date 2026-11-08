@@ -11,7 +11,7 @@ import {
     isReadDependency,
     isTransition
 } from './generated/ast.js';
-import { canDeclareTransition, getEventEmissionMode, isJourneyCommand } from './thinai-operation-utils.js';
+import { canDeclareTransition, getEventEmissionMode } from './thinai-operation-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 
 /** Completes optional guards and journey input clauses at completed statements. */
@@ -43,7 +43,7 @@ export class ThinaiOptionalClauseCompletion {
             let keywords: string[] = [];
             const journeyStep = isJourneyStep(node) ? node : undefined;
             const journeyTarget = journeyStep?.target?.ref;
-            if (journeyStep && isMethod(journeyTarget) && isJourneyCommand(journeyTarget) && !whenAlreadyTyped) {
+            if (journeyStep && isMethod(journeyTarget) && scopeProvider.isJourneyStepTarget(journeyTarget) && !whenAlreadyTyped) {
                 keywords = [
                     ...(!journeyStep.arguments ? ['with'] : []),
                     ...(!journeyStep.guard ? ['when'] : [])

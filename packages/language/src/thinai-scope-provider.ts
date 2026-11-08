@@ -116,7 +116,7 @@ import { ThinaiExternalScope } from './thinai-external-scope.js';
 import { getTypeReferences } from './thinai-type-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 import {
-    getJourneyStepCommand,
+    getJourneyStepOperation,
     getPriorJourneySteps
 } from './thinai-journey-timeline.js';
 
@@ -156,7 +156,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 this.referencePolicy.isVisibleSpecificationPathSegment(context.container, target, terminal),
             isSupportedSpecificationModulePrefix: (context, module, candidate) =>
                 this.referencePolicy.isVisibleSpecificationModulePrefix(context.container, module, candidate),
-            isJourneyCommand
+            isJourneyStepTarget: target => this.referencePolicy.isJourneyStepTarget(target)
         });
     }
 
@@ -233,7 +233,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             return this.canInvokeMethod(context.container, target);
         }
         if (isJourneyStep(context.container)) {
-            return isJourneyCommand(target);
+            return this.referencePolicy.isJourneyStepTarget(target);
         }
         return true;
     }
@@ -468,31 +468,33 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
         if (journeyStep) {
             // A journey is a timeline. Current inputs are available, but the
-            // current command's result only becomes visible to later steps.
+            // current step's result only becomes a private binding for later
+            // command steps. Query results are independently visible public
+            // contracts and are added separately below.
             const methodScope = this.getUnsegmentedScope(context, 'Method');
             const priorSteps = getPriorJourneySteps(journeyStep);
-            const seenPriorCommands = new Set<Method>();
+            const seenPriorOperations = new Set<Method>();
             const contractPrefixes = new Set<string>();
             for (const prior of priorSteps.reverse()) {
-                const command = getJourneyStepCommand(prior);
-                if (!command || seenPriorCommands.has(command)) {
+                const operation = getJourneyStepOperation(prior);
+                if (!operation || seenPriorOperations.has(operation)) {
                     continue;
                 }
-                seenPriorCommands.add(command);
-                const commandPath = [
+                seenPriorOperations.add(operation);
+                const operationPath = [
                     ...prior.path.map(reference => reference.$refText),
                     prior.target?.$refText
                 ].filter((text): text is string => typeof text === 'string' && text.length > 0).join('.');
                 const spellings = new Set<string>();
-                if (commandPath.length > 0) {
-                    spellings.add(commandPath);
+                if (operationPath.length > 0) {
+                    spellings.add(operationPath);
                 }
-                const exportedName = getExportedName(command as AstNode & { name: string });
+                const exportedName = getExportedName(operation as AstNode & { name: string });
                 if (exportedName) {
                     spellings.add(exportedName);
                 }
                 for (const description of methodScope.getAllElements()) {
-                    if (this.getDescriptionNode(description) === command) {
+                    if (this.getDescriptionNode(description) === operation) {
                         spellings.add(description.name);
                     }
                 }
@@ -501,9 +503,9 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                         continue;
                     }
                     contractPrefixes.add(spelling);
-                    this.addJourneyCommandContractSymbols(
+                    this.addJourneyStepContractSymbols(
                         pending,
-                        command,
+                        operation,
                         spelling,
                         referenceType
                     );
@@ -554,13 +556,13 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
     }
 
-    private addJourneyCommandContractSymbols(
+    private addJourneyStepContractSymbols(
         descriptions: AstNodeDescription[],
-        command: Method,
+        operation: Method,
         prefix: string,
         referenceType: string
     ): void {
-        for (const parameter of command.parameters) {
+        for (const parameter of operation.parameters) {
             const parameterPrefix = `${prefix}.${parameter.name}`;
             this.addSpecificationSymbol(descriptions, parameter, parameterPrefix, referenceType);
             this.addTypeShapeSymbols(descriptions, parameter.type?.ref, parameterPrefix, referenceType, new Set());
@@ -568,7 +570,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
                 this.addCollectionShapeFields(descriptions, parameter.collection, parameterPrefix, referenceType, new Set());
             }
         }
-        this.addOperationResultSymbols(descriptions, command, `${prefix}.result`, referenceType);
+        this.addOperationResultSymbols(descriptions, operation, `${prefix}.result`, referenceType);
     }
 
     getInvocationCompletionCandidates(context: ReferenceInfo, offset?: number): AstNodeDescription[] {
@@ -577,6 +579,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
 
     canInvokeMethod(context: AstNode, target: Method): boolean {
         return this.isSupportedInvocationTarget(context, target);
+    }
+
+    isJourneyStepTarget(target: AstNode): boolean {
+        return this.referencePolicy.isJourneyStepTarget(target);
     }
 
     private isSupportedInvocationTarget(container: AstNode, target: Method): boolean {
@@ -729,10 +735,10 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         }
 
         if (isJourneyStep(context.container)) {
-            // Journeys are model-level timelines, not modules. Their command
-            // targets are constrained by command kind and import scope, not by
-            // module exposure.
-            return true;
+            // Journeys are model-level timelines, not modules. Command targets
+            // are constrained by command kind and import scope; query targets
+            // also need their query service to be context-level or exposed.
+            return !isMethod(target) || this.referencePolicy.isJourneyStepTarget(target);
         }
 
         if (isJourneyActor(context.container) && context.property === 'actor') {

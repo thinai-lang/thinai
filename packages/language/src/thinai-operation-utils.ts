@@ -7,7 +7,8 @@ import {
     isEntity,
     isIntegrationEvent,
     isMethod,
-    isProjector
+    isProjector,
+    isQueryService
 } from './generated/ast.js';
 
 export function getInvokedMethod(invocation: MethodInvocation): Method | undefined {
@@ -56,6 +57,21 @@ export function isJourneyCommand(method: Method): boolean {
     return isApplicationService(method.$container) && !method.parameters.some(parameter =>
         isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
     );
+}
+
+/**
+ * Query-service methods are read steps in a command-led journey. Event-typed
+ * parameters are rejected by validation globally, but exclude them here too so
+ * the predicate mirrors `isJourneyCommand`.
+ */
+export function isJourneyQuery(method: Method): boolean {
+    return isQueryService(method.$container) && !method.parameters.some(parameter =>
+        isDomainEvent(parameter.type?.ref) || isIntegrationEvent(parameter.type?.ref)
+    );
+}
+
+export function isJourneyStepOperation(method: Method): boolean {
+    return isJourneyCommand(method) || isJourneyQuery(method);
 }
 
 /**

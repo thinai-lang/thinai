@@ -52,8 +52,8 @@ describe('Order Fulfillment example', () => {
         expect(normalizedFormatted).toContain('  application service OrderApplication {');
         expect(normalizedFormatted).toContain('      emits Contracts.OrderPlacedV1');
         expect(normalizedFormatted).toContain('      projects OrderSummary');
-        expect(normalizedFormatted).toContain('method findCustomerOrders(customerId: CustomerId) returns List<OrderSummary> {');
-        expect(normalizedFormatted).toContain('      with "input.orderId from [[Ordering.OrderSummary.orderId]]');
+        expect(normalizedFormatted).toContain('method findCustomerOrders(customerId: CustomerId) returns CustomerOrderSummary {');
+        expect(normalizedFormatted).toContain('      with "input.orderId from the selected draft order');
         expect(normalizedFormatted).not.toMatch(/^\t/m);
 
         const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
@@ -245,7 +245,7 @@ describe('Order Fulfillment example', () => {
         documents = [...importDocuments, journey];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        const offset = journeyText.lastIndexOf('Shipping.ShipmentApplication.createShipment') + 'Shipping.'.length;
+        const offset = journeyText.lastIndexOf('Shipping.ShipmentApplication.dispatchShipment') + 'Shipping.'.length;
         const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(journey, {
             textDocument: { uri: journey.uri.toString() },
             position: journey.textDocument.positionAt(offset)

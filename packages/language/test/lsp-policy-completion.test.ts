@@ -906,7 +906,7 @@ describe('LSP policy completion', () => {
         expect(completion?.items.some(item => item.label === 'normalize')).toBe(true);
     });
 
-    test('journey path completion offers commands but not query methods', async () => {
+    test('journey path completion offers commands and query methods', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             application service OrderApplication {
                 method placeOrder()
@@ -919,22 +919,30 @@ describe('LSP policy completion', () => {
         journey PlaceOrder {
             by Customer {
                 invoke Ordering.OrderApplication.
+                invoke Ordering.OrderQueries.
             }
         }`;
         const document = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/journey-command-completion.tni'), text
+            URI.file('/workspace/journey-operation-completion.tni'), text
         );
         documents = [document];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
-        const offset = text.indexOf('Ordering.OrderApplication.') + 'Ordering.OrderApplication.'.length;
-        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+        const commandOffset = text.indexOf('Ordering.OrderApplication.') + 'Ordering.OrderApplication.'.length;
+        const commandCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
             textDocument: { uri: document.uri.toString() },
-            position: document.textDocument.positionAt(offset)
+            position: document.textDocument.positionAt(commandOffset)
         });
-        const labels = completion?.items.map(item => item.label) ?? [];
-        expect(labels).toContain('placeOrder');
-        expect(labels).not.toContain('findOrder');
+        const commandLabels = commandCompletion?.items.map(item => item.label) ?? [];
+        expect(commandLabels).toContain('placeOrder');
+
+        const queryOffset = text.indexOf('Ordering.OrderQueries.') + 'Ordering.OrderQueries.'.length;
+        const queryCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(queryOffset)
+        });
+        const queryLabels = queryCompletion?.items.map(item => item.label) ?? [];
+        expect(queryLabels).toContain('findOrder');
     });
 
     test('journey references do not require module exposure for commands', async () => {

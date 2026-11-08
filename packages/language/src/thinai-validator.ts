@@ -106,7 +106,7 @@ import {
     isJourneyCommand,
     isReservedResultParameterName
 } from './thinai-operation-utils.js';
-import { getCommandContractTypes } from './thinai-journey-timeline.js';
+import { getOperationContractTypes } from './thinai-journey-timeline.js';
 import { validateMethodInvocations } from './thinai-method-invocation-validator.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 import { ThinaiModelValidator } from './thinai-model-validator.js';
@@ -807,7 +807,7 @@ export class ThinaiValidator {
         if (!module || !isPublicApiDeclaration(method)) {
             return;
         }
-        const contracts = getCommandContractTypes(method, false);
+        const contracts = getOperationContractTypes(method, false);
         const contractTypes = new Set<AstNode>();
         for (const node of [...contracts.inputs, ...contracts.outputs]) {
             if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
@@ -845,7 +845,7 @@ export class ThinaiValidator {
             !this.referencePolicy.isExposedQueryResult(method)) {
             return;
         }
-        const contracts = getCommandContractTypes(method, false);
+        const contracts = getOperationContractTypes(method, false);
         const aggregateOwnedTypes = new Set<AstNode>();
         for (const node of [...contracts.inputs, ...contracts.outputs]) {
             if (isValueObject(node) || isDataObject(node) || isEnumType(node)) {
@@ -985,7 +985,12 @@ export class ThinaiValidator {
                 }
                 seenActors.add(actor);
             }
-            if (actorBlock.steps.length === 0 && isSyntacticallyComplete(actorBlock)) {
+            const hasResolvedCommandStep = actorBlock.steps.some(step => {
+                const target = step.target?.ref;
+                return isMethod(target) && isJourneyCommand(target);
+            });
+            const hasUnresolvedStep = actorBlock.steps.some(step => step.target?.ref === undefined);
+            if (isSyntacticallyComplete(actorBlock) && !hasResolvedCommandStep && !hasUnresolvedStep) {
                 accept('error', 'An actor block in a journey must contain at least one command step.', {
                     node: actorBlock,
                     property: 'actor'
@@ -1014,19 +1019,26 @@ export class ThinaiValidator {
     private checkJourneyStep(step: JourneyStep, accept: ValidationAcceptor): void {
         const target = step.target?.ref;
         if (!isMethod(target)) {
-            accept('error', 'A journey command path must end at a method.', {
+            accept('error', 'A journey step must end at an application-service command or query-service method.', {
                 node: step,
                 property: 'target'
             });
             return;
         }
-        const method = target;
-        if (!isJourneyCommand(method)) {
-            accept('error', 'A journey may invoke only user-facing application-service commands, not event handlers or query methods.', {
+        if (this.referencePolicy.isJourneyStepTarget(target)) {
+            return;
+        }
+        if (isQueryService(target.$container)) {
+            accept('error', 'A journey query step must target a context-level or module-exposed query service.', {
                 node: step,
                 property: 'target'
             });
+            return;
         }
+        accept('error', 'A journey may invoke only application-service commands and visible query-service methods, not event handlers or other operations.', {
+            node: step,
+            property: 'target'
+        });
     }
 
     checkConstructor(constructor: Constructor, accept: ValidationAcceptor): void {

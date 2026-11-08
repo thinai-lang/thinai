@@ -49,8 +49,8 @@ import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics 
 import {
     getJourneyContractTargetSteps,
     isJourneyContractTargetVisible,
-    getJourneyStepCommand,
     getJourneyStepIndex,
+    getJourneyStepOperation,
     getJourneyStepsFor,
     type JourneySpecificationKind
 } from './thinai-journey-timeline.js';
@@ -68,7 +68,7 @@ import {
     resolveImportUri
 } from './thinai-scope-utils.js';
 import { getNavigableTypeReferences, getTypeReferences } from './thinai-type-utils.js';
-import { isJourneyCommand } from './thinai-operation-utils.js';
+import { isJourneyCommand, isJourneyQuery } from './thinai-operation-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
@@ -492,7 +492,7 @@ export class ThinaiReferencePolicy {
                     return false;
                 }
                 const commandSteps = getJourneyStepsFor(referenceStep)
-                    .filter(step => getJourneyStepCommand(step) === target);
+                    .filter(step => getJourneyStepOperation(step) === target);
                 if (commandSteps.length === 0) {
                     return true;
                 }
@@ -566,6 +566,21 @@ export class ThinaiReferencePolicy {
     isJourneyPathOnlyTarget(target: AstNode): boolean {
         return isBoundedContext(target) || isContextMap(target) || isSharedKernel(target) || isModule(target) ||
             isApplicationService(target) || isQueryService(target) || isAggregate(target) || isEntity(target);
+    }
+
+    /**
+     * A journey step target is either an application-service command or a
+     * visible query-service operation. Query targets follow the same
+     * context-level/module-exposed visibility used by journey prose.
+     */
+    isJourneyStepTarget(target: AstNode): boolean {
+        if (!isMethod(target)) {
+            return false;
+        }
+        if (isJourneyCommand(target)) {
+            return true;
+        }
+        return isJourneyQuery(target) && this.isJourneyQueryOperationVisible(target);
     }
 
     private isJourneyQueryOperationVisible(method: Method): boolean {

@@ -30,9 +30,9 @@ import {
 import { getExportedName } from './thinai-scope-utils.js';
 
 /**
- * Call hierarchy for method invocations and journey commands. Event emissions
- * and projectors are model relationships rather than calls, so they are kept
- * out of this view.
+ * Call hierarchy for method invocations and journey steps, including
+ * command and query steps. Event emissions and projectors are model
+ * relationships rather than calls, so they are kept out of this view.
  */
 export class ThinaiCallHierarchyProvider extends AbstractCallHierarchyProvider {
     constructor(private readonly thinaiServices: ThinaiServices) {

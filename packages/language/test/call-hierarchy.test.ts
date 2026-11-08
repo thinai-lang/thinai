@@ -42,10 +42,14 @@ in bounded context Shop {
     }
     exposes OrderApplication
   }
+  query service OrderQueries {
+    method findOrder() returns string
+  }
 }
 actor Customer
 journey PlaceOrder {
   by Customer {
+    invoke Shop.OrderQueries.findOrder
     invoke Shop.Api.OrderApplication.placeOrder
   }
 }
@@ -92,10 +96,18 @@ describe('Call hierarchy', () => {
         expect(outgoing?.map(call => call.to.name)).toEqual(['place']);
     });
 
-    test('shows outgoing journey commands', async () => {
+    test('shows outgoing journey commands and queries', async () => {
         const document = await setUp();
         const journey = await prepare(document, 'PlaceOrder');
         const outgoing = await services.Thinai.lsp.CallHierarchyProvider!.outgoingCalls({ item: journey });
-        expect(outgoing?.map(call => call.to.name)).toEqual(['placeOrder']);
+        expect(outgoing?.map(call => call.to.name)).toEqual(['findOrder', 'placeOrder']);
+    });
+
+    test('shows journey query steps as incoming calls', async () => {
+        const document = await setUp();
+        const findOrder = await prepare(document, 'findOrder');
+        const incoming = await services.Thinai.lsp.CallHierarchyProvider!.incomingCalls({ item: findOrder });
+        expect(incoming?.map(call => call.from.name)).toEqual(['PlaceOrder']);
+        expect(await services.Thinai.lsp.CallHierarchyProvider!.outgoingCalls({ item: findOrder })).toEqual([]);
     });
 });

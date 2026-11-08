@@ -56,7 +56,7 @@ interface ThinaiPathScopeCallbacks {
     isSupportedCandidate(context: ReferenceInfo, target: AstNode): boolean;
     isSupportedSpecificationPathSegment(context: ReferenceInfo, target: AstNode, terminal: boolean): boolean;
     isSupportedSpecificationModulePrefix(context: ReferenceInfo, module: AstNode, candidate: AstNode | undefined): boolean;
-    isJourneyCommand(method: Method): boolean;
+    isJourneyStepTarget(method: Method): boolean;
 }
 
 /** Owns qualified-reference lookup and path-segment completion for Thinai references. */
@@ -296,7 +296,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         for (const description of scope.getAllElements()) {
             const target = this.callbacks.getDescriptionNode(description);
             if (isMethod(target) && (isJourneyStep(container)
-                ? this.callbacks.isJourneyCommand(target) && this.callbacks.isSupportedCandidate(context, target)
+                ? this.callbacks.isJourneyStepTarget(target) && this.callbacks.isSupportedCandidate(context, target)
                 : this.callbacks.isSupportedInvocationTarget(container, target) &&
                     this.callbacks.isSupportedCandidate(context, target))) {
                 allowedTargets.add(target);
