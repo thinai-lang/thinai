@@ -2421,6 +2421,30 @@ context map M {
         expect(afterCommaLabels).not.toContain('AntiCorruptionLayer');
         expect(afterCommaLabels).not.toContain('integrationPatterns');
 
+        const unquotedPrefix = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: [Ant${marker}]
+  }
+}`);
+        const unquotedPrefixLabels = unquotedPrefix.completion?.items.map(item => item.label) ?? [];
+        expect(unquotedPrefixLabels).toContain('AntiCorruptionLayer');
+        expect(unquotedPrefixLabels).not.toContain('integrationPatterns');
+        expect(unquotedPrefixLabels).not.toContain('customer');
+
+        const afterCommaPrefix = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: ["AntiCorruptionLayer", Con${marker}]
+  }
+}`);
+        const afterCommaPrefixLabels = afterCommaPrefix.completion?.items.map(item => item.label) ?? [];
+        expect(afterCommaPrefixLabels).toContain('Conformist');
+        expect(afterCommaPrefixLabels).not.toContain('AntiCorruptionLayer');
+        expect(afterCommaPrefixLabels).not.toContain('integrationPatterns');
+
         const openQuote = await build(`bounded context A
 bounded context B
 context map M {

@@ -2368,10 +2368,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 .filter(node => node.offset < offset)
                 .sort((left, right) => right.offset - left.offset)[0])
             : undefined;
-        if (!property) {
+        const propertyStart = property?.offset ??
+            this.findIntegrationPatternsPropertyStart(text, offset);
+        if (propertyStart === undefined) {
             return [];
         }
-        const propertyStart = property.offset;
         const propertyMatch = /^integrationPatterns\s*:\s*\[/u.exec(text.slice(propertyStart));
         if (!propertyMatch) {
             return [];
@@ -2380,8 +2381,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         let quote: string | undefined;
         let valueStart = -1;
         let escaped = false;
+        let lastSeparator = -1;
         const usedValues = new Set<string>();
         const arrayStart = propertyStart + propertyMatch[0].length;
+        if (offset < arrayStart) {
+            return [];
+        }
         for (let index = arrayStart; index < offset; index++) {
             const character = text[index];
             if (quote) {
@@ -2397,25 +2402,34 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             } else if (character === ']' || (character === '\n' || character === '\r') &&
                 text.slice(index, offset).trim().length === 0) {
                 return [];
+            } else if (character === ',') {
+                lastSeparator = index - arrayStart;
             } else if (character === '"' || character === "'") {
                 quote = character;
                 valueStart = index + 1;
             }
         }
         if (!quote || valueStart < 0) {
-            const arrayPrefix = text.slice(arrayStart, offset).trimEnd();
-            if (arrayPrefix.length > 0 && !arrayPrefix.endsWith(',') && !arrayPrefix.endsWith('[')) {
+            const arrayText = text.slice(arrayStart, offset);
+            const rawPrefix = arrayText.slice(lastSeparator + 1);
+            const prefixStart = arrayStart + lastSeparator + 1 +
+                (rawPrefix.length - rawPrefix.trimStart().length);
+            const prefix = rawPrefix.trim();
+            if (prefix.length > 0 && !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(prefix)) {
                 return [];
             }
             return values
-                .filter(value => !usedValues.has(value))
+                .filter(value => value.startsWith(prefix) && !usedValues.has(value))
                 .map(value => ({
                     label: value,
                     kind: CompletionItemKind.EnumMember,
                     detail: 'Context-map integration pattern',
                     sortText: '0',
                     textEdit: {
-                        range: { start: position, end: position },
+                        range: {
+                            start: document.textDocument.positionAt(prefixStart),
+                            end: position
+                        },
                         newText: `"${value}"`
                     }
                 }));
@@ -2434,6 +2448,33 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     newText: value
                 }
             }));
+    }
+
+    private findIntegrationPatternsPropertyStart(text: string, offset: number): number | undefined {
+        const keyword = 'integrationPatterns';
+        let searchFrom = offset;
+        while (searchFrom > 0) {
+            const start = text.lastIndexOf(keyword, searchFrom);
+            if (start < 0) {
+                return undefined;
+            }
+            const before = start > 0 ? text[start - 1] : '';
+            const after = text[start + keyword.length] ?? '';
+            if ((before === '' || !/[\p{L}\p{N}_]/u.test(before)) &&
+                (after === '' || !/[\p{L}\p{N}_]/u.test(after))) {
+                const state = scanThinaiSource(text.slice(0, start));
+                if (!state.inComment && !state.unterminatedString) {
+                    const bracket = text.indexOf('[', start + keyword.length);
+                    if (bracket >= 0 && bracket < offset &&
+                        !text.slice(bracket + 1, offset).includes(']')) {
+                        return start;
+                    }
+                    return undefined;
+                }
+            }
+            searchFrom = start - 1;
+        }
+        return undefined;
     }
 
 }
