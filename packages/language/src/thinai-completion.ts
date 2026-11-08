@@ -257,17 +257,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         context: CompletionContext,
         typedPrefix: string
     ): AstNodeDescription[] {
-        if (typedPrefix.length === 0) {
-            return [];
-        }
-        const importComponent = AstUtils.getContainerOfType(
-            refInfo.container,
-            (node): node is ImportComponent => isImportComponent(node) && node.$cstNode !== undefined
-        );
-        if (!importComponent?.$cstNode) {
-            return [];
-        }
-        const importDeclaration = AstUtils.getContainerOfType(importComponent, isImport);
+        const importComponent = this.getImportComponentWithCst(refInfo);
+        const importDeclaration = AstUtils.getContainerOfType(refInfo.container, isImport);
         if (!importDeclaration?.$cstNode) {
             return [];
         }
@@ -308,6 +299,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     description.documentUri
                 )
             } as AstNodeDescription));
+    }
+
+    private getImportComponentWithCst(refInfo: ReferenceInfo): ImportComponent | undefined {
+        return AstUtils.getContainerOfType(
+            refInfo.container,
+            (node): node is ImportComponent => isImportComponent(node) && node.$cstNode !== undefined
+        );
     }
 
     private isAdditionalEventHandlerParameter(parameter: Parameter): boolean {
@@ -552,13 +550,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const item = super.createReferenceCompletionItem(nodeDescription, refInfo, context);
         const autoImportPath = (nodeDescription as AstNodeDescription & { thinaiAutoImportPath?: string })
             .thinaiAutoImportPath;
+        const autoImportComponent = autoImportPath ? this.getImportComponentWithCst(refInfo) : undefined;
+        const suffixEdit = autoImportPath
+            ? this.getAutoImportSuffixEdit(refInfo, context, autoImportPath)
+            : undefined;
         const detail = this.completionDetails.getCompletionDetail(nodeDescription);
         item.detail = autoImportPath ? `${detail} from ${autoImportPath}` : detail;
-        if (autoImportPath) {
-            const suffixEdit = this.getAutoImportSuffixEdit(refInfo, context, autoImportPath);
-            if (suffixEdit) {
-                item.additionalTextEdits = [...(item.additionalTextEdits ?? []), suffixEdit];
-            }
+        if (suffixEdit) {
+            item.additionalTextEdits = [...(item.additionalTextEdits ?? []), suffixEdit];
         }
         const spelling = nodeDescription as AstNodeDescription & {
             thinaiCompletionLabel?: string;
@@ -629,6 +628,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 };
             }
         }
+        if (autoImportPath && !autoImportComponent) {
+            const source = context.textDocument.getText();
+            const preceding = context.offset > 0 ? source[context.offset - 1] : '';
+            const leadingSpace = preceding.length > 0 && !/[ \t]/u.test(preceding) ? ' ' : '';
+            const insertion = suffixEdit
+                ? `${leadingSpace}${insertText}`
+                : `${leadingSpace}${insertText} } from "${autoImportPath}"`;
+            const cursor = context.textDocument.positionAt(context.offset);
+            item.textEdit = {
+                range: { start: cursor, end: cursor },
+                newText: insertion
+            };
+            item.insertText = insertion;
+        }
         return item;
     }
 
@@ -637,15 +650,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         context: CompletionContext,
         importPath: string
     ): TextEdit | undefined {
-        const importComponent = AstUtils.getContainerOfType(
-            refInfo.container,
-            (node): node is ImportComponent => isImportComponent(node) && node.$cstNode !== undefined
-        );
-        const importDeclaration = importComponent
-            ? AstUtils.getContainerOfType(importComponent, isImport)
-            : undefined;
+        const importComponent = this.getImportComponentWithCst(refInfo);
+        const importDeclaration = AstUtils.getContainerOfType(refInfo.container, isImport);
         const importCst = importDeclaration?.$cstNode;
-        if (!importComponent?.$cstNode || !importCst) {
+        if (!importCst) {
             return undefined;
         }
         if (GrammarUtils.findNodeForProperty(importCst, 'path')) {
@@ -666,7 +674,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 true
             );
         }
-        const componentEnd = importComponent.$cstNode.end;
+        const componentEnd = importComponent?.$cstNode?.end;
+        if (componentEnd === undefined) {
+            return undefined;
+        }
         const source = context.textDocument.getText();
         return this.createAutoImportEdit(
             context.document,

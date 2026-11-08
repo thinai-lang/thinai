@@ -2186,6 +2186,11 @@ in bounded context Ordering {
 
         const cases = [
             {
+                name: 'empty component list',
+                source: `import { ${marker}\n`,
+                expected: 'import { Common } from "./common.tni"\n'
+            },
+            {
                 name: 'partial component',
                 source: `import { Com${marker}\n`,
                 expected: 'import { Common } from "./common.tni"\n'
@@ -2261,11 +2266,6 @@ import { Com${marker}\n`,
             {
                 name: 'previous component without a path',
                 source: `import { Common, ${marker}\n`,
-                unexpected: ['Common', 'Extra']
-            },
-            {
-                name: 'empty component list',
-                source: `import { ${marker}\n`,
                 unexpected: ['Common', 'Extra']
             }
         ];
