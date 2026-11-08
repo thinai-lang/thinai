@@ -2126,6 +2126,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             // sibling clause can start.
             return false;
         }
+        if (isField(node) && (!node.name ||
+            node.primitive === undefined &&
+            node.collection === undefined &&
+            !hasReferenceText(node.type))) {
+            // A field is not complete until it has both a name and a type.
+            return false;
+        }
         if ((isMethodInvocation(node) || isJourneyStep(node)) && source.trimEnd().endsWith('.')) {
             return false;
         }

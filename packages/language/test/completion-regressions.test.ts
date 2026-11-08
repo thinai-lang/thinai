@@ -2601,6 +2601,53 @@ in bounded context X {
             .toContain('behavior');
     });
 
+    test('does not offer sibling declarations while a field is incomplete', async () => {
+        const entity = (field: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity A {
+            ${field}${marker}
+        }
+    }
+}`;
+        const valueObject = (field: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity A { identifier id: Id }
+        value object Id { raw: string }
+        value object V {
+            ${field}${marker}
+        }
+    }
+}`;
+        const siblingKeywords = ['constructor', 'method', 'identifier'];
+
+        for (const partial of ['identifier', 'identifier ', 'identifier id ', 'name ']) {
+            const result = await build(entity(partial));
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            for (const keyword of siblingKeywords) {
+                expect(labels, `${partial} should not offer ${keyword}`).not.toContain(keyword);
+            }
+        }
+
+        const missingType = await build(entity('name: '));
+        const missingTypeLabels = missingType.completion?.items.map(item => item.label) ?? [];
+        expect(missingTypeLabels).toContain('string');
+        expect(missingTypeLabels).not.toContain('constructor');
+        expect(missingTypeLabels).not.toContain('method');
+
+        const completeEntityField = await build(entity('raw: string '));
+        expect(completeEntityField.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['constructor', 'method']));
+
+        const incompleteValueObjectField = await build(valueObject('name '));
+        expect(incompleteValueObjectField.completion?.items.map(item => item.label) ?? [])
+            .not.toContain('constructor');
+        const completeValueObjectField = await build(valueObject('raw: string '));
+        expect(completeValueObjectField.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['constructor', 'method']));
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),
