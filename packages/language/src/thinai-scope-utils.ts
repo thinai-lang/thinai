@@ -12,19 +12,25 @@ import {
     isBoundedContext,
     isBoundedContextPart,
     isAggregate,
+    isApplicationService,
     isModule,
     isSharedKernel,
     isDataObject,
     isDomainEvent,
+    isDomainService,
     isEntity,
+    isFactory,
     isField,
     isIntegrationEvent,
     isMethod,
+    isProjector,
+    isQueryService,
     isReadModel,
     isValueObject,
     isEnumValue,
     isParameter,
     type Aggregate,
+    type Entity,
     type Import,
     type Model,
     type Module,
@@ -237,11 +243,51 @@ export function isBareSpecificationMemberAllowed(
     return isOwnedSpecificationMember(source, target);
 }
 
-export function isExposedByModule(module: Module, target: AstNode): boolean {
-    const declaration = isField(target) || isParameter(target) || isEnumValue(target) ? target.$container : target;
+function isDirectlyExposedByModule(module: Module, declaration: AstNode): boolean {
     return module.exposures.some(exposure =>
         exposure.declarations.some(candidate => candidate.target.ref === declaration)
     );
+}
+
+/**
+ * Exposing a container publishes its API members:
+ * - an aggregate publishes its root entity and the root entity's methods;
+ * - an entity, value object, service, projector, or factory publishes its methods;
+ * - fields, parameters, and enum values inherit visibility from their container.
+ *
+ * Child entities and nested value objects/enums remain private unless exposed.
+ */
+export function isExposedByModule(module: Module, target: AstNode, visited = new Set<AstNode>()): boolean {
+    if (visited.has(target)) {
+        return false;
+    }
+    visited.add(target);
+    if (isField(target) || isParameter(target) || isEnumValue(target)) {
+        return isExposedByModule(module, target.$container, visited);
+    }
+    if (isDirectlyExposedByModule(module, target)) {
+        return true;
+    }
+    if (isMethod(target)) {
+        return isExposedByModule(module, target.$container, visited);
+    }
+    if (isEntity(target) && target.root && isAggregate(target.$container)) {
+        return isExposedByModule(module, target.$container, visited);
+    }
+    return false;
+}
+
+/** Members published by a directly exposed container declaration. */
+function getExposureImpliedMembers(target: AstNode): AstNode[] {
+    if (isAggregate(target)) {
+        const root = target.members.find((member): member is Entity => isEntity(member) && member.root);
+        return root ? [root, ...root.methods] : [];
+    }
+    if (isEntity(target) || isValueObject(target) || isApplicationService(target) || isDomainService(target) ||
+        isQueryService(target) || isProjector(target) || isFactory(target)) {
+        return [...target.methods];
+    }
+    return [];
 }
 
 /** True when the module is a namespace that can be named from its context boundary. */
@@ -323,6 +369,8 @@ export function getModulePublicApi(module: Module, visited = new Set<Module>()):
             api.push(target);
             if (isModule(target)) {
                 api.push(...getModulePublicApi(target, visited));
+            } else {
+                api.push(...getExposureImpliedMembers(target));
             }
         }
     }

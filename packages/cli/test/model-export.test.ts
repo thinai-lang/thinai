@@ -394,6 +394,7 @@ in bounded context C {
         aggregate Agg {
             root entity E {
                 identifier id: I
+                method place() {}
             }
             value object I {
                 raw: string
@@ -441,13 +442,24 @@ in bounded context C {
                 publicApi: true
             });
             expect(element('Entity:C.ExposedAggregate.Agg.E')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true,
+                exposedBy: ['Module:C.ExposedAggregate']
+            });
+            expect(element('Field:C.ExposedAggregate.Agg.E.id')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true,
+                exposedBy: ['Module:C.ExposedAggregate']
+            });
+            expect(element('Method:C.ExposedAggregate.Agg.E.place')).toMatchObject({
+                visibility: 'module-exposed',
+                publicApi: true,
+                exposedBy: ['Module:C.ExposedAggregate']
+            });
+            expect(element('ValueObject:C.ExposedAggregate.Agg.I')).toMatchObject({
                 visibility: 'module-private',
                 publicApi: false,
                 exposedBy: []
-            });
-            expect(element('Field:C.ExposedAggregate.Agg.E.id')).toMatchObject({
-                visibility: 'module-private',
-                publicApi: false
             });
 
             expect(element('Entity:C.ExposedMembers.Agg2.E2')).toMatchObject({

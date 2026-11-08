@@ -322,8 +322,12 @@ which bounded contexts share that kernel. Modules are optional internal
 organization within a bounded context or shared kernel. `exposes` names
 declarations the module owns that the grammar allows it to expose: aggregates,
 entities, value objects, data objects, read models, enums, events, services,
-projectors, repositories, factories, modules, and methods. Fields and enum
-values inherit visibility from their declaration.
+projectors, repositories, factories, modules, and methods. Exposing a container
+also publishes its behavioral members: an aggregate publishes its root entity
+and the root entity's methods; an entity, value object, service, projector, or
+factory publishes its methods. Child entities and nested value objects or enums
+remain private unless exposed explicitly. Fields, parameters, and enum values
+inherit visibility from their declaration.
 A qualified specification path may traverse structural containers without
 exposing each segment: bounded contexts, context maps, shared kernels, modules,
 aggregates, entities, services, projectors, and factories. Data-bearing
@@ -348,16 +352,20 @@ exposed declarations without a separate dependency. `depends on` is not a
 re-export. Direct dependencies on nested modules remain valid. A module may use
 its own exposed nested module's public API without a redundant dependency; use
 `depends on` when the nested module itself is not exposed by its parent, while
-still exposing every declaration you reference. A module may expose only
-declarations it owns, including methods and members of its own aggregates, plus
-its direct child modules. Deep re-export requires each level to expose the next;
-terminal declarations must still be exposed by their owning module. Exposing a query service publishes the operations whose result is a
+the nested module still publishes every declaration you reference. A module may expose
+declarations it owns plus its direct child modules. Exposing an aggregate
+publishes its root entity and root-entity methods; child entities, nested value
+objects, and nested enums remain private unless exposed explicitly. Exposing a
+service, projector, or factory publishes its methods. Deep re-export requires
+each level to expose the next; terminal declarations must still be published
+by their owning module. Exposing a query service publishes the operations whose result is a
 primitive or a public DataObject (context-level or exposed by its module); operations returning read models,
 value objects, enums, or unexposed module-nested data objects remain local. Cross-context
 consumers require a module-exposed query service with a primitive or public
 DataObject result; a context-level query service is local and journey-visible
-only. Direct module-to-module method references still require the method itself
-to be exposed. Published query DataObjects expose their nested DataObject, value
+only. Direct module-to-module method references still require the method to be
+published by its owning module, either through an exposed container or an
+explicit method exposure. Published query DataObjects expose their nested DataObject, value
 object, and enum shape, including enum values; aggregate-owned contract types
 produce a warning. Published result shapes may be linked through their canonical
 type path, including aggregate or entity containers, or through a field path on
@@ -367,8 +375,11 @@ form of module exposure merely to invoke an application-service command.
 ### Visibility at a Glance
 
 Context-level declarations are public within their bounded context or shared
-kernel. A module exposes only declarations it owns, including methods and
-aggregate members, plus its direct child modules. Fields,
+kernel. A module exposes the declarations it owns plus its direct child modules.
+Exposing an aggregate publishes its root entity and root-entity methods; child
+entities, nested value objects, and nested enums remain private unless exposed
+explicitly. Exposing a service, projector, or factory publishes its methods.
+Explicit member paths remain valid when you need to be precise. Fields,
 parameters, and enum values inherit visibility from their declaration.
 
 **Within a bounded context or shared kernel**
@@ -379,7 +390,8 @@ parameters, and enum values inherit visibility from their declaration.
 | Declaration in a top-level module | ✓ | exposure + `depends on` | exposure |
 | Declaration in a nested module | ✓ | exposure by its owning module + a dependency or exposing-ancestor route | exposure at each level |
 
-`exposure` means the owning module lists the declaration in `exposes`.
+`exposure` means the owning module lists the declaration in `exposes`, or
+exposes a container that publishes the declaration.
 A direct `depends on` the nested module is enough when that module exposes the
 declaration; its parent need not expose it. A parent module that exposes a child
 module may use the child's public API without a redundant `depends on`. Sibling

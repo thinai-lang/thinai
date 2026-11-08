@@ -1,6 +1,6 @@
 import { AstUtils, type AstNode, type LangiumDocument } from 'langium';
 import type { Range } from 'vscode-languageserver-types';
-import { isEnumValue, isField, isModel, isParameter } from './generated/ast.js';
+import { isAggregate, isEntity, isEnumValue, isField, isMethod, isModel, isParameter } from './generated/ast.js';
 import { isInSharedKernel, isPublicApiDeclaration, resolveImportUri } from './thinai-scope-utils.js';
 
 export const THINAI_MODEL_SCHEMA_VERSION = 'thinai-model-v1';
@@ -515,16 +515,24 @@ function getExposedBy(
     nodeToId: WeakMap<AstNode, string>,
     directExposures: Map<string, Set<string>>
 ): string[] {
-    // Fields, parameters, and enum values inherit direct exposure from their
-    // immediate declaring container. Named declarations must be exposed
-    // directly; exposing an aggregate or service does not publish every member.
-    const declaration = isField(node) || isParameter(node) || isEnumValue(node)
-        ? node.$container
-        : node;
-    const declarationId = nodeToId.get(declaration);
-    return declarationId
-        ? [...(directExposures.get(declarationId) ?? [])].sort()
-        : [];
+    // Fields, parameters, and enum values inherit exposure from their
+    // immediate declaring container. An aggregate publishes its root entity
+    // and root-entity methods; other containers publish their methods.
+    if (isField(node) || isParameter(node) || isEnumValue(node)) {
+        return getExposedBy(node.$container, nodeToId, directExposures);
+    }
+    const declarationId = nodeToId.get(node);
+    const direct = declarationId ? directExposures.get(declarationId) : undefined;
+    if (direct && direct.size > 0) {
+        return [...direct].sort();
+    }
+    if (isMethod(node)) {
+        return getExposedBy(node.$container, nodeToId, directExposures);
+    }
+    if (isEntity(node) && node.root && isAggregate(node.$container)) {
+        return getExposedBy(node.$container, nodeToId, directExposures);
+    }
+    return [];
 }
 
 function buildProperties(node: AstNode, nodeToId: WeakMap<AstNode, string>): Record<string, unknown> {

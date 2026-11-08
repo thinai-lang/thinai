@@ -624,7 +624,7 @@ in bounded context C {
         );
     });
 
-    test('requires method exposure for non-terminal specification path segments', async () => {
+    test('publishes service methods when the service is exposed', async () => {
         const docs = await build({
             'a.tni': `bounded context C
 in bounded context C {
@@ -650,14 +650,12 @@ in bounded context C {
     }
 }`
         });
-        expect(errors(docs['a.tni']!)).toContain(
-            'This specification path segment is not visible; use a public declaration or an authorized contract path.'
-        );
+        expect(errors(docs['a.tni']!)).toEqual([]);
 
         const source = docs['a.tni']!.textDocument.getText();
         const offset = source.indexOf('privateHelper.') + 'privateHelper.'.length;
         const items = await completion(docs['a.tni']!, offset);
-        expect(items?.items.map(item => item.label) ?? []).not.toContain('amount');
+        expect(items?.items.map(item => item.label) ?? []).toContain('amount');
     });
 
     test('allows an exposed method as a non-terminal specification path segment', async () => {
@@ -687,6 +685,101 @@ in bounded context C {
 }`
         });
         expect(errors(docs['a.tni']!)).toEqual([]);
+    });
+
+    test('publishes aggregate root behavior when the aggregate is exposed', async () => {
+        const docs = await build({
+            'a.tni': `bounded context Shop
+in bounded context Shop {
+    module Domain {
+        aggregate OrderAggregate {
+            value object OrderId {
+                raw: string
+            }
+            value object LineId {
+                raw: string
+            }
+            root entity Order {
+                identifier id: OrderId
+                method place() {
+                    behavior "Place the order."
+                }
+            }
+            entity Line {
+                identifier id: LineId
+                method validate() {
+                    behavior "Validate the line."
+                }
+            }
+        }
+        exposes OrderAggregate
+    }
+    module Api {
+        depends on Domain
+
+        application service OrderApplication {
+            method placeOrder() returns string {
+                behavior "Place an order."
+                invokes Domain.OrderAggregate.Order.place
+            }
+        }
+        exposes OrderApplication
+    }
+}`
+        });
+        expect(errors(docs['a.tni']!)).toEqual([]);
+
+        const source = docs['a.tni']!.textDocument.getText();
+        const offset = source.indexOf('invokes ') + 'invokes '.length;
+        const items = await completion(docs['a.tni']!, offset);
+        const labels = items?.items.map(item => item.label) ?? [];
+        expect(labels).toEqual(expect.arrayContaining(['Domain', 'OrderAggregate', 'Order', 'place']));
+        expect(labels).not.toContain('validate');
+    });
+
+    test('does not publish child-entity behavior with an exposed aggregate', async () => {
+        const docs = await build({
+            'a.tni': `bounded context Shop
+in bounded context Shop {
+    module Domain {
+        aggregate OrderAggregate {
+            value object OrderId {
+                raw: string
+            }
+            value object LineId {
+                raw: string
+            }
+            root entity Order {
+                identifier id: OrderId
+                method place() {
+                    behavior "Place the order."
+                }
+            }
+            entity Line {
+                identifier id: LineId
+                method validate() {
+                    behavior "Validate the line."
+                }
+            }
+        }
+        exposes OrderAggregate
+    }
+    module Api {
+        depends on Domain
+
+        application service OrderApplication {
+            method placeOrder() returns string {
+                behavior "Place an order."
+                invokes Domain.OrderAggregate.Line.validate
+            }
+        }
+        exposes OrderApplication
+    }
+}`
+        });
+        expect(errors(docs['a.tni']!)).toContain(
+            'An application service may invoke only aggregate-root behavior or a factory method that creates an aggregate root.'
+        );
     });
 
     test('allows a direct dependency on an exposed private nested module in specification paths', async () => {
