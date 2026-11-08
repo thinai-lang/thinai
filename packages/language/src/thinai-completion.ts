@@ -31,6 +31,7 @@ import {
     type Parameter,
     isAggregate,
     isApplicationService,
+    isBehavior,
     isBoundedContext,
     isContextMap,
     isContextMapEndpoint,
@@ -42,12 +43,15 @@ import {
     isImport,
     isImportComponent,
     isIntegrationEvent,
+    isInvariant,
     isJourneyStep,
     isMethod,
     isMethodInvocation,
     isModel,
     isModule,
     isParameter,
+    isPostcondition,
+    isPrecondition,
     isProjector,
     isQueryRepository,
     isQueryService,
@@ -2114,6 +2118,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const parserErrors = document.parseResult.parserErrors as Array<{ token?: { startOffset: number } }>;
         if (parserErrors.some(error => error.token && error.token.startOffset >= cstNode.offset &&
             error.token.startOffset <= cstNode.end)) {
+            return false;
+        }
+        if ((isInvariant(node) || isPrecondition(node) || isPostcondition(node) || isBehavior(node)) &&
+            node.description === undefined) {
+            // Specification clauses need a quoted description before the next
+            // sibling clause can start.
             return false;
         }
         if ((isMethodInvocation(node) || isJourneyStep(node)) && source.trimEnd().endsWith('.')) {

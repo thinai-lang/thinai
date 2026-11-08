@@ -2554,6 +2554,53 @@ in bounded context X {
         expect(moduleName.completion?.items.map(item => item.label) ?? []).not.toContain('service');
     });
 
+    test('does not offer sibling clauses while a specification string is missing', async () => {
+        const clauses = ['invariant', 'precondition', 'postcondition', 'behavior'] as const;
+        const siblingKeywords = ['invariant', 'precondition', 'postcondition', 'behavior', 'invokes', 'transition', 'emits'];
+        const method = (clause: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity A {
+            identifier id: string
+            method place() {
+                ${clause}${marker}
+            }
+        }
+    }
+}`;
+
+        for (const clause of clauses) {
+            for (const partial of [clause, `${clause} `]) {
+                const result = await build(method(partial));
+                const labels = result.completion?.items.map(item => item.label) ?? [];
+                for (const keyword of siblingKeywords) {
+                    expect(labels, `${partial} should not offer ${keyword}`).not.toContain(keyword);
+                }
+            }
+            const complete = await build(method(`${clause} "text"`));
+            expect(complete.completion?.items.map(item => item.label) ?? [], clause)
+                .toEqual(expect.arrayContaining(['behavior']));
+        }
+
+        const constructor = (clause: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity A {
+            identifier id: string
+            constructor() {
+                ${clause}${marker}
+            }
+        }
+    }
+}`;
+        const incompleteConstructor = await build(constructor('precondition '));
+        expect(incompleteConstructor.completion?.items.map(item => item.label) ?? [])
+            .not.toContain('behavior');
+        const completeConstructor = await build(constructor('precondition "text"'));
+        expect(completeConstructor.completion?.items.map(item => item.label) ?? [])
+            .toContain('behavior');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),
