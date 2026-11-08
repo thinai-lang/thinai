@@ -2695,6 +2695,41 @@ in bounded context X {
             .toEqual(expect.arrayContaining(['constructor', 'method']));
     });
 
+    test('does not offer sibling declarations while a collection type is unclosed', async () => {
+        const entity = (partial: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity E {
+            identifier id: string
+            ${partial}${marker}
+        }
+    }
+}`;
+        const siblings = ['constructor', 'method'];
+
+        for (const partial of [
+            'metadata: Map<string, List<Set<integer>',
+            'metadata: Map<string, List<Set<integer>>',
+            'method run() returns Map<string, List<Set<integer>',
+            'method run() returns Map<string, List<Set<integer>>'
+        ]) {
+            const result = await build(entity(partial));
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            for (const sibling of siblings) {
+                expect(labels, `${partial} should not offer ${sibling}`).not.toContain(sibling);
+            }
+        }
+
+        for (const partial of [
+            'metadata: Map<string, List<Set<integer>>>',
+            'method run() returns Map<string, List<Set<integer>>>'
+        ]) {
+            const result = await build(entity(partial));
+            expect(result.completion?.items.map(item => item.label) ?? [], partial)
+                .toEqual(expect.arrayContaining(siblings));
+        }
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

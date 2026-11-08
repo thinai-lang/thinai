@@ -2299,12 +2299,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
 
         if (isField(node) || isParameter(node)) {
-            if (node.primitive !== undefined || this.hasCompletedTypeReference(node.type) ||
-                node.collection && !this.isIncompleteCollectionType(node.collection)) {
+            if (node.primitive !== undefined || this.hasCompletedTypeReference(node.type)) {
                 return false;
             }
             if (node.collection) {
-                return true;
+                return this.isIncompleteCollectionType(node.collection) ||
+                    !this.isClosedCollectionType(node.collection);
             }
             const source = document.textDocument.getText().slice(
                 node.$cstNode?.offset ?? document.textDocument.offsetAt(position),
@@ -2314,7 +2314,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
 
         if (node.returnCollection) {
-            return this.isIncompleteCollectionType(node.returnCollection);
+            return this.isIncompleteCollectionType(node.returnCollection) ||
+                !this.isClosedCollectionType(node.returnCollection);
         }
         if (node.returnPrimitive !== undefined || this.hasCompletedTypeReference(node.returnType)) {
             return false;
@@ -2324,6 +2325,25 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             document.textDocument.offsetAt(position)
         );
         return incompleteReturnTypePattern.test(source);
+    }
+
+    private isClosedCollectionType(collection: CollectionType): boolean {
+        const source = collection.$cstNode?.text ?? '';
+        if (source.length === 0) {
+            return false;
+        }
+        let depth = 0;
+        for (const character of source) {
+            if (character === '<') {
+                depth++;
+            } else if (character === '>') {
+                depth--;
+                if (depth < 0) {
+                    return false;
+                }
+            }
+        }
+        return depth === 0;
     }
 
     private isIncompleteCollectionType(collection: CollectionType): boolean {
