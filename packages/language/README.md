@@ -297,11 +297,13 @@ When a file declares multiple components, select them explicitly:
 import { Ordering as Orders, Shipping } from "./contexts.tni"
 ```
 
-An alias applies to every visible declaration of the selected component,
-including members contributed from other imported files. For example, if
-`Ordering` is aliased as `Orders`, contributed declarations are available as
-`Orders.Member` as well as under their canonical path. Inside a contribution to
-an aliased context, declarations belonging to that context also keep
+An alias renames the component for the importing document. If `Ordering` is
+aliased as `Orders`, reference its declarations as `Orders.Member`; the
+canonical `Ordering.Member` spelling is not available unless the same file is
+also imported with a bare import or the component is imported again without an
+alias. An alias applies to every visible declaration of the selected component,
+including members contributed from other imported files. Inside a contribution
+to an aliased context, declarations belonging to that context also keep
 context-relative spellings such as `Module.Type` and `Type`; local and imported
 contributions behave the same way. Aliases are document-local
 scope names; an alias must not collide with any visible path-root spelling,

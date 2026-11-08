@@ -67,18 +67,45 @@ in bounded context Ctx {
         expect(items?.items.map(item => item.label)).toContain('Result');
     });
 
-    test('keeps canonical paths available when a component is aliased', async () => {
+    test('hides canonical paths when a component is aliased', async () => {
         const docs = await build({
-            'catalog.tni': 'bounded context Ordering',
-            'ordering.tni': `import "./catalog.tni"
+            'catalog.tni': `bounded context Ordering
 in bounded context Ordering {
     data object Result {
         raw: string
     }
 }`,
             'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
-import "./ordering.tni"
+in bounded context Ctx {
+    data object Use {
+        aliased: Ctx.Result
+        canonical: Ordering.Result
+    }
+}`
+        });
+
+        expect(errors(docs['consumer.tni']!).some(message =>
+            message.includes('Could not resolve reference') && message.includes("named 'Ordering'")
+        )).toBe(true);
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const aliasedOffset = source.indexOf('Ctx.Result') + 'Ctx.'.length;
+        const aliasedItems = await completion(docs['consumer.tni']!, aliasedOffset);
+        expect(aliasedItems?.items.map(item => item.label)).toContain('Result');
+        const canonicalOffset = source.indexOf('Ordering.Result') + 'Ordering.'.length;
+        const canonicalItems = await completion(docs['consumer.tni']!, canonicalOffset);
+        expect(canonicalItems?.items.map(item => item.label)).not.toContain('Result');
+    });
+
+    test('keeps canonical paths when the component is also imported unaliased', async () => {
+        const docs = await build({
+            'catalog.tni': `bounded context Ordering
 in bounded context Ordering {
+    data object Result {
+        raw: string
+    }
+}`,
+            'consumer.tni': `import { Ordering as Ctx, Ordering } from "./catalog.tni"
+in bounded context Ctx {
     data object Use {
         aliased: Ctx.Result
         canonical: Ordering.Result
@@ -87,10 +114,27 @@ in bounded context Ordering {
         });
 
         expect(errors(docs['consumer.tni']!)).toEqual([]);
-        const source = docs['consumer.tni']!.textDocument.getText();
-        const offset = source.indexOf('Ordering.Result') + 'Ordering.'.length;
-        const items = await completion(docs['consumer.tni']!, offset);
-        expect(items?.items.map(item => item.label)).toContain('Result');
+    });
+
+    test('keeps canonical paths when the file is also imported bare', async () => {
+        const docs = await build({
+            'catalog.tni': `bounded context Ordering
+in bounded context Ordering {
+    data object Result {
+        raw: string
+    }
+}`,
+            'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
+import "./catalog.tni"
+in bounded context Ctx {
+    data object Use {
+        aliased: Ctx.Result
+        canonical: Ordering.Result
+    }
+}`
+        });
+
+        expect(errors(docs['consumer.tni']!)).toEqual([]);
     });
 
     test('applies aliases to local context contributions', async () => {

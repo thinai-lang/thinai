@@ -167,10 +167,8 @@ export class ThinaiExternalScope {
             if (!visible) {
                 continue;
             }
-            // Canonical qualified names remain available even when a component
-            // import is aliased. Aliases add spellings; they do not hide the
-            // declaration's canonical path.
-            this.addScopeCandidate(candidates, description, description.name);
+            // Aliases are document-local renames. The canonical name is added
+            // only when the file or component is imported without an alias.
             if (unaliased) {
                 this.addScopeCandidates(candidates, description, this.getUnaliasedNames(description.name));
             } else if (lexicalContextName !== undefined &&
