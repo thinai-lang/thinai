@@ -575,7 +575,8 @@ visually identical names link to the same declaration.
 
 The language server provides keyword and cross-reference completion,
 navigation, references, document symbols, hover, diagnostics, rename, import-path
-completion and links, document formatting, and quick fixes for unresolved
+completion and links, call hierarchy for method invocations and journey
+commands, document formatting, and quick fixes for unresolved
 declarations that can be imported and for missing module dependencies or
 exposures. Renaming or moving a `.tni` file updates relative import paths. Formatting uses the
 editor's indentation options; the VS Code extension defaults Thinai files to two

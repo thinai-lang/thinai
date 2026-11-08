@@ -6,6 +6,7 @@ import { ThinaiScopeComputation } from './thinai-scope-computation.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { ThinaiDocumentBuilder } from './thinai-document-builder.js';
 import { ThinaiCompletionProvider } from './thinai-completion.js';
+import { ThinaiCallHierarchyProvider } from './thinai-call-hierarchy-provider.js';
 import { ThinaiCodeActionProvider } from './thinai-code-actions.js';
 import { ThinaiValueConverter } from './thinai-value-converter.js';
 import { ThinaiTokenBuilder } from './thinai-token-builder.js';
@@ -69,6 +70,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         Formatter: () => new ThinaiFormatter(),
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),
         CompletionProvider: services => new ThinaiCompletionProvider(services),
+        CallHierarchyProvider: services => new ThinaiCallHierarchyProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
         DocumentLinkProvider: () => new ThinaiDocumentLinkProvider(),
         HoverProvider: services => new ThinaiHoverProvider(services),
