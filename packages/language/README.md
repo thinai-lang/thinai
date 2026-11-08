@@ -216,8 +216,8 @@ still describe query-repository output. A read model remains a query-result shap
 not necessarily a materialized projection or separate database.
 Local query methods may return primitives, data objects, read models, domain
 values such as value objects and enums, or collections of those results.
-Published cross-context query APIs expose primitives or public data-object
-contracts (context-level DataObjects or DataObjects exposed by their module).
+Published cross-context query APIs expose primitives or context-visible or
+module-exposed data-object contracts.
 In non-journey method prose, link the published result
 type or field rather than the query operation itself; journeys may link
 visible application and query operations as timeline entries. Data objects are
@@ -280,8 +280,9 @@ participating bounded contexts; it does not authorize event consumption.
 For an IntegrationEvent nested in a module, expose the event, then import its
 owning bounded context and use the qualified module path. Modules organize one
 bounded context; their names are part of the public path for nested contracts.
-A context-level event and its context-level payload types are public; when the
-event or a payload type is nested in a module, expose it. Any method in an
+A context-level IntegrationEvent and its context-level payload types are
+published contracts; when the event or a payload type is nested in a module,
+expose it. Consumers still need an authorizing relationship. Any method in an
 authorized consumer context may link an exposed integration event's payload
 shape, not only the event handler. IntegrationEvent payloads cannot expose
 entities or types owned by aggregates.
@@ -338,7 +339,8 @@ direct dependency, share its shared kernel through an authorized relationship,
 or traverse an authorized event or published-query contract. The terminal
 declaration is still checked
 against the applicable visibility rule. Module exposure and context-level
-visibility make a declaration part of a published contract; they do not make
+visibility make a declaration available inside the bounded context; they do not
+by themselves publish it to another bounded context. In particular, they do not make
 another bounded context's value object, data object, read model, or enum
 directly usable as a field, parameter, or return type. Use a local mirror for identifiers, an
 IntegrationEvent for event data, a shared-kernel type where appropriate, or a
@@ -359,10 +361,10 @@ objects, and nested enums remain private unless exposed explicitly. Exposing a
 service, projector, or factory publishes its methods. Deep re-export requires
 each level to expose the next; terminal declarations must still be published
 by their owning module. Exposing a query service publishes the operations whose result is a
-primitive or a public DataObject (context-level or exposed by its module); operations returning read models,
+primitive or a context-visible or module-exposed DataObject; operations returning read models,
 value objects, enums, or unexposed module-nested data objects remain local. Cross-context
-consumers require a module-exposed query service with a primitive or public
-DataObject result; a context-level query service is local and journey-visible
+consumers require a module-exposed query service with a primitive or context-visible or
+module-exposed DataObject result; a context-level query service is local and journey-visible
 only. Direct module-to-module method references still require the method to be
 published by its owning module, either through an exposed container or an
 explicit method exposure. Published query DataObjects expose their nested DataObject, value
@@ -372,26 +374,66 @@ type path, including aggregate or entity containers, or through a field path on
 the result contract. Journeys are model-level timelines and do not require either
 form of module exposure merely to invoke an application-service command.
 
+### Visibility Scopes
+
+Thinai distinguishes four visibility scopes:
+
+| Scope | Meaning |
+|---|---|
+| **Aggregate/module-local** | Internal to its aggregate or module; not visible outside unless published |
+| **Context-visible** | Directly usable anywhere in the same bounded context or shared kernel; no `exposes` needed |
+| **Module-exposed** | Published by a module and usable by modules that depend on it |
+| **Contract-published** | Explicitly usable across bounded contexts through an integration event, published query result, shared kernel, or identifier mirror |
+
+A context-visible declaration is not automatically contract-published. For
+example, a context-level value object is visible throughout its bounded context,
+but another bounded context cannot use it as a field, parameter, or return type:
+
+<!-- thinai-fragment -->
+```thinai
+bounded context Alpha
+in bounded context Alpha {
+    value object Money {
+        raw: string
+    }
+}
+
+bounded context Beta
+in bounded context Beta {
+    data object Price {
+        amount: Alpha.Money // rejected
+    }
+}
+```
+
+Use a local identifier mirror, an IntegrationEvent payload, a shared-kernel
+type, or a published query result contract instead.
+
+Mirrors apply to identifier value objects. Integration events are published
+contracts owned by the producer: reference them directly and map their payload
+into local domain concepts when isolation is needed. Do not mirror an
+IntegrationEvent.
+
 ### Visibility at a Glance
 
-Context-level declarations are public within their bounded context or shared
-kernel. A module exposes the declarations it owns plus its direct child modules.
-Exposing an aggregate publishes its root entity and root-entity methods; child
-entities, nested value objects, and nested enums remain private unless exposed
-explicitly. Exposing a service, projector, or factory publishes its methods.
-Explicit member paths remain valid when you need to be precise. Fields,
-parameters, and enum values inherit visibility from their declaration.
+Context-level declarations are context-visible within their bounded context or
+shared kernel. A module exposes the declarations it owns plus its direct child
+modules. Exposing an aggregate publishes its root entity and root-entity
+methods; child entities, nested value objects, and nested enums remain private
+unless exposed explicitly. Exposing a service, projector, or factory publishes
+its methods. Explicit member paths remain valid when you need to be precise.
+Fields, parameters, and enum values inherit visibility from their declaration.
 
 **Within a bounded context or shared kernel**
 
 | Target declaration | From its own module | From another module | From outside all modules |
 |---|---|---|---|
-| Context-level declaration | ✓ | ✓ | ✓ |
+| Context-visible declaration | ✓ | ✓ | ✓ |
 | Declaration in a top-level module | ✓ | exposure + `depends on` | exposure |
 | Declaration in a nested module | ✓ | exposure by its owning module + a dependency or exposing-ancestor route | exposure at each level |
 
-`exposure` means the owning module lists the declaration in `exposes`, or
-exposes a container that publishes the declaration.
+`module-exposed` means a declaration or container is listed in `exposes`, or
+a container exposure publishes it.
 A direct `depends on` the nested module is enough when that module exposes the
 declaration; its parent need not expose it. A parent module that exposes a child
 module may use the child's public API without a redundant `depends on`. Sibling
@@ -399,7 +441,7 @@ modules require both exposure and `depends on`. A dependency does not itself
 expose a declaration. From outside all modules, `exposure at each level` means
 every enclosing module exposes the next module or declaration; cross-context
 access and shared-kernel access from another kernel always require that full
-public exposure chain. Exposing a nested module re-exports its public API but not
+module-exposure chain. Exposing a nested module re-exports its public API but not
 its dependencies.
 
 **Across bounded contexts**
@@ -411,7 +453,7 @@ its dependencies.
 | IntegrationEvent payload type or field | An exposed, authorized IntegrationEvent. Any method in the consumer context may link the payload shape. |
 | DomainEvent | Not visible across bounded contexts. |
 | Shared-kernel type, service, or declaration | Import the shared kernel and declare a `sharedKernel` relationship that includes both contexts. Module-nested declarations must also be exposed. |
-| Published query result | A module-exposed query service with a primitive or public DataObject result, a customer-supplier or partnership relationship, and an imported context. Link the result type or field, not the query operation. |
+| Published query result | A module-exposed query service with a primitive or context-visible or module-exposed DataObject result, a customer-supplier or partnership relationship, and an imported context. Link the result type or field, not the query operation. |
 | Value object, data object, read model, or enum as a signature type | Not directly. Use a local `mirrors` identifier for identity, an IntegrationEvent payload, or a shared-kernel type; read published query result contracts for cross-context read data. |
 | Application-service command in a journey | Journeys are model-level timelines; invoking a command does not require module exposure or a context map. |
 | Query service | Must be module-exposed; a context-level query service is local and journey-visible only. |
@@ -428,7 +470,7 @@ query reads, and a `sharedKernel` relationship authorizes neither.
 |---|---|
 | Structural container (bounded context, context map, shared kernel, aggregate, entity, service, projector, factory) | May be traversed without exposing the segment. |
 | Module | Must be accessible through the public module API or a direct dependency; cross-context contract paths may reach private nested modules only when authorized. |
-| Method (non-terminal) | Must be exposed by its owning module unless the source is in that module; context-level methods are public within their context. |
+| Method (non-terminal) | Must be exposed by its owning module unless the source is in that module; context-level methods are context-visible. |
 | Data-bearing non-terminal (value object, data object, read model, enum, or field) | Must be exposed by its owning module and reachable through the same module, a direct dependency or exposing ancestor, the public module API, an authorized shared kernel, or an authorized event or published-query contract. |
 | Terminal declaration | Must satisfy the declaration, contract, or journey visibility rule that applies to it. |
 

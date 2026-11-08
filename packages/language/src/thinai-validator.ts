@@ -1644,7 +1644,7 @@ export class ThinaiValidator {
             }
             if (isSpecificationTextPart(referenceInfo.container) && !isTerminalSpecificationSegment &&
                 !this.referencePolicy.isVisibleSpecificationPathSegment(referenceInfo.container, target, false)) {
-                accept('error', 'This specification path segment is not visible; use a public declaration or an authorized contract path.', {
+                accept('error', 'This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.', {
                     node: referenceInfo.container as AstNode,
                     property: referenceInfo.property, index: referenceInfo.index
                 });

@@ -3751,7 +3751,7 @@ context map Fulfillment {
         `);
 
         const messages = semanticDiagnostics(document).map(diagnostic => diagnostic.message);
-        expect(messages).toContain('This specification path segment is not visible; use a public declaration or an authorized contract path.');
+        expect(messages).toContain('This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.');
     });
 
     test('accepts same-module and exposed module data shapes as specification path segments', async () => {
@@ -3814,7 +3814,7 @@ context map Fulfillment {
         `);
 
         expect(semanticDiagnostics(document).some(diagnostic =>
-            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+            diagnostic.message === 'This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.'
         )).toBe(true);
     });
 
@@ -3832,7 +3832,7 @@ in bounded context Ordering {
 }`;
         const document = await parse(source);
         const diagnostic = semanticDiagnostics(document).find(candidate =>
-            candidate.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+            candidate.message === 'This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.'
         );
         expect(diagnostic).toBeDefined();
         expect(document.textDocument.getText(diagnostic!.range)).toBe('Secret');
@@ -3852,7 +3852,7 @@ in bounded context Ordering {
             }
         `);
         expect(semanticDiagnostics(privateShape).some(diagnostic =>
-            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+            diagnostic.message === 'This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.'
         )).toBe(true);
 
         const exposedShape = await parse(`
@@ -5333,7 +5333,7 @@ in bounded context Ordering {
         `);
 
         expect(semanticDiagnostics(document).some(diagnostic =>
-            diagnostic.message === 'This specification path segment is not visible; use a public declaration or an authorized contract path.'
+            diagnostic.message === 'This specification path segment is not visible; use a context-visible or module-exposed declaration, or an authorized contract path.'
         )).toBe(true);
         expect(semanticDiagnostics(document).some(diagnostic =>
             diagnostic.message === 'Could not resolve reference to SpecificationTarget named \'publicField\'.'
