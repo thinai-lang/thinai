@@ -405,21 +405,24 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             if (typedPrefix.length === 0) {
                 return withContinuation;
             }
-            const lowerPrefix = typedPrefix.toLowerCase();
             const lastSegment = selected.name.split('.').at(-1) ?? selected.name;
+            const selectedNameMatches = this.completionNameMatches(selected.name, typedPrefix);
+            const lastSegmentMatches = this.completionNameMatches(lastSegment, typedPrefix);
             const filterCandidate = group.find(candidate =>
-                candidate.name.toLowerCase().startsWith(lowerPrefix)
-            ) ?? group.find(candidate =>
-                (candidate.name.split('.').at(-1) ?? candidate.name).toLowerCase().startsWith(lowerPrefix)
+                this.matchesCompletionPrefix(candidate.name, typedPrefix)
             );
-            const label = !selected.name.toLowerCase().startsWith(lowerPrefix) &&
-                lastSegment.toLowerCase().startsWith(lowerPrefix)
+            const label = !selectedNameMatches && lastSegmentMatches
                 ? lastSegment
                 : selected.name;
+            const filterText = label !== selected.name
+                ? label
+                : selectedNameMatches
+                    ? selected.name
+                    : filterCandidate?.name ?? selected.name;
             return {
                 ...withContinuation,
                 thinaiCompletionLabel: label,
-                thinaiFilterText: label !== selected.name ? label : filterCandidate?.name ?? selected.name
+                thinaiFilterText: filterText
             } as AstNodeDescription;
         };
         const preferred: AstNodeDescription[] = [];
@@ -480,10 +483,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (typedPrefix.length === 0) {
             return true;
         }
-        const lowerPrefix = typedPrefix.toLowerCase();
-        const lowerName = name.toLowerCase();
-        return lowerName.startsWith(lowerPrefix) ||
-            (name.split('.').at(-1) ?? name).toLowerCase().startsWith(lowerPrefix);
+        return this.completionNameMatches(name, typedPrefix) ||
+            this.completionNameMatches(name.split('.').at(-1) ?? name, typedPrefix);
+    }
+
+    /**
+     * Fuzzy matching keeps camel-case initialisms and omitted characters
+     * available, matching VS Code's behavior for TypeScript completions.
+     */
+    private completionNameMatches(name: string, typedPrefix: string): boolean {
+        return name.toLowerCase().startsWith(typedPrefix.toLowerCase()) ||
+            this.fuzzyMatcher.match(typedPrefix, name);
     }
 
     private isQualifiedReference(refInfo: ReferenceInfo): boolean {
@@ -1568,7 +1578,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     exposedShortNames.has(shortName);
                 const exactCurrentSegment = typedPrefix.length > 0 &&
                     (fullName === typedPrefix || shortName === typedPrefix);
-                return description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()) &&
+                return this.matchesCompletionPrefix(description.name, typedPrefix) &&
                     !alreadyExposed && !exactCurrentSegment &&
                     !existingItems.some(item => item.label === description.name && item.detail === detail);
             })

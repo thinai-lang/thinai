@@ -196,7 +196,7 @@ export class ThinaiContextMapCompletion {
         );
         return contextCandidates
             .filter(description => !leftContext || description.node !== leftContext)
-            .filter(description => description.name.toLowerCase().startsWith(typedPrefix.toLowerCase()))
+            .filter(description => this.matchesCompletionPrefix(description.name, typedPrefix))
             .filter(description => {
                 if (!isBoundedContext(leftContext) || !isBoundedContext(description.node)) {
                     return true;
@@ -230,6 +230,14 @@ export class ThinaiContextMapCompletion {
                     }
                 };
             });
+    }
+
+    private matchesCompletionPrefix(name: string, typedPrefix: string): boolean {
+        if (typedPrefix.length === 0) {
+            return true;
+        }
+        return name.toLowerCase().startsWith(typedPrefix.toLowerCase()) ||
+            this.services.shared.lsp.FuzzyMatcher.match(typedPrefix, name);
     }
 
     private getRelationshipLineState(document: LangiumDocument, position: Position): 'incomplete' | 'complete' | undefined {

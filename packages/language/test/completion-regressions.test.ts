@@ -2491,6 +2491,53 @@ in bounded context X {
         ]));
     });
 
+    test('matches declaration names with camel-case fuzzy completion', async () => {
+        const source = (typed: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        enum OrderStatus { Draft, Placed }
+        value object OrderSnapshot { raw: string }
+        root entity Purchase {
+            identifier id: string
+            status: ${typed}${marker}
+        }
+    }
+}`;
+
+        for (const [typed, expected] of [
+            ['OrdStat', ['OrderStatus']],
+            ['OrdSnap', ['OrderSnapshot']],
+            ['OS', ['OrderStatus', 'OrderSnapshot']],
+            ['OrSt', ['OrderStatus']],
+            ['Stat', ['OrderStatus']],
+            ['ordstat', ['OrderStatus']],
+            ['OrderS', ['OrderStatus', 'OrderSnapshot']]
+        ] as const) {
+            const result = await build(source(typed));
+            expect(result.completion?.items.map(item => item.label) ?? [], typed)
+                .toEqual(expect.arrayContaining([...expected]));
+        }
+    });
+
+    test('matches context-map and exposure names with camel-case fuzzy completion', async () => {
+        const contextMap = await build(`bounded context OrderingContext
+bounded context Alpha
+context map M {
+    customer Alpha -> supplier OrdCtx${marker}
+}`);
+        expect(contextMap.completion?.items.map(item => item.label) ?? [])
+            .toContain('OrderingContext');
+
+        const exposure = await build(`shared kernel Common {
+    module Types {
+        enum OrderStatus { Draft }
+        exposes OrdStat${marker}
+    }
+}`);
+        expect(exposure.completion?.items.map(item => item.label) ?? [])
+            .toContain('OrderStatus');
+    });
+
     test('keeps compound keyword completion available across word boundaries', async () => {
         const aggregate = (partial: string): string => `bounded context X
 in bounded context X {
