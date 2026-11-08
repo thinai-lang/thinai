@@ -3461,6 +3461,32 @@ context map Fulfillment {
         expect(warnings.some(message => String(message).includes("Exposed command 'run' publishes private contract type"))).toBe(true);
     });
 
+    test('does not warn when an exposed command uses an exposed aggregate-owned contract type', async () => {
+        const document = await parse(`
+            bounded context Shipping
+            in bounded context Shipping {
+                module Shipments {
+                    aggregate ShipmentAggregate {
+                        value object ShipmentId {
+                            raw: string
+                        }
+                        root entity Shipment {
+                            identifier id: ShipmentId
+                        }
+                    }
+                    application service ShipmentApplication {
+                        method dispatchShipment(id: ShipmentAggregate.ShipmentId)
+                    }
+                    exposes ShipmentAggregate, ShipmentAggregate.ShipmentId, ShipmentApplication
+                }
+            }
+        `);
+        const warnings = semanticDiagnostics(document)
+            .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning)
+            .map(diagnostic => String(diagnostic.message));
+        expect(warnings.some(message => message.includes("Exposed command 'dispatchShipment' publishes private contract type"))).toBe(false);
+    });
+
     test('requires shared-kernel modules to expose declarations used by other contexts', async () => {
         const document = await parse(`
             shared kernel Common {

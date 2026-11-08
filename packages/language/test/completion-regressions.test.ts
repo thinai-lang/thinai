@@ -2887,6 +2887,62 @@ in bounded context X {
         expect(modelLevel.completion?.items.map(item => item.label) ?? []).toContain('in bounded context');
     });
 
+    test('does not offer optional clauses while their specification string is missing', async () => {
+        const journey = (step: string): string => `bounded context X
+in bounded context X {
+    application service S {
+        method run() {
+            behavior "Run."
+        }
+    }
+}
+actor Customer
+journey J {
+    by Customer {
+        ${step}${marker}
+    }
+}`;
+
+        for (const step of [
+            'invoke X.S.run with',
+            'invoke X.S.run with ',
+            'invoke X.S.run with "go" when '
+        ]) {
+            const result = await build(journey(step));
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            expect(labels, step).not.toContain('with');
+            expect(labels, step).not.toContain('when');
+        }
+
+        const optionalClauses = await build(journey('invoke X.S.run '));
+        expect(optionalClauses.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['with', 'when']));
+
+        const afterWithString = await build(journey('invoke X.S.run with "go" '));
+        const afterWithLabels = afterWithString.completion?.items.map(item => item.label) ?? [];
+        expect(afterWithLabels).toContain('when');
+        expect(afterWithLabels).not.toContain('with');
+
+        const method = (step: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity E {
+            identifier id: string
+            method run() {
+                behavior "Run."
+            }
+            method caller() {
+                ${step}${marker}
+            }
+        }
+    }
+}`;
+        const methodResult = await build(method('invokes E.run with '));
+        const methodLabels = methodResult.completion?.items.map(item => item.label) ?? [];
+        expect(methodLabels).not.toContain('with');
+        expect(methodLabels).not.toContain('when');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

@@ -1194,6 +1194,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const entityIdentifierAlreadyDeclared = isEntity(identifierOwner) &&
             identifierOwner.fields.some(field => field.identifier);
         const linePrefix = text.slice(getLineStartOffset(document, offset), offset);
+        // `with` and `when` require a quoted description. Do not offer either
+        // clause again while the current clause is still missing its string.
+        const incompleteGuardedClause = /\b(?:with|when)\s*$/u.test(linePrefix);
         const unresolvedOnLine = AstUtils.streamAst(root).some(node =>
             AstUtils.streamReferences(node).some(info => {
                 const reference = info.reference;
@@ -1228,6 +1231,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             items: completion.items.filter(item => {
                 if (item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string') {
                     return true;
+                }
+                if (incompleteGuardedClause && (item.label === 'with' || item.label === 'when')) {
+                    return false;
                 }
                 if (unresolvedOnLine && item.textEdit?.newText.startsWith('\n')) {
                     // Do not insert a new sibling statement while the current

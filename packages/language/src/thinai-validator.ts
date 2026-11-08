@@ -822,11 +822,12 @@ export class ThinaiValidator {
             }
         }
         const privateTypes = [...contractTypes].filter(type => {
-            if (getOwningAggregate(type) !== undefined) {
-                return true;
-            }
             const typeModule = getOwningModule(type);
-            return typeModule !== undefined && !isPublicApiDeclaration(type);
+            if (typeModule !== undefined) {
+                return !isPublicApiDeclaration(type);
+            }
+            // Context-level aggregate-owned types remain aggregate internals.
+            return getOwningAggregate(type) !== undefined;
         });
         const names = [...new Set(privateTypes.map(type => (type as AstNode & { name: string }).name))];
         if (names.length === 0) {
