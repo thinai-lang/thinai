@@ -46,6 +46,26 @@ const clauseMessages: Record<string, string> = {
     MethodInvocation: 'An `invokes` clause needs a method name.'
 };
 
+const specificationStringTokens = new Set([
+    'TRIPLE_DOUBLE_STRING_START',
+    'DOUBLE_STRING_START',
+    'SINGLE_STRING_START'
+]);
+
+function specificationDescriptionMessage(previousImage: string): string {
+    const keyword = previousImage.toLowerCase();
+    if (keyword === 'when') {
+        return 'A `when` guard needs a quoted description.';
+    }
+    if (keyword === 'with') {
+        return 'A `with` clause needs a quoted argument.';
+    }
+    if (['invariant', 'precondition', 'postcondition', 'behavior'].includes(keyword)) {
+        return `${/^[aeiou]/u.test(keyword) ? 'An' : 'A'} \`${keyword}\` clause needs a quoted description.`;
+    }
+    return 'A specification needs a quoted description.';
+}
+
 function articleLabel(label: string): string {
     return `${/^[aeiou]/iu.test(label) ? 'An' : 'A'} ${label}`;
 }
@@ -162,6 +182,12 @@ export class ThinaiParserErrorMessageProvider extends LangiumParserErrorMessageP
         options: Parameters<LangiumParserErrorMessageProvider['buildNoViableAltMessage']>[0]
     ): string {
         const ruleName = normalizedRuleName(options.ruleName);
+        const expectedTokens = (options.expectedPathsPerAlt ?? [])
+            .flatMap(alternatives => alternatives.flatMap(path => path));
+        if (ruleName === 'SpecificationText' && expectedTokens.length > 0 &&
+            expectedTokens.every(token => specificationStringTokens.has(token.name))) {
+            return specificationDescriptionMessage(options.previous.image);
+        }
         if (ruleName === 'JourneyStep') {
             return 'A journey step needs a command path after `invoke`.';
         }

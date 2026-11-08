@@ -146,7 +146,14 @@ in bounded context Ordering {
             { name: 'mirrors reference', source: aggregateBody('    value object V mirrors Foo.'), message: 'A `mirrors` reference needs a value object name.' },
             { name: 'collection type reference', source: entityBody('      raw: List<Foo.>'), message: 'A collection type reference needs a type name.' },
             { name: 'manages reference', source: context('  repository R {\n    manages Foo.\n  }'), message: 'A `manages` reference needs an entity name.' },
-            { name: 'serves reference', source: context('  query repository R {\n    serves Foo.\n  }'), message: 'A `serves` reference needs a read model name.' }
+            { name: 'serves reference', source: context('  query repository R {\n    serves Foo.\n  }'), message: 'A `serves` reference needs a read model name.' },
+            { name: 'invariant description', source: serviceBody('    method run() {\n      invariant\n    }'), message: 'An `invariant` clause needs a quoted description.' },
+            { name: 'precondition description', source: serviceBody('    method run() {\n      precondition\n    }'), message: 'A `precondition` clause needs a quoted description.' },
+            { name: 'postcondition description', source: serviceBody('    method run() {\n      postcondition\n    }'), message: 'A `postcondition` clause needs a quoted description.' },
+            { name: 'behavior description', source: serviceBody('    method run() {\n      behavior\n    }'), message: 'A `behavior` clause needs a quoted description.' },
+            { name: 'transition guard description', source: serviceBody('    method run() {\n      transition status from Draft to Placed when\n    }'), message: 'A `when` guard needs a quoted description.' },
+            { name: 'emission guard description', source: serviceBody('    method run() {\n      emits OrderPlaced when\n    }'), message: 'A `when` guard needs a quoted description.' },
+            { name: 'journey invocation argument', source: 'actor A\njourney J {\n  by A {\n    invoke Foo.bar with\n  }\n}\n', message: 'A `with` clause needs a quoted argument.' }
         ];
 
         for (const { name, source, message } of cases) {
