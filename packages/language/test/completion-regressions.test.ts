@@ -2491,6 +2491,69 @@ in bounded context X {
         ]));
     });
 
+    test('keeps compound keyword completion available across word boundaries', async () => {
+        const aggregate = (partial: string): string => `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity A { identifier id: string }
+        ${partial}${marker}
+    }
+}`;
+        const memberCases = [
+            ['v', 'value object'],
+            ['va', 'value object'],
+            ['value', 'value object'],
+            ['value o', 'object'],
+            ['value ob', 'object'],
+            ['data', 'data object'],
+            ['data o', 'object'],
+            ['application', 'application service'],
+            ['application s', 'service'],
+            ['read', 'read model'],
+            ['read m', 'model'],
+            ['query', 'query repository'],
+            ['query r', 'repository'],
+            ['integration', 'integration event'],
+            ['integration e', 'event'],
+            ['root', 'root entity'],
+            ['root e', 'entity'],
+            ['domain', 'domain service'],
+            ['domain s', 'service']
+        ] as const;
+
+        for (const [partial, expected] of memberCases) {
+            const result = await build(aggregate(partial));
+            const item = result.completion?.items.find(candidate => candidate.label === expected);
+            expect(item, partial).toBeDefined();
+            const applied = applyCompletionItem(result.document, result.text, item!);
+            const completed = partial.includes(' ') ? `${partial.split(' ')[0]} ${expected}` : expected;
+            expect(applied, partial).toContain(completed);
+        }
+
+        const completePhrase = await build(aggregate('value object'));
+        expect(completePhrase.completion?.items.map(item => item.label) ?? []).not.toContain('object');
+
+        const topLevelCases = [
+            ['context', 'context map'],
+            ['shared', 'shared kernel'],
+            ['in bounded', 'in bounded context']
+        ] as const;
+        for (const [partial, expected] of topLevelCases) {
+            const result = await build(`${partial}${marker}`);
+            expect(result.completion?.items.map(item => item.label), partial).toContain(expected);
+        }
+
+        const subdomain = await build(`subdomain Sales kind${marker}`);
+        expect(subdomain.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['core', 'supporting', 'generic']));
+
+        const moduleName = await build(`bounded context X
+in bounded context X {
+    module Domain d${marker}
+}`);
+        expect(moduleName.completion?.items.map(item => item.label) ?? []).not.toContain('service');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

@@ -996,10 +996,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
         ].filter(item => typeof item.label !== 'string' ||
             !constrainedLabels.has(item.label) && !optionalClauseLabels.has(item.label));
-        const blockKeywords = incompleteStatement
+        const standalonePartialKeyword = this.isStandalonePartialKeywordPrefix(document, params.position);
+        const blockKeywords = incompleteStatement && !standalonePartialKeyword
             ? []
             : this.blockCompletion.getEnclosingBlockKeywordCompletions(document, params.position);
-        const modelGapKeywords = incompleteStatement
+        const modelGapKeywords = incompleteStatement && !standalonePartialKeyword
             ? []
             : this.blockCompletion.getModelGapKeywordCompletions(
                 document,
@@ -2250,7 +2251,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!source || !/^[\p{L}_]+(?: [\p{L}_]+)*$/u.test(source)) {
             return false;
         }
-        return siblingKeywordPrefixes.some(keyword => keyword.toLowerCase().startsWith(source));
+        return siblingKeywordPrefixes.some(keyword =>
+            source.length < keyword.length && keyword.toLowerCase().startsWith(source)
+        );
     }
 
     private isStandalonePartialKeywordPrefix(document: LangiumDocument, position: Position): boolean {
@@ -2258,7 +2261,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const text = document.textDocument.getText();
         const lineStart = getLineStartOffset(document, offset);
         const prefix = text.slice(lineStart, offset).trim().toLowerCase().replace(/\s+/g, ' ');
-        return prefix.length > 0 && siblingKeywordPrefixes.some(keyword => keyword.toLowerCase().startsWith(prefix));
+        return prefix.length > 0 && siblingKeywordPrefixes.some(keyword =>
+            prefix.length < keyword.length && keyword.toLowerCase().startsWith(prefix)
+        );
     }
 
     private isInIncompleteTypePosition(node: AstNode, document: LangiumDocument, position: Position): boolean {

@@ -72,10 +72,11 @@ export class ThinaiKeywordContinuations {
             )];
         }
         const container = this.getContinuationContainer(document, offset);
+        const siblingContainer = this.getOpenedContinuationContainer(container);
         const allowsSibling = (phrase: string): boolean =>
-            this.hasOpenedBody(container) && this.containerAllowsSibling(container, phrase);
+            this.hasOpenedBody(siblingContainer) && this.containerAllowsSibling(siblingContainer, phrase);
         const allowsAnySibling = (...phrases: string[]): boolean => phrases.some(allowsSibling);
-        const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean, boolean?]> = [
+        const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean, boolean?, boolean?]> = [
             [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context'], () =>
                 isModel(container) || (isBoundedContext(container) || isBoundedContextPart(container)) &&
                 !this.hasOpenedBody(container)],
@@ -92,9 +93,9 @@ export class ThinaiKeywordContinuations {
                 allowsAnySibling('query repository', 'query service'), true],
             [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => allowsSibling('integration event'), true],
             [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () =>
-                this.hasOpenedBody(container) && this.isModuleDeclarationOwner(container), true],
+                this.hasOpenedBody(container) && this.isModuleDeclarationOwner(container), true, true],
             [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container)],
-            [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'),
+            [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind(?:\\s+([\\p{L}_]*))?$`, 'iu'),
                 ['core', 'supporting', 'generic'], () => isSubdomain(container) ||
                     new RegExp(`^\\s*subdomain\\s+${identifierSource}\\s+kind(?:\\s+[\\p{L}_]*)?$`, 'iu').test(prefix)],
             [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from'], () => isImport(container) || isModel(container)],
@@ -117,16 +118,17 @@ export class ThinaiKeywordContinuations {
         const match = this.getTransitionRequiredKeywordMatch(prefix) ??
             this.getTransitionContinuationMatch(document, position) ??
             continuations
-            .map(([pattern, keywords, allowed, requireStatementStart]) => ({
+            .map(([pattern, keywords, allowed, requireStatementStart, allowHeaderContinuation]) => ({
                 match: pattern.exec(prefix),
                 keywords,
                 allowed,
-                requireStatementStart
+                requireStatementStart,
+                allowHeaderContinuation
             }))
             .find(candidate => candidate.match !== null && candidate.allowed() &&
                 (!candidate.requireStatementStart ||
-                    (candidate.match[1] ?? '').length > 0 ||
-                    this.isStatementStartInPrefix(prefix, candidate.match.index)));
+                    this.isStatementStartInPrefix(prefix, candidate.match.index) ||
+                    candidate.allowHeaderContinuation === true && (candidate.match[1] ?? '').length > 0));
         if (!match?.match) {
             const importFrom = this.getImportFromCompletion(document, position);
             return importFrom ? [importFrom] : [];
@@ -139,7 +141,7 @@ export class ThinaiKeywordContinuations {
         if (match.keywords[0] === 'map' && /\bbounded\s+context\s+[\p{L}_]*$/iu.test(prefix)) {
             return [];
         }
-        const typedPrefix = match.match[1]!;
+        const typedPrefix = match.match[1] ?? '';
         const start = offset - typedPrefix.length;
         const needsLeadingSpace = start > 0 && !/\s/.test(text[start - 1]!);
         return match.keywords
@@ -221,6 +223,7 @@ export class ThinaiKeywordContinuations {
     isCompoundKeywordAllowed(document: LangiumDocument, position: Position, base: string): boolean {
         const offset = document.textDocument.offsetAt(position);
         const container = this.getContinuationContainer(document, offset);
+        const siblingContainer = this.getOpenedContinuationContainer(container);
         const statementBases = new Set([
             'application', 'root', 'value', 'read', 'data', 'domain', 'query', 'integration', 'depends'
         ]);
@@ -229,18 +232,18 @@ export class ThinaiKeywordContinuations {
             return false;
         }
         const allowsOpenedSibling = (phrase: string): boolean =>
-            this.hasOpenedBody(container) && this.containerAllowsSibling(container, phrase);
+            this.hasOpenedBody(siblingContainer) && this.containerAllowsSibling(siblingContainer, phrase);
         switch (base) {
             case 'in':
-                return isModel(container) ||
-                    (isBoundedContext(container) || isBoundedContextPart(container)) &&
-                    !this.hasOpenedBody(container);
+                return isModel(siblingContainer) ||
+                    (isBoundedContext(siblingContainer) || isBoundedContextPart(siblingContainer)) &&
+                    !this.hasOpenedBody(siblingContainer);
             case 'bounded':
-                return isModel(container) ||
-                    isBoundedContext(container) && !this.hasOpenedBody(container);
+                return isModel(siblingContainer) ||
+                    isBoundedContext(siblingContainer) && !this.hasOpenedBody(siblingContainer);
             case 'context':
             case 'shared':
-                return isModel(container);
+                return isModel(siblingContainer);
             case 'application':
                 return allowsOpenedSibling('application service');
             case 'root':
@@ -304,6 +307,18 @@ export class ThinaiKeywordContinuations {
             node = node.$container;
         }
         return node ?? root;
+    }
+
+    /**
+     * Parser recovery can attach a partial declaration to its own unopened
+     * node. Sibling keywords still belong to the enclosing opened block.
+     */
+    private getOpenedContinuationContainer(container: AstNode | undefined): AstNode | undefined {
+        let current = container;
+        while (current && isBlockNodeType(current.$type) && !this.hasOpenedBody(current)) {
+            current = current.$container;
+        }
+        return current ?? container;
     }
 
     private getImportFromCompletion(document: LangiumDocument, position: Position): CompletionItem | undefined {
