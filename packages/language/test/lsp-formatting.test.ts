@@ -421,6 +421,36 @@ in bounded context Ordering {
         })).toEqual([]);
     });
 
+    test('normalizes context map indentation after a bare import', async () => {
+        const source = `import "./extra.tni"
+subdomain Sales kind core
+bounded context A
+context map M {
+    customer A -> supplier A
+}
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/context-map-after-import-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain('context map M {\n  customer A -> supplier A\n}');
+    });
+
     test('normalizes import, reference, constructor, and enum separators', async () => {
         const source = `import{One as First,Two}from"things.tni" bounded context Example realizes Core,Supporting in bounded context Example {aggregate Order{root entity Item{constructor(first:string,second: integer){}method combine(first:string,second: integer){}identifier id:string}enum Status{Draft ,Placed}}module Data {
     depends on First,Second

@@ -2358,6 +2358,26 @@ import { Com${marker}\n`,
         );
     });
 
+    test('completes blocks after a bare import', async () => {
+        const contextMap = await build(`import "./extra.tni"
+subdomain Sales kind core
+bounded context A
+bounded context B
+actor Customer
+context map M {
+    ${marker}
+}`);
+        expect(contextMap.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['customer', 'partner', 'separateWays', 'sharedKernel']));
+
+        const sharedKernel = await build(`import "./extra.tni"
+shared kernel K {
+  ${marker}
+}`);
+        expect(sharedKernel.completion?.items.map(item => item.label) ?? [])
+            .toEqual(expect.arrayContaining(['value object', 'enum', 'domain service', 'module']));
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

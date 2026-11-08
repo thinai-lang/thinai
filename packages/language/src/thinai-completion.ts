@@ -1891,7 +1891,16 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const source = text.slice(importStart, offset);
         const openBrace = source.indexOf('{');
-        return openBrace >= 0 && !source.slice(openBrace).includes('}');
+        if (openBrace < 0) {
+            return false;
+        }
+        const firstNewline = source.search(/[\r\n]/u);
+        if (firstNewline >= 0 && openBrace > firstNewline) {
+            // A complete import on an earlier line is not an unfinished
+            // component list; a later block's `{` must not be mistaken for one.
+            return false;
+        }
+        return !source.slice(openBrace).includes('}');
     }
 
     private isImportAliasPosition(document: LangiumDocument, offset: number): boolean {
