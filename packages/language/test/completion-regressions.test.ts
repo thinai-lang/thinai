@@ -2456,6 +2456,41 @@ context map M {
             .toContain('AntiCorruptionLayer');
     });
 
+    test('does not continue compound keywords from unopened declaration headers', async () => {
+        for (const [name, unexpected] of [
+            ['Domain', 'service'],
+            ['Application', 'service'],
+            ['Query', 'repository'],
+            ['Depends', 'on']
+        ] as const) {
+            const result = await build(`bounded context X
+in bounded context X {
+  module ${name} ${marker}
+}`);
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            expect(labels, name).not.toContain(unexpected);
+        }
+
+        const domainBody = await build(`bounded context X
+in bounded context X {
+  module Domain {
+    domain ${marker}
+  }
+}`);
+        expect(domainBody.completion?.items.map(item => item.label) ?? []).toContain('service');
+
+        const emptyBody = await build(`bounded context X
+in bounded context X {
+  module Domain {
+    ${marker}
+  }
+}`);
+        const emptyBodyLabels = emptyBody.completion?.items.map(item => item.label) ?? [];
+        expect(emptyBodyLabels).toEqual(expect.arrayContaining([
+            'depends on', 'application service', 'domain service', 'value object'
+        ]));
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

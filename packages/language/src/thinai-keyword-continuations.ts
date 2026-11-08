@@ -72,25 +72,27 @@ export class ThinaiKeywordContinuations {
             )];
         }
         const container = this.getContinuationContainer(document, offset);
-        const allowsSibling = (phrase: string): boolean => this.containerAllowsSibling(container, phrase);
+        const allowsSibling = (phrase: string): boolean =>
+            this.hasOpenedBody(container) && this.containerAllowsSibling(container, phrase);
         const allowsAnySibling = (...phrases: string[]): boolean => phrases.some(allowsSibling);
-        const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean]> = [
+        const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean, boolean?]> = [
             [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context'], () =>
                 isModel(container) || (isBoundedContext(container) || isBoundedContextPart(container)) &&
                 !this.hasOpenedBody(container)],
             [/\bbounded\s+([\p{L}_]*)$/iu, ['context'], () =>
                 isModel(container) || isBoundedContext(container) && !this.hasOpenedBody(container)],
             [/\bshared\s+([\p{L}_]*)$/iu, ['kernel'], () => isModel(container)],
-            [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('application service')],
-            [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => allowsSibling('root entity')],
-            [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('value object')],
-            [/\bread\s+([\p{L}_]*)$/iu, ['model'], () => allowsSibling('read model')],
-            [/\bdata\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('data object')],
-            [/\bdomain\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('domain service')],
+            [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('application service'), true],
+            [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => allowsSibling('root entity'), true],
+            [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('value object'), true],
+            [/\bread\s+([\p{L}_]*)$/iu, ['model'], () => allowsSibling('read model'), true],
+            [/\bdata\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('data object'), true],
+            [/\bdomain\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('domain service'), true],
             [/\bquery\s+([\p{L}_]*)$/iu, ['repository', 'service'], () =>
-                allowsAnySibling('query repository', 'query service')],
-            [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => allowsSibling('integration event')],
-            [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () => this.isModuleDeclarationOwner(container)],
+                allowsAnySibling('query repository', 'query service'), true],
+            [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => allowsSibling('integration event'), true],
+            [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () =>
+                this.hasOpenedBody(container) && this.isModuleDeclarationOwner(container), true],
             [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container)],
             [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind\\s+([\\p{L}_]*)$`, 'iu'),
                 ['core', 'supporting', 'generic'], () => isSubdomain(container) ||
@@ -115,8 +117,16 @@ export class ThinaiKeywordContinuations {
         const match = this.getTransitionRequiredKeywordMatch(prefix) ??
             this.getTransitionContinuationMatch(document, position) ??
             continuations
-            .map(([pattern, keywords, allowed]) => ({ match: pattern.exec(prefix), keywords, allowed }))
-            .find(candidate => candidate.match !== null && candidate.allowed());
+            .map(([pattern, keywords, allowed, requireStatementStart]) => ({
+                match: pattern.exec(prefix),
+                keywords,
+                allowed,
+                requireStatementStart
+            }))
+            .find(candidate => candidate.match !== null && candidate.allowed() &&
+                (!candidate.requireStatementStart ||
+                    (candidate.match[1] ?? '').length > 0 ||
+                    this.isStatementStartInPrefix(prefix, candidate.match.index)));
         if (!match?.match) {
             const importFrom = this.getImportFromCompletion(document, position);
             return importFrom ? [importFrom] : [];
@@ -195,10 +205,31 @@ export class ThinaiKeywordContinuations {
         return container?.$cstNode?.text.includes('{') === true;
     }
 
+    private isStatementStartInPrefix(prefix: string, keywordIndex: number): boolean {
+        const before = prefix.slice(0, keywordIndex).trimEnd();
+        return before.length === 0 || /[{}]$/u.test(before);
+    }
+
+    private isStatementKeywordAllowed(document: LangiumDocument, offset: number, keyword: string): boolean {
+        const lineStart = getLineStartOffset(document, offset);
+        const prefix = document.textDocument.getText().slice(lineStart, offset);
+        const index = prefix.toLowerCase().lastIndexOf(keyword.toLowerCase());
+        return index < 0 || this.isStatementStartInPrefix(prefix, index);
+    }
+
     /** True when a partial compound keyword may be expanded in the cursor's scope. */
     isCompoundKeywordAllowed(document: LangiumDocument, position: Position, base: string): boolean {
         const offset = document.textDocument.offsetAt(position);
         const container = this.getContinuationContainer(document, offset);
+        const statementBases = new Set([
+            'application', 'root', 'value', 'read', 'data', 'domain', 'query', 'integration', 'depends'
+        ]);
+        if (statementBases.has(base.toLowerCase()) &&
+            !this.isStatementKeywordAllowed(document, offset, base)) {
+            return false;
+        }
+        const allowsOpenedSibling = (phrase: string): boolean =>
+            this.hasOpenedBody(container) && this.containerAllowsSibling(container, phrase);
         switch (base) {
             case 'in':
                 return isModel(container) ||
@@ -211,24 +242,24 @@ export class ThinaiKeywordContinuations {
             case 'shared':
                 return isModel(container);
             case 'application':
-                return this.containerAllowsSibling(container, 'application service');
+                return allowsOpenedSibling('application service');
             case 'root':
-                return this.containerAllowsSibling(container, 'root entity');
+                return allowsOpenedSibling('root entity');
             case 'value':
-                return this.containerAllowsSibling(container, 'value object');
+                return allowsOpenedSibling('value object');
             case 'read':
-                return this.containerAllowsSibling(container, 'read model');
+                return allowsOpenedSibling('read model');
             case 'data':
-                return this.containerAllowsSibling(container, 'data object');
+                return allowsOpenedSibling('data object');
             case 'domain':
-                return this.containerAllowsSibling(container, 'domain service');
+                return allowsOpenedSibling('domain service');
             case 'query':
-                return this.containerAllowsSibling(container, 'query repository') ||
-                    this.containerAllowsSibling(container, 'query service');
+                return allowsOpenedSibling('query repository') ||
+                    allowsOpenedSibling('query service');
             case 'integration':
-                return this.containerAllowsSibling(container, 'integration event');
+                return allowsOpenedSibling('integration event');
             case 'depends':
-                return this.isModuleDeclarationOwner(container);
+                return this.hasOpenedBody(container) && this.isModuleDeclarationOwner(container);
             case 'reads':
                 return this.isReadClauseOwner(container);
             default:
