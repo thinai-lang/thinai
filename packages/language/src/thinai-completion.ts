@@ -1150,7 +1150,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             )[0];
         const activeQueryRepository = findQueryRepositoryAtOffset(document, offset, sourceStructure);
         const terminalBlock = activeQueryRepository ?? innermostBlock;
-        const terminalKeywords = this.getTerminalBlockKeywords(terminalBlock);
+        let terminalKeywords = this.getTerminalBlockKeywords(terminalBlock, offset);
+        if (terminalKeywords === undefined) {
+            const endpointText = this.getContextMapEndpointText(
+                text,
+                offset,
+                sourceStructure.openBraceOffsets
+            );
+            if (endpointText !== undefined) {
+                terminalKeywords = /^\s*integrationPatterns\b/u.test(endpointText)
+                    ? []
+                    : ['integrationPatterns'];
+            }
+        }
         const allowedMethodClauses = activeMethod ? new Set(this.keywordContinuations.getSiblingKeywordLabels(activeMethod)) : undefined;
         const transitionContinuationAllowed = this.keywordContinuations.isTransitionContinuationPosition(document, offset);
         const entityDeclarationsAllowed = innermostBlock?.$type === 'Aggregate' || braceOwners.at(-1) === 'aggregate';
@@ -1266,7 +1278,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
-    private getTerminalBlockKeywords(block: AstNode | undefined): readonly string[] | undefined {
+    private getTerminalBlockKeywords(block: AstNode | undefined, offset: number): readonly string[] | undefined {
         if (!block) {
             return undefined;
         }
@@ -1292,12 +1304,39 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             if (!cstNode || !cstNode.text.includes('{')) {
                 return undefined;
             }
+            const keyword = GrammarUtils.findNodeForKeyword(cstNode, 'integrationPatterns');
+            if (keyword && keyword.end <= offset) {
+                return [];
+            }
             return block.integrationPatterns.length === 0 ? ['integrationPatterns'] : [];
         }
         if (isSharedKernelRelationship(block)) {
             return block.participants.length === 0 ? ['participants'] : [];
         }
         return undefined;
+    }
+
+    private getContextMapEndpointText(
+        text: string,
+        offset: number,
+        openBraceOffsets: readonly number[]
+    ): string | undefined {
+        const brace = openBraceOffsets.at(-1);
+        if (brace === undefined) {
+            return undefined;
+        }
+        const inside = text.slice(brace + 1, offset);
+        if (/^\s*integrationPatterns\b/u.test(inside)) {
+            return inside;
+        }
+        if (inside.trim().length > 0) {
+            return undefined;
+        }
+        const beforeBrace = text.slice(Math.max(0, brace - 300), brace);
+        return /(?:customer\s+[^\n]*\s*->\s*supplier\s+[^\n]*|partner\s+[^\n]*\s*<->\s*partner\s+[^\n]*)\s*$/u
+            .test(beforeBrace)
+            ? inside
+            : undefined;
     }
 
     private getReferenceText(reference: { $refText?: string } | undefined): string {
@@ -2364,7 +2403,22 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
         }
         if (!quote || valueStart < 0) {
-            return [];
+            const arrayPrefix = text.slice(arrayStart, offset).trimEnd();
+            if (arrayPrefix.length > 0 && !arrayPrefix.endsWith(',') && !arrayPrefix.endsWith('[')) {
+                return [];
+            }
+            return values
+                .filter(value => !usedValues.has(value))
+                .map(value => ({
+                    label: value,
+                    kind: CompletionItemKind.EnumMember,
+                    detail: 'Context-map integration pattern',
+                    sortText: '0',
+                    textEdit: {
+                        range: { start: position, end: position },
+                        newText: `"${value}"`
+                    }
+                }));
         }
 
         const prefix = text.slice(valueStart, offset);

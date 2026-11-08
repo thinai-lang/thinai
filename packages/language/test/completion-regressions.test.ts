@@ -2378,6 +2378,60 @@ shared kernel K {
             .toEqual(expect.arrayContaining(['value object', 'enum', 'domain service', 'module']));
     });
 
+    test('completes integration patterns without leaking context map keywords', async () => {
+        const noBracket = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: ${marker}
+  }
+}`);
+        const noBracketLabels = noBracket.completion?.items.map(item => item.label) ?? [];
+        expect(noBracketLabels).not.toContain('customer');
+        expect(noBracketLabels).not.toContain('partner');
+        expect(noBracketLabels).not.toContain('separateWays');
+        expect(noBracketLabels).not.toContain('sharedKernel');
+        expect(noBracketLabels).not.toContain('integrationPatterns');
+
+        const emptyList = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: [${marker}]
+  }
+}`);
+        const emptyListLabels = emptyList.completion?.items.map(item => item.label) ?? [];
+        expect(emptyListLabels).toEqual(expect.arrayContaining([
+            'AntiCorruptionLayer', 'Conformist', 'OpenHostService', 'PublishedLanguage'
+        ]));
+        expect(emptyListLabels).not.toContain('integrationPatterns');
+        expect(emptyListLabels).not.toContain('customer');
+
+        const afterComma = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: ["AntiCorruptionLayer", ${marker}]
+  }
+}`);
+        const afterCommaLabels = afterComma.completion?.items.map(item => item.label) ?? [];
+        expect(afterCommaLabels).toEqual(expect.arrayContaining([
+            'Conformist', 'OpenHostService', 'PublishedLanguage'
+        ]));
+        expect(afterCommaLabels).not.toContain('AntiCorruptionLayer');
+        expect(afterCommaLabels).not.toContain('integrationPatterns');
+
+        const openQuote = await build(`bounded context A
+bounded context B
+context map M {
+  customer A -> supplier B {
+    integrationPatterns: ["Ant${marker}]
+  }
+}`);
+        expect(openQuote.completion?.items.map(item => item.label) ?? [])
+            .toContain('AntiCorruptionLayer');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),
