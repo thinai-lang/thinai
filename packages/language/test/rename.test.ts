@@ -170,6 +170,29 @@ in bounded context C {
         expect(applyEdits(documents[1]!, consumerText, consumerChanges)).toContain('Common.Types.OrderKey');
     });
 
+    test('renames import aliases and their path references', async () => {
+        const commonText = 'shared kernel Common { module Types { value object Money { raw: string } exposes Money } }';
+        const consumerText = `import { Common as Shared } from "./common.tni"
+bounded context C
+in bounded context C {
+  data object D {
+    price: Shared.Types.Money
+    other: Shared.Types.Money
+  }
+}
+`;
+        createDocument('alias-common.tni', commonText);
+        const consumer = createDocument('alias-consumer.tni', consumerText);
+        await buildDocuments();
+
+        const edit = await renameAt(consumer, consumerText, 'Shared', 'Store');
+        const changes = edit?.changes?.[consumer.uri.toString()] ?? [];
+        expect(changes).toHaveLength(3);
+        const applied = applyEdits(consumer, consumerText, changes);
+        expect(applied).toContain('Common as Store');
+        expect(applied.match(/Store\.Types\.Money/gu)).toHaveLength(2);
+    });
+
     test('quotes reserved and spaced names', async () => {
         const text = `bounded context X
 in bounded context X {
