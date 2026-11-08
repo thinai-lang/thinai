@@ -123,6 +123,93 @@ in bounded context Ordering {
         )).toBe(false);
     });
 
+    test('anchors required-member diagnostics to declaration names', async () => {
+        const cases = [
+            {
+                name: 'empty aggregate',
+                source: `bounded context X
+in bounded context X {
+    aggregate Order {
+    }
+}`,
+                message: 'exactly one root entity',
+                expected: 'Order'
+            },
+            {
+                name: 'aggregate with enum',
+                source: `bounded context X
+in bounded context X {
+    aggregate Order {
+        enum Status { A, B }
+    }
+}`,
+                message: 'exactly one root entity',
+                expected: 'Order'
+            },
+            {
+                name: 'aggregate with value object',
+                source: `bounded context X
+in bounded context X {
+    aggregate Order {
+        value object Money { raw: string }
+    }
+}`,
+                message: 'exactly one root entity',
+                expected: 'Order'
+            },
+            {
+                name: 'entity without identifier',
+                source: `bounded context X
+in bounded context X {
+    aggregate Order {
+        root entity Order {
+            raw: string
+        }
+    }
+}`,
+                message: 'exactly one identifier field',
+                expected: 'Order'
+            },
+            {
+                name: 'journey without actors',
+                source: `journey PlaceOrder {
+}`,
+                message: 'at least one actor block',
+                expected: 'PlaceOrder'
+            },
+            {
+                name: 'actor block without steps',
+                source: `actor Customer
+journey PlaceOrder {
+    by Customer {
+    }
+}`,
+                message: 'at least one command step',
+                expected: 'Customer'
+            },
+            {
+                name: 'projector method without projects',
+                source: `bounded context X
+in bounded context X {
+    projector P {
+        method run() {}
+    }
+}`,
+                message: 'at least one read model',
+                expected: 'run'
+            }
+        ];
+
+        for (const { name, source, message, expected } of cases) {
+            const document = await parse(source);
+            const diagnostic = document.diagnostics?.find(candidate =>
+                String(candidate.message).includes(message)
+            );
+            expect(diagnostic, name).toBeDefined();
+            expect(document.textDocument.getText(diagnostic!.range), name).toBe(expected);
+        }
+    });
+
     test('defers participant and journey-step requirements while their blocks are open', async () => {
         const incomplete = await parse(`bounded context Ordering
 shared kernel Common {}

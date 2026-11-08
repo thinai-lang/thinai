@@ -140,7 +140,7 @@ export class ThinaiReadDependencyValidator {
         if (method.projects.length === 0 && isComplete) {
             accept('error', 'A projector method must declare at least one read model with projects.', {
                 node: method,
-                property: 'projects'
+                property: 'name'
             });
         }
         const seenProjects = new Set<AstNode>();

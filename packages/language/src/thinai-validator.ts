@@ -238,7 +238,7 @@ export class ThinaiValidator {
         if (roots.length !== 1 && isSyntacticallyComplete(aggregate)) {
             accept('error', 'An aggregate must declare exactly one root entity.', {
                 node: aggregate,
-                property: 'members'
+                property: 'name'
             });
         }
     }
@@ -262,7 +262,7 @@ export class ThinaiValidator {
         if (identifierFields.length !== 1 && isSyntacticallyComplete(entity)) {
             accept('error', 'An entity must declare exactly one identifier field.', {
                 node: entity,
-                property: 'fields'
+                property: 'name'
             });
         }
         const optionalIdentifier = identifierFields.find(field => field.optional);
@@ -968,7 +968,7 @@ export class ThinaiValidator {
         if (journey.actors.length === 0 && isSyntacticallyComplete(journey)) {
             accept('error', 'A journey must contain at least one actor block.', {
                 node: journey,
-                property: 'actors'
+                property: 'name'
             });
         }
         const seenActors = new Set<Actor>();
@@ -987,7 +987,7 @@ export class ThinaiValidator {
             if (actorBlock.steps.length === 0 && isSyntacticallyComplete(actorBlock)) {
                 accept('error', 'An actor block in a journey must contain at least one command step.', {
                     node: actorBlock,
-                    property: 'steps'
+                    property: 'actor'
                 });
             }
             for (const step of actorBlock.steps) {

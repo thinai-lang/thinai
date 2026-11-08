@@ -467,8 +467,8 @@ export class ThinaiModelValidator {
         for (const node of AstUtils.streamAst(sharedKernel)) {
             if (disallowed.has(node.$type)) {
                 accept('error', 'A shared kernel may contain only reusable value objects, enums, domain services, and modules.', {
-                    node: sharedKernel,
-                    property: 'members'
+                    node,
+                    property: 'name'
                 });
                 break;
             }
