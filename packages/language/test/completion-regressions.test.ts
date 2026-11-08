@@ -2805,6 +2805,60 @@ ${partial}${marker}`;
         expect(completeBoundedContext.completion?.items.map(item => item.label) ?? []).toContain('realizes');
     });
 
+    test('does not offer outer declaration keywords inside field-only blocks', async () => {
+        const source = (block: string, typed: string): string => `bounded context X
+in bounded context X {
+    module M {
+        ${block} {
+            ${typed}${marker}
+        }
+    }
+}`;
+        const forbidden = [
+            'import', 'bounded context', 'in bounded context', 'context map', 'actor', 'journey',
+            'shared kernel', 'subdomain', 'module', 'aggregate', 'repository', 'read model'
+        ];
+
+        for (const block of [
+            'data object OrderLineInput',
+            'event OrderPlaced',
+            'integration event OrderPlacedV1',
+            'read model OrderSummary',
+            'enum Status'
+        ]) {
+            for (const typed of ['s', 'r', '']) {
+                const result = await build(source(block, typed));
+                const labels = result.completion?.items.map(item => item.label) ?? [];
+                for (const keyword of forbidden) {
+                    expect(labels, `${block} ${JSON.stringify(typed)} should not offer ${keyword}`)
+                        .not.toContain(keyword);
+                }
+            }
+        }
+
+        const dataObjectField = await build(source('data object OrderLineInput', 'sku: '));
+        expect(dataObjectField.completion?.items.map(item => item.label) ?? []).toContain('string');
+
+        const eventField = await build(source('event OrderPlaced', 'orderId: '));
+        expect(eventField.completion?.items.map(item => item.label) ?? []).toContain('string');
+
+        const repository = await build(`bounded context X
+in bounded context X {
+    repository R {
+        m${marker}
+    }
+}`);
+        expect(repository.completion?.items.map(item => item.label) ?? []).toContain('manages');
+
+        const queryRepository = await build(`bounded context X
+in bounded context X {
+    query repository R {
+        s${marker}
+    }
+}`);
+        expect(queryRepository.completion?.items.map(item => item.label) ?? []).toContain('serves');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

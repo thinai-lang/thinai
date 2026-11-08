@@ -108,8 +108,8 @@ export class ThinaiBlockCompletion {
         const lineStart = getLineStartOffset(document, offset);
         const openingBrace = scanThinaiSource(text.slice(0, offset)).openBraceOffsets.at(-1) ?? -1;
         const linePrefixStart = (openingBrace: number) => openingBrace >= lineStart ? openingBrace + 1 : lineStart;
-        const container = AstUtils.streamAst(root)
-            .filter(candidate => this.keywordContinuations.getSiblingKeywordLabelsAt(candidate, offset).length > 0)
+        const candidates = AstUtils.streamAst(root)
+            .toArray()
             .filter(candidate => {
                 const cstNode = candidate.$cstNode;
                 if (!cstNode || cstNode.offset > offset) {
@@ -124,36 +124,42 @@ export class ThinaiBlockCompletion {
                 return offset < cstNode.end ||
                     unclosedAtCursor && cursorOnLineAfterOpeningBrace;
             })
-            .toArray()
-            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset))
-            .find(candidate => {
-                const cstNode = candidate.$cstNode!;
-                if (openingBrace < cstNode.offset) {
-                    return false;
-                }
-                const directChildren = AstUtils.streamAst(candidate).toArray().filter(child => child.$container === candidate);
-                const directChildAtCursor = directChildren.some(child => {
-                    const childCst = child.$cstNode;
-                    return childCst !== undefined && childCst.offset <= offset && offset < childCst.end;
-                });
-                if (!directChildAtCursor) {
-                    return true;
-                }
-                const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
-                return this.matchesKeywordPrefix(
-                    this.keywordContinuations.getSiblingKeywordLabelsAt(candidate, offset),
-                    prefix
-                );
-            });
-        if (!container) {
+            .sort((left, right) => (left.$cstNode!.end - left.$cstNode!.offset) - (right.$cstNode!.end - right.$cstNode!.offset));
+        const innermost = candidates[0];
+        if (innermost &&
+            this.keywordContinuations.getSiblingKeywordLabelsAt(innermost, offset).length === 0) {
+            // Field-only blocks (data objects, events, read models, enums) have
+            // no declaration keywords; do not fall back to an outer container.
             return [];
         }
-        const labels = this.keywordContinuations.getSiblingKeywordLabelsAt(container, offset);
+        const block = candidates.find(candidate => {
+            const cstNode = candidate.$cstNode!;
+            if (openingBrace < cstNode.offset) {
+                return false;
+            }
+            const directChildren = AstUtils.streamAst(candidate).toArray().filter(child => child.$container === candidate);
+            const directChildAtCursor = directChildren.some(child => {
+                const childCst = child.$cstNode;
+                return childCst !== undefined && childCst.offset <= offset && offset < childCst.end;
+            });
+            if (!directChildAtCursor) {
+                return true;
+            }
+            const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
+            return this.matchesKeywordPrefix(
+                this.keywordContinuations.getSiblingKeywordLabelsAt(candidate, offset),
+                prefix
+            );
+        });
+        if (!block) {
+            return [];
+        }
+        const labels = this.keywordContinuations.getSiblingKeywordLabelsAt(block, offset);
         const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
         const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
         const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
         const completions = this.createKeywordCompletions(matchingLabels, document, position, typedPrefix);
-        return this.moveEmptyBlockCompletionsToNextLine(completions, document, position, container, openingBrace);
+        return this.moveEmptyBlockCompletionsToNextLine(completions, document, position, block, openingBrace);
     }
 
     getBlockChildIndentation(document: LangiumDocument, parent: AstNode | undefined, offset: number): string {
