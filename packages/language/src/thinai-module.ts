@@ -12,10 +12,11 @@ import { ThinaiTokenBuilder } from './thinai-token-builder.js';
 import { createThinaiParser, ThinaiParserErrorMessageProvider } from './thinai-parser.js';
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
+import { ThinaiDocumentLinkProvider } from './thinai-document-link-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 import { ThinaiFormatter } from './thinai-formatter.js';
+import { ThinaiFileOperationHandler } from './thinai-file-operation-handler.js';
 import { ThinaiHoverProvider } from './thinai-hover-provider.js';
-import { ThinaiLanguageServer } from './thinai-language-server.js';
 import { ThinaiRenameProvider } from './thinai-rename-provider.js';
 import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 
@@ -36,7 +37,7 @@ export type ThinaiServices = LangiumServices & ThinaiAddedServices
 
 export const ThinaiSharedModule: Module<LangiumSharedServices, PartialLangiumSharedServices> = {
     lsp: {
-        LanguageServer: services => new ThinaiLanguageServer(services),
+        FileOperationHandler: services => new ThinaiFileOperationHandler(services),
         NodeKindProvider: () => new ThinaiNodeKindProvider()
     },
     workspace: {
@@ -69,6 +70,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         CodeActionProvider: services => new ThinaiCodeActionProvider(services),
         CompletionProvider: services => new ThinaiCompletionProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
+        DocumentLinkProvider: () => new ThinaiDocumentLinkProvider(),
         HoverProvider: services => new ThinaiHoverProvider(services),
         RenameProvider: services => new ThinaiRenameProvider(services),
         SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)

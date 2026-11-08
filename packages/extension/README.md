@@ -5,7 +5,9 @@ This extension provides language support for `.tni` files:
 
 - completion for declarations, paths, specifications, and imports
 - go-to-definition, find-all-references, document symbols, and hover
-- import quick fixes
+- rename for declarations and references
+- clickable import paths and automatic import updates when files move
+- import, dependency, and exposure quick fixes
 - validation and diagnostics
 - document formatting
 - semantic highlighting and selection ranges
