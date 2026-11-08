@@ -2763,6 +2763,48 @@ in bounded context X {
         }
     });
 
+    test('waits for required declaration names before offering siblings', async () => {
+        const module = (partial: string): string => `bounded context X
+in bounded context X {
+    module M {
+        ${partial}${marker}
+    }
+}`;
+        const context = (partial: string): string => `bounded context X
+in bounded context X {
+    ${partial}${marker}
+}`;
+        const model = (partial: string): string => `bounded context X
+${partial}${marker}`;
+
+        for (const [source, partial] of [
+            [module, 'event '],
+            [module, 'integration event '],
+            [context, 'domain service '],
+            [model, 'actor '],
+            [model, 'subdomain '],
+            [model, 'bounded context ']
+        ] as const) {
+            const result = await build(source(partial));
+            expect(result.completion?.items.map(item => item.label) ?? [], partial).toEqual([]);
+        }
+
+        const completeEvent = await build(module('event OrderPlaced '));
+        expect(completeEvent.completion?.items.map(item => item.label) ?? []).toContain('aggregate');
+
+        const completeDomainService = await build(context('domain service Currency '));
+        expect(completeDomainService.completion?.items.map(item => item.label) ?? []).toContain('aggregate');
+
+        const completeActor = await build(model('actor Customer '));
+        expect(completeActor.completion?.items.map(item => item.label) ?? []).toContain('journey');
+
+        const completeSubdomain = await build(model('subdomain Sales '));
+        expect(completeSubdomain.completion?.items.map(item => item.label) ?? []).toContain('kind');
+
+        const completeBoundedContext = await build(model('bounded context Orders '));
+        expect(completeBoundedContext.completion?.items.map(item => item.label) ?? []).toContain('realizes');
+    });
+
     test('offers a bare import quick fix for an unowned actor', async () => {
         const target = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/actor-quickfix/target.tni'),

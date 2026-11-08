@@ -2120,6 +2120,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!cstNode || this.isInIncompleteTypePosition(node, document, position)) {
             return false;
         }
+        if (!this.thinaiServices.shared.AstReflection.isComplete(node)) {
+            // Missing required AST properties (for example an event name) mean
+            // the declaration is still being typed.
+            return false;
+        }
         const text = document.textDocument.getText();
         const source = text.slice(cstNode.offset, cstNode.end).trimEnd();
         if (this.hasUnterminatedStringLiteral(source)) {
