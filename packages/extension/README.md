@@ -5,7 +5,7 @@ This extension provides language support for `.tni` files:
 
 - completion for declarations, paths, specifications, and imports
 - go-to-definition, find-all-references, document symbols, and hover
-- call hierarchy for aggregate behavior and journey commands
+- call hierarchy for aggregate behavior and journey steps, including query steps
 - rename for declarations, references, and import aliases
 - clickable import paths and automatic import updates when files move
 - import, dependency, and exposure quick fixes

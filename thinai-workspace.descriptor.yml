@@ -58,7 +58,7 @@ examples:
       - tactical
       - aggregates
   - name: Ordering events and CQRS
-    description: Application services, read models, projectors, query services, and journeys.
+    description: Application services, domain-event handlers, integration-event translation, read models, projectors, query services, composed query results, and command-led journeys with query steps.
     file: examples/order-fulfillment/ordering-events.tni
     tags:
       - behavior
@@ -71,7 +71,7 @@ examples:
       - cross-context
       - integration-events
   - name: Cross-context journey
-    description: A journey invoking commands from multiple bounded contexts.
+    description: A command-led journey invoking queries and commands from multiple bounded contexts.
     file: examples/order-fulfillment/cross-context-journey.tni
     tags:
       - journeys
