@@ -3,7 +3,7 @@ import { AbstractFormatter, Formatting } from 'langium/lsp';
 import type { FormattingOptions, Range, TextEdit } from 'vscode-languageserver';
 import { isSpecificationText } from './generated/ast.js';
 import { getBlockNestingDepth, isBlockNodeType } from './thinai-layout.js';
-import { getNewline, getNewlineLengthAt, normalizeNewlines } from './thinai-text-utils.js';
+import { getLineStartOffset, getNewline, getNewlineLengthAt, normalizeNewlines } from './thinai-text-utils.js';
 
 const commaSeparatedTypes = new Set([
     'Import',
@@ -28,6 +28,8 @@ const relationshipTypes = new Set([
     'PartnershipRelationship',
     'SeparateWaysRelationship'
 ]);
+
+const keywordListLineWidth = 120;
 
 const keywordPairs = [
     'bounded', 'application', 'domain', 'query', 'shared', 'value', 'read', 'data', 'integration', 'context'
@@ -264,6 +266,14 @@ export class ThinaiFormatter extends AbstractFormatter {
                 formatter.keywords(',').append(Formatting.oneSpace());
             }
         }
+        if (node.$type === 'Exposure' || node.$type === 'ModuleDependency') {
+            const list = node as AstNode & { declarations?: AstNode[]; modules?: AstNode[] };
+            this.formatLongKeywordList(
+                formatter,
+                node,
+                node.$type === 'Exposure' ? list.declarations ?? [] : list.modules ?? []
+            );
+        }
         if (node.$type === 'EnumType') {
             formatter.keywords(',').prepend(Formatting.noSpace());
         }
@@ -497,6 +507,42 @@ export class ThinaiFormatter extends AbstractFormatter {
 
     private blankLineIndent() {
         return { options: { allowMore: true }, moves: [{ lines: 2, tabs: 1 }] };
+    }
+
+    private formatLongKeywordList(
+        formatter: ReturnType<ThinaiFormatter['getNodeFormatter']>,
+        node: AstNode,
+        items: AstNode[]
+    ): void {
+        if (items.length < 2) {
+            return;
+        }
+        const cstNode = node.$cstNode;
+        if (!cstNode) {
+            return;
+        }
+        const document = AstUtils.getDocument(node);
+        const lineStart = getLineStartOffset(document, cstNode.offset);
+        const indentationWidth = cstNode.offset - lineStart;
+        const normalized = cstNode.text
+            .replace(/\s+/gu, ' ')
+            .replace(/\s*,\s*/gu, ', ')
+            .trim();
+        if (indentationWidth + normalized.length <= keywordListLineWidth) {
+            return;
+        }
+        formatter.nodes(...items.slice(1)).prepend(Formatting.indent({ priority: 1 }));
+        const alignment = {
+            // One indentation level deeper than the module body.
+            indentation: this.getBlockIndentation(node) + 1,
+            prefixLength: 0
+        };
+        for (const item of items.slice(1)) {
+            const start = item.$cstNode?.range.start;
+            if (start) {
+                this.continuationColumns.set(`${start.line}:${start.character}`, alignment);
+            }
+        }
     }
 
     private getBlockIndentation(node: AstNode): number {

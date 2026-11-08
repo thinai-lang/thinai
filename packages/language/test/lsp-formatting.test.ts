@@ -483,6 +483,85 @@ context map M {
         expect(formatted).toMatch(/module Data \{\s+depends on First, Second\s+\}/);
     });
 
+    test('wraps long exposes and depends on lists at 120 columns', async () => {
+        const source = `bounded context Wrapping
+in bounded context Wrapping {
+  module Exposed {
+    exposes VeryLongAggregateNameOne, VeryLongAggregateNameTwo, VeryLongAggregateNameThree, VeryLongAggregateNameFour, VeryLongAggregateNameFive
+  }
+  module Dependent {
+    depends on VeryLongModuleNameOne, VeryLongModuleNameTwo, VeryLongModuleNameThree, VeryLongModuleNameFour, VeryLongModuleNameFive
+  }
+  module VeryLongModuleNameOne { }
+  module VeryLongModuleNameTwo { }
+  module VeryLongModuleNameThree { }
+  module VeryLongModuleNameFour { }
+  module VeryLongModuleNameFive { }
+}
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/long-keyword-list-formatting.tni'), source
+        );
+        documents = [document];
+
+        expect(document.parseResult.parserErrors).toEqual([]);
+        const edits = await services.Thinai.lsp.Formatter!.formatDocument(document, {
+            textDocument: { uri: document.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const formatted = edits
+            .slice()
+            .sort((left, right) => document.textDocument.offsetAt(right.range.start) - document.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = document.textDocument.offsetAt(edit.range.start);
+                const end = document.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, source);
+
+        expect(formatted).toContain([
+            '    exposes VeryLongAggregateNameOne,',
+            '      VeryLongAggregateNameTwo,',
+            '      VeryLongAggregateNameThree,',
+            '      VeryLongAggregateNameFour,',
+            '      VeryLongAggregateNameFive'
+        ].join('\n'));
+        expect(formatted).toContain([
+            '    depends on VeryLongModuleNameOne,',
+            '      VeryLongModuleNameTwo,',
+            '      VeryLongModuleNameThree,',
+            '      VeryLongModuleNameFour,',
+            '      VeryLongModuleNameFive'
+        ].join('\n'));
+
+        const short = 'bounded context Short\nin bounded context Short {\n  module Api {\n    depends on First, Second\n  }\n}\n';
+        const shortDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/short-keyword-list-formatting.tni'), short
+        );
+        documents.push(shortDocument);
+        const shortEdits = await services.Thinai.lsp.Formatter!.formatDocument(shortDocument, {
+            textDocument: { uri: shortDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        });
+        const shortFormatted = shortEdits
+            .slice()
+            .sort((left, right) => shortDocument.textDocument.offsetAt(right.range.start) - shortDocument.textDocument.offsetAt(left.range.start))
+            .reduce((text, edit) => {
+                const start = shortDocument.textDocument.offsetAt(edit.range.start);
+                const end = shortDocument.textDocument.offsetAt(edit.range.end);
+                return text.slice(0, start) + edit.newText + text.slice(end);
+            }, short);
+        expect(shortFormatted).toContain('    depends on First, Second');
+
+        const formattedDocument = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/long-keyword-list-formatted.tni'), formatted
+        );
+        documents.push(formattedDocument);
+        expect(await services.Thinai.lsp.Formatter!.formatDocument(formattedDocument, {
+            textDocument: { uri: formattedDocument.uri.toString() },
+            options: { tabSize: 2, insertSpaces: true }
+        })).toEqual([]);
+    });
+
     test('preserves an exposes clause placed after module members', async () => {
         const source = 'bounded context Sample in bounded context Sample {module Api{application service Service{method run(){behavior "Run."}}exposes Service}}';
         const document = services.shared.workspace.LangiumDocuments.createDocument(

@@ -85,7 +85,8 @@ model-first coding workflow.
 Non-empty blocks start their first statement on the line after `{`. Put child
 declarations and statements on separate lines. Comma-separated lists such as
 parameters, exposure declarations, `projects` targets, transition changes, and
-enum values may stay inline.
+enum values may stay inline. The formatter wraps `exposes` and `depends on`
+lists at 120 characters, one item per continuation line.
 
 ```thinai
 // ordering-events.tni
