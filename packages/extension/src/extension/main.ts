@@ -116,6 +116,29 @@ function toVscodeSelectionRange(
     );
 }
 
+function getEditorIndentation(document: vscode.TextDocument): {
+    tabSize: number;
+    insertSpaces: boolean;
+} {
+    const configuration = vscode.workspace.getConfiguration('editor', document.uri);
+    const textEditor = vscode.window.visibleTextEditors.find(candidate =>
+        candidate.document.uri.toString() === document.uri.toString()
+    );
+    const detectIndentation = configuration.get<boolean>('detectIndentation', false);
+    const configuredTabSize = configuration.get<number>('tabSize', 2);
+    const configuredInsertSpaces = configuration.get<boolean>('insertSpaces', true);
+    const tabSize = detectIndentation && typeof textEditor?.options.tabSize === 'number'
+        ? textEditor.options.tabSize
+        : configuredTabSize;
+    const insertSpaces = detectIndentation && typeof textEditor?.options.insertSpaces === 'boolean'
+        ? textEditor.options.insertSpaces
+        : configuredInsertSpaces;
+    return {
+        tabSize: typeof tabSize === 'number' && tabSize > 0 ? Math.floor(tabSize) : 2,
+        insertSpaces: typeof insertSpaces === 'boolean' ? insertSpaces : true
+    };
+}
+
 async function startLanguageClient(context: vscode.ExtensionContext): Promise<LanguageClient> {
     const serverModule = context.asAbsolutePath(path.join('out', 'language', 'main.cjs'));
     // The debug options for the server
@@ -139,25 +162,21 @@ async function startLanguageClient(context: vscode.ExtensionContext): Promise<La
                 if (!completion) {
                     return completion;
                 }
-                const editor = vscode.workspace.getConfiguration('editor', document.uri);
-                const textEditor = vscode.window.visibleTextEditors.find(candidate =>
-                    candidate.document.uri.toString() === document.uri.toString()
-                );
-                const configuredTabSize = textEditor?.options.tabSize ?? editor.get<unknown>('tabSize', 2);
-                const tabSize = typeof configuredTabSize === 'number' && configuredTabSize > 0
-                    ? configuredTabSize
-                    : 2;
-                const configuredInsertSpaces = editor.get<unknown>('insertSpaces', true);
-                const editorInsertSpaces = textEditor?.options.insertSpaces;
-                const insertSpaces = typeof editorInsertSpaces === 'boolean'
-                    ? editorInsertSpaces
-                    : typeof configuredInsertSpaces === 'boolean' ? configuredInsertSpaces : true;
+                const { tabSize, insertSpaces } = getEditorIndentation(document);
                 const items = Array.isArray(completion) ? completion : completion.items;
                 const adjustedItems = applyConfiguredIndentationToCompletions(items, tabSize, insertSpaces);
                 return Array.isArray(completion)
                     ? adjustedItems
                     : { ...completion, items: adjustedItems };
-            }
+            },
+            provideDocumentFormattingEdits: (document, options, token, next) =>
+                next(document, { ...options, ...getEditorIndentation(document) }, token),
+            provideDocumentRangeFormattingEdits: (document, range, options, token, next) =>
+                next(document, range, { ...options, ...getEditorIndentation(document) }, token),
+            provideDocumentRangesFormattingEdits: (document, ranges, options, token, next) =>
+                next(document, ranges, { ...options, ...getEditorIndentation(document) }, token),
+            provideOnTypeFormattingEdits: (document, position, ch, options, token, next) =>
+                next(document, position, ch, { ...options, ...getEditorIndentation(document) }, token)
         }
     };
 

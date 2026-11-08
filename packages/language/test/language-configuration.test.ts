@@ -86,8 +86,18 @@ describe('VS Code language configuration', () => {
             };
         };
         const defaults = pkg.contributes.configurationDefaults['[thinai]'];
+        expect(defaults?.['editor.autoClosingBrackets']).toBe('languageDefined');
+        expect(defaults?.['editor.autoClosingOvertype']).toBe('auto');
+        expect(defaults?.['editor.detectIndentation']).toBe(false);
+        expect(defaults?.['editor.insertSpaces']).toBe(true);
+        expect(defaults?.['editor.tabSize']).toBe(2);
         expect(defaults?.['editor.wordBasedSuggestions']).toBe('off');
+        expect(defaults?.['files.insertFinalNewline']).toBe(true);
         expect(defaults?.['files.trimTrailingWhitespace']).toBe(false);
-        expect(defaults?.['editor.quickSuggestions']).toEqual({ strings: 'on' });
+        expect(defaults?.['editor.quickSuggestions']).toEqual({
+            other: 'on',
+            comments: 'off',
+            strings: 'on'
+        });
     });
 });

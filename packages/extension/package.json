@@ -19,9 +19,13 @@
     "contributes": {
         "configurationDefaults": {
             "[thinai]": {
+                "editor.autoClosingBrackets": "languageDefined",
+                "editor.autoClosingOvertype": "auto",
                 "editor.detectIndentation": false,
                 "editor.insertSpaces": true,
                 "editor.quickSuggestions": {
+                    "other": "on",
+                    "comments": "off",
                     "strings": "on"
                 },
                 "editor.tabSize": 2,
