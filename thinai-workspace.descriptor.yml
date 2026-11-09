@@ -58,7 +58,7 @@ examples:
       - tactical
       - aggregates
   - name: Ordering events and CQRS
-    description: Application services, domain-event handlers, integration-event translation, read models, projectors, query services, composed query results, and command-led journeys with query steps.
+    description: Application services, domain-event handlers, integration-event translation, read models, direct and projector-backed query repositories, projectors handling both event kinds, composed query results, and command-led journeys with query steps.
     file: examples/order-fulfillment/ordering-events.tni
     tags:
       - behavior

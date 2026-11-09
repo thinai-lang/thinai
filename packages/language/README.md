@@ -190,17 +190,40 @@ repository OrderRepository {
 
 query repository OrderSummaryRepository {
   serves OrderSummary
+}
+
+read model OrderLookup {
+  orderId: OrderId
+  customerId: CustomerId
+  status: OrderStatus
+}
+
+query repository OrderLookupRepository {
+  serves OrderLookup
   reads from Order, Customer
 }
 ```
 
-`reads from` on a query repository records aggregate-owned table data queried
-directly; it does not mean the query repository calls a command-side repository.
+A query repository has two distinct query-side forms:
+
+- A repository with `reads from` reads aggregate-owned write-model tables
+  directly. It may join multiple aggregates and form the served read model
+  without a projector. `reads from` does not mean the query repository calls a
+  command-side repository.
+- A repository without `reads from` serves a read model maintained by a
+  projector. The read model is created and updated from domain or integration
+  events; the query repository only reads that maintained shape.
+
+A repository may intentionally mix both forms, but separating them makes the
+consistency and coupling tradeoffs explicit. `reads from` does not mean the
+query repository calls a command-side repository.
 
 Method-level `reads from` documents optional data dependencies and may have a
 descriptive `when` guard. Application services read aggregate repositories;
 query services read query repositories; projectors use events and write their
-declared `projects` targets. CQRS projectors do not read query repositories.
+declared `projects` targets. A projector method handles exactly one domain or
+integration event; a projector may declare methods for both kinds. CQRS
+projectors do not read query repositories.
 Aggregate-repository and external query-API reads are explicit projector
 exceptions, since current-state lookups can make replay results differ. Domain
 services may read domain repositories when a business rule requires it. An

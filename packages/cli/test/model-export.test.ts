@@ -512,6 +512,11 @@ in bounded context C {
         )).toMatchObject({ kind: 'reference' });
         expect(edge(
             'Method:Ordering.OrderQueries.canPlaceOrder',
+            'QueryRepository:Ordering.OrderLookupRepository',
+            'readsFrom'
+        )).toMatchObject({ kind: 'reference' });
+        expect(edge(
+            'Method:Ordering.OrderQueries.findSummary',
             'QueryRepository:Ordering.OrderSummaryRepository',
             'readsFrom'
         )).toMatchObject({ kind: 'reference' });
@@ -548,8 +553,8 @@ in bounded context C {
 
         const canPlaceOrder = model.elements.find(element => element.id === 'Method:Ordering.OrderQueries.canPlaceOrder');
         expect(canPlaceOrder?.properties.readsFrom).toContainEqual({
-            sourceIds: ['QueryRepository:Ordering.OrderSummaryRepository'],
-            when: '"The order summary is available for eligibility checks."'
+            sourceIds: ['QueryRepository:Ordering.OrderLookupRepository'],
+            when: '"The write-model lookup is available for eligibility checks."'
         });
     });
 });

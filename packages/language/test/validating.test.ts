@@ -1503,6 +1503,78 @@ in bounded context Ordering {
         );
     });
 
+    test('allows direct and projector-backed query repositories side by side', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                aggregate Order {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                event OrderPlaced
+                read model OrderSummary {
+                    orderId: OrderId
+                    status: string
+                }
+                read model OrderLookup {
+                    orderId: OrderId
+                    status: string
+                }
+                query repository OrderSummaryRepository {
+                    serves OrderSummary
+                }
+                query repository OrderLookupRepository {
+                    serves OrderLookup
+                    reads from Order
+                }
+                projector OrderSummaryProjector {
+                    method onOrderPlaced(source: OrderPlaced) {
+                        projects OrderSummary
+                    }
+                }
+                query service OrderQueries {
+                    method findSummary(id: OrderId) returns OrderSummary {
+                        reads from OrderSummaryRepository
+                    }
+                    method findLookup(id: OrderId) returns OrderLookup {
+                        reads from OrderLookupRepository
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
+    test('allows one projector to handle domain and integration events', async () => {
+        const document = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                event OrderPlaced
+                module Contracts {
+                    exposes OrderPlacedV1
+                    integration event OrderPlacedV1 {
+                        orderId: string
+                    }
+                }
+                read model DomainView {
+                    orderId: string
+                }
+                read model IntegrationView {
+                    orderId: string
+                }
+                projector OrderProjector {
+                    method onOrderPlaced(source: OrderPlaced) {
+                        projects DomainView
+                    }
+                    method onOrderPlacedV1(source: Contracts.OrderPlacedV1) {
+                        projects IntegrationView
+                    }
+                }
+            }
+        `);
+
+        expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
+    });
+
     test('does not require repository choreography in application-service methods', async () => {
         const document = await parse(`
             bounded context Ordering in bounded context Ordering {
