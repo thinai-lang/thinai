@@ -11,4 +11,5 @@ out/
 syntaxes/
 *.tsbuildinfo
 *.vsix
+/artifacts/
 coverage/
