@@ -374,10 +374,50 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (parts.slice(0, -1).some(part => this.pathSegmentMatchesTyped(part, typed))) {
             return true;
         }
+        if (this.matchesContainerChain(parts.slice(0, -1), typed)) {
+            return true;
+        }
         if (standalone !== undefined && this.pathSegmentMatchesTyped(standalone, typed)) {
             return true;
         }
         return this.matchesConcatenatedFirstSegment(parts, typed);
+    }
+
+    /**
+     * A dotless token can abbreviate a run of container segments without the
+     * terminal being typed, for example `InvAggInve` before an invokes target.
+     */
+    private matchesContainerChain(containers: string[], typed: string): boolean {
+        if (containers.length < 2) {
+            return false;
+        }
+        for (let start = 0; start < containers.length - 1; start++) {
+            if (this.matchesSegmentChain(containers.slice(start), typed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private matchesSegmentChain(segments: string[], typed: string): boolean {
+        if (segments.length === 0 || typed.length === 0) {
+            return false;
+        }
+        if (segments.length === 1) {
+            return this.pathSegmentMatchesTyped(segments[0]!, typed);
+        }
+        for (let index = 2; index < typed.length; index++) {
+            if (!this.isUppercaseIdentifierStart(typed[index]!)) {
+                continue;
+            }
+            const prefix = typed.slice(0, index);
+            const suffix = typed.slice(index);
+            if (this.pathFragmentMatches(prefix, segments[0]!) &&
+                this.matchesSegmentChain(segments.slice(1), suffix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -516,18 +556,31 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         metadata.thinaiPathReplaceStart = replaceStart;
     }
 
-    private findPathSegment(parts: string[], typed: string, searchFrom: number): number {
-        let fuzzyIndex = -1;
+    private findPathSegmentRun(
+        parts: string[],
+        typed: string,
+        searchFrom: number
+    ): { index: number; count: number } | undefined {
+        let best: { index: number; count: number } | undefined;
         for (let index = searchFrom; index < parts.length; index++) {
             const part = parts[index]!;
             if (part.toLowerCase().startsWith(typed.toLowerCase())) {
-                return index;
+                return { index, count: 1 };
             }
-            if (fuzzyIndex < 0 && this.fuzzyMatcher.match(typed, part)) {
-                fuzzyIndex = index;
+            if (!best && this.fuzzyMatcher.match(typed, part)) {
+                best = { index, count: 1 };
+            }
+            for (let count = 2; index + count <= parts.length; count++) {
+                if (!this.matchesSegmentChain(parts.slice(index, index + count), typed)) {
+                    continue;
+                }
+                if (!best || index < best.index) {
+                    best = { index, count };
+                }
+                break;
             }
         }
-        return fuzzyIndex;
+        return best;
     }
 
     private matchPathPrefix(
@@ -541,15 +594,15 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         let start = -1;
         const matched: string[] = [];
         for (const typed of prefix) {
-            const found = this.findPathSegment(parts, typed, searchFrom);
-            if (found < 0) {
+            const found = this.findPathSegmentRun(parts, typed, searchFrom);
+            if (!found) {
                 return undefined;
             }
             if (start < 0) {
-                start = found;
+                start = found.index;
             }
-            matched.push(parts[found]!);
-            searchFrom = found + 1;
+            matched.push(parts.slice(found.index, found.index + found.count).join('.'));
+            searchFrom = found.index + found.count;
         }
         return searchFrom < parts.length
             ? { start, matched, nextIndex: searchFrom }
@@ -631,6 +684,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         const scope = this.callbacks.getUnsegmentedScope(context, referenceType);
         const candidates = new Map<string, AstNodeDescription>();
         const seenSegments = new Map<AstNode, Set<string>>();
+        const allowedDescriptions: AstNodeDescription[] = [];
         for (const description of scope.getAllElements()) {
             const target = this.callbacks.getDescriptionNode(description);
             if (!target) {
@@ -656,6 +710,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 !this.callbacks.isSupportedSpecificationModulePrefix(context, segmentTarget, target)) {
                 continue;
             }
+            allowedDescriptions.push(description);
             const names = seenSegments.get(segmentTarget) ?? new Set<string>();
             if (names.has(segmentName)) {
                 continue;
@@ -672,6 +727,21 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     .thinaiPathContinuation = true;
             }
             candidates.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}#${segmentName}`, segmentDescription);
+        }
+        const part = context.container as AstNode & { target?: ReferenceInfo['reference'] };
+        const typed = part.target?.$refText ?? '';
+        const rootMatchesTyped = [...candidates.values()]
+            .some(description => this.pathSegmentMatchesTyped(description.name, typed));
+        if (typed.length > 0 && !rootMatchesTyped) {
+            const pathCandidates = this.getFirstPathSegmentCandidates(
+                context,
+                allowedDescriptions,
+                typed,
+                part.target?.$refNode?.offset
+            );
+            if (pathCandidates.length > 0) {
+                return pathCandidates;
+            }
         }
         return [...candidates.values()];
     }

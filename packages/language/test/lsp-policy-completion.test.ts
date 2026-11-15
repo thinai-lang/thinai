@@ -978,7 +978,10 @@ describe('LSP policy completion', () => {
         }`;
         const cases: Array<[string, string, string]> = [
             ['InvAgg', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
+            ['InvAggInve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAggInve.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
+            ['InvAggInve.reserve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.InventoryIte.reserve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve']
         ];
@@ -1059,6 +1062,8 @@ describe('LSP policy completion', () => {
         }`;
         const cases: Array<[string, string, string]> = [
             ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAggInve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
+            ['InvAggInve.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve']
         ];
         for (const [typed, label, newText] of cases) {
