@@ -656,6 +656,24 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             };
             item.insertText = insertion;
         }
+        const pathReplacement = nodeDescription as AstNodeDescription & {
+            thinaiPathReplacement?: string;
+            thinaiPathReplaceStart?: number;
+        };
+        if (pathReplacement.thinaiPathReplacement !== undefined &&
+            pathReplacement.thinaiPathReplaceStart !== undefined) {
+            // A partially typed earlier segment cannot be repaired by replacing
+            // only the current token. Replace the whole typed path instead.
+            const newText = `${formatQualifiedName(pathReplacement.thinaiPathReplacement)}${pathContinuation ? '.' : ''}`;
+            item.textEdit = {
+                range: {
+                    start: context.textDocument.positionAt(pathReplacement.thinaiPathReplaceStart),
+                    end: context.textDocument.positionAt(context.offset)
+                },
+                newText
+            };
+            item.insertText = newText;
+        }
         return item;
     }
 

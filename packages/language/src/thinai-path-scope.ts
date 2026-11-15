@@ -9,6 +9,7 @@ import {
     type Scope,
     type Stream
 } from 'langium';
+import type { FuzzyMatcher } from 'langium/lsp';
 import {
     isAggregate,
     isApplicationService,
@@ -70,11 +71,16 @@ interface ThinaiPathScopeCallbacks {
 
 /** Owns qualified-reference lookup and path-segment completion for Thinai references. */
 export class ThinaiPathScope extends DefaultScopeProvider {
+    private readonly fuzzyMatcher: FuzzyMatcher;
+
     constructor(
         services: LangiumCoreServices,
         private readonly callbacks: ThinaiPathScopeCallbacks
     ) {
         super(services);
+        this.fuzzyMatcher = (services.shared as unknown as {
+            lsp: { FuzzyMatcher: FuzzyMatcher };
+        }).lsp.FuzzyMatcher;
     }
 
     getPathScope(context: ReferenceInfo, referenceType: string): Scope | undefined {
@@ -174,12 +180,15 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 ? this.getFirstPathSegmentCandidates(context, allowedTargets)
                 : undefined;
         }
+        const firstPathStartOffset = (pathValues as ReferenceInfo['reference'][])
+            .find(reference => reference.$refNode !== undefined)?.$refNode?.offset;
         return this.getPathSegmentCompletions(
             context,
             referenceType,
             prefix,
             allowedTargets,
-            completingPathProperty && pathProperty === 'path' && !isReadSourceReference(container)
+            completingPathProperty && pathProperty === 'path' && !isReadSourceReference(container),
+            firstPathStartOffset
         );
     }
 
@@ -234,6 +243,46 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         (description as AstNodeDescription & { thinaiPathContinuation?: boolean })
             .thinaiPathContinuation = true;
         results.set(`${description.documentUri.toString()}#${description.path}`, description);
+    }
+
+    private findPathSegment(parts: string[], typed: string, searchFrom: number): number {
+        let fuzzyIndex = -1;
+        for (let index = searchFrom; index < parts.length; index++) {
+            const part = parts[index]!;
+            if (part.toLowerCase().startsWith(typed.toLowerCase())) {
+                return index;
+            }
+            if (fuzzyIndex < 0 && this.fuzzyMatcher.match(typed, part)) {
+                fuzzyIndex = index;
+            }
+        }
+        return fuzzyIndex;
+    }
+
+    private matchPathPrefix(
+        parts: string[],
+        prefix: string[]
+    ): { start: number; matched: string[]; nextIndex: number } | undefined {
+        if (prefix.length === 0) {
+            return { start: 0, matched: [], nextIndex: 0 };
+        }
+        let searchFrom = 0;
+        let start = -1;
+        const matched: string[] = [];
+        for (const typed of prefix) {
+            const found = this.findPathSegment(parts, typed, searchFrom);
+            if (found < 0) {
+                return undefined;
+            }
+            if (start < 0) {
+                start = found;
+            }
+            matched.push(parts[found]!);
+            searchFrom = found + 1;
+        }
+        return searchFrom < parts.length
+            ? { start, matched, nextIndex: searchFrom }
+            : undefined;
     }
 
     private getImportedRootName(context: ReferenceInfo, target: AstNode, fallbackName: string): string {
@@ -609,27 +658,28 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         referenceType: string,
         prefix: string[],
         allowedTargets?: Set<AstNode>,
-        pathOnly = false
+        pathOnly = false,
+        firstPathStartOffset?: number
     ): AstNodeDescription[] {
-        const prefixText = prefix.join('.');
-        const pathPrefix = prefixText.length > 0 ? `${prefixText}.` : '';
         const results = new Map<string, AstNodeDescription>();
         const scope = this.callbacks.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
         for (const description of scope.getAllElements()) {
             const candidate = this.callbacks.getDescriptionNode(description);
-            if (!candidate || (allowedTargets && !allowedTargets.has(candidate)) ||
-                !description.name.startsWith(pathPrefix)) {
-                continue;
-            }
             const parts = description.name.split('.');
-            if (pathOnly ? parts.length <= prefix.length + 1 : parts.length <= prefix.length) {
+            const match = this.matchPathPrefix(parts, prefix);
+            if (!candidate || (allowedTargets && !allowedTargets.has(candidate)) || !match) {
                 continue;
             }
-            const segment = parts[prefix.length];
-            const segmentName = [...prefix, segment].join('.');
+            const segmentIsTerminal = parts.length === match.nextIndex + 1;
+            if (pathOnly && segmentIsTerminal) {
+                continue;
+            }
+            const partialPrefix = match.matched.some((part, index) => part !== prefix[index]);
+            const segment = parts[match.nextIndex];
+            const actualSegmentName = parts.slice(match.start, match.nextIndex + 1).join('.');
             const targets = new Set<AstNode>();
-            const directTarget = scope.getElement(segmentName)?.node;
-            const ancestorTarget = this.getPathSegmentTarget(candidate, parts, prefix.length, context);
+            const directTarget = scope.getElement(parts.slice(0, match.nextIndex + 1).join('.'))?.node;
+            const ancestorTarget = this.getPathSegmentTarget(candidate, parts, match.nextIndex, context);
             if (directTarget) {
                 targets.add(directTarget);
             }
@@ -637,7 +687,6 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 targets.add(ancestorTarget);
             }
             for (const target of targets) {
-                const segmentIsTerminal = parts.length === prefix.length + 1;
                 if (isSpecificationTextPart(context.container)) {
                     if (isModule(target)) {
                         if (!this.callbacks.isSupportedSpecificationModulePrefix(context, target, candidate)) {
@@ -652,6 +701,18 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (!segmentIsTerminal) {
                     (segmentDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
                         .thinaiPathContinuation = true;
+                }
+                if (partialPrefix && firstPathStartOffset !== undefined) {
+                    const replacement = segmentDescription as AstNodeDescription & {
+                        thinaiPathReplacement?: string;
+                        thinaiPathReplaceStart?: number;
+                        thinaiCompletionLabel?: string;
+                        thinaiFilterText?: string;
+                    };
+                    replacement.thinaiPathReplacement = actualSegmentName;
+                    replacement.thinaiPathReplaceStart = firstPathStartOffset;
+                    replacement.thinaiCompletionLabel = segment;
+                    replacement.thinaiFilterText = segment;
                 }
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
             }

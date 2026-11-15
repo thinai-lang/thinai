@@ -966,7 +966,9 @@ in bounded context Ordering {
             kind: CompletionItemKind.Method,
             detail: expect.stringContaining('place(')
         });
-        expect(childItems?.items.find(item => item.label === 'Order')).toMatchObject({
+        expect(childItems?.items.find(item =>
+            item.label === 'Order' && item.detail?.includes('Entity Order')
+        )).toMatchObject({
             kind: CompletionItemKind.Class,
             detail: expect.stringContaining('Entity Order')
         });
