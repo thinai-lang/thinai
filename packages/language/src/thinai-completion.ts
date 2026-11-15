@@ -49,6 +49,7 @@ import {
     isMethodInvocation,
     isModel,
     isModule,
+    isNamedDeclarationReference,
     isParameter,
     isPostcondition,
     isPrecondition,
@@ -1020,12 +1021,24 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const hasBoundedContextCandidates = defaultCompletion?.items.some(item =>
             item.detail?.startsWith('BoundedContext ')
         ) === true;
+        const exposureCompletions = this.getExposureDeclarationCompletions(
+            document,
+            params.position,
+            defaultCompletion
+        );
+        const exposureDetails = new Set(exposureCompletions
+            .map(item => item.detail)
+            .filter((detail): detail is string => typeof detail === 'string'));
+        const exposurePathActive = exposureCompletions.some(item => {
+            const data = item.data;
+            return typeof data === 'object' && data !== null && 'thinaiExposurePath' in data;
+        });
         const constrainedValueCompletions = [
             ...optionalClauseCompletions,
             ...this.getPartialInitialKeywordCompletions(document, params.position),
             ...this.getIntegrationPatternCompletions(document, params.position),
             ...relationshipContinuations,
-            ...this.getExposureDeclarationCompletions(document, params.position, defaultCompletion),
+            ...exposureCompletions,
             ...(hasBoundedContextCandidates ? [] : this.contextMapCompletion.getRightContextCompletions(document, params.position))
         ];
         const constrainedLabels = new Set(constrainedValueCompletions.map(item => item.label));
@@ -1106,6 +1119,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             }
             : completionWithKeywords;
         const completionItems = (completionWithKeywords?.items ?? [])
+            .filter(item => !exposureDetails.has(item.detail as string))
+            .filter(item => !exposurePathActive || item.kind === CompletionItemKind.Keyword)
             .filter(item => !relationshipContinuationLabels.has(item.label))
             .filter(item => item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string' ||
                 !constrainedLabels.has(item.label))
@@ -1615,6 +1630,43 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const existingItems = defaultCompletion?.items ?? [];
         const completionContext = this.getLangiumCompletionContext(document, position);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        if (typedPrefix.length > 0) {
+            // An incomplete list item is often parsed as the next empty item, so
+            // the reference candidate machinery never sees the typed text. Read
+            // the item from the source and apply the shared path policy here.
+            const currentReference = AstUtils.streamAst(exposure)
+                .filter(isNamedDeclarationReference)
+                .filter(node => node.$cstNode !== undefined &&
+                    node.$cstNode.offset <= offset && offset <= node.$cstNode.end)
+                .toArray()
+                .at(-1);
+            if (currentReference) {
+                const referenceInfo = {
+                    container: currentReference,
+                    property: 'target',
+                    reference: currentReference.target
+                } as ReferenceInfo;
+                const descriptions = scopeProvider.getPathCompletionCandidates(referenceInfo, offset);
+                if (descriptions !== undefined && descriptions.length > 0) {
+                    const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
+                    return descriptions
+                        .filter(description => {
+                            const label = (description as AstNodeDescription & {
+                                thinaiCompletionLabel?: string;
+                            }).thinaiCompletionLabel ?? description.name;
+                            const shortLabel = label.split('.').at(-1) ?? label;
+                            const lowerTyped = typedPrefix.toLowerCase();
+                            const exactCurrentSegment = shortLabel.toLowerCase() === lowerTyped ||
+                                label.toLowerCase() === lowerTyped;
+                            return !exactCurrentSegment &&
+                                !exposedNames.has(label) && !exposedShortNames.has(label);
+                        })
+                        .map(description =>
+                            this.createExposurePathCompletionItem(document, description, prefixStart, endOffset)
+                        );
+                }
+            }
+        }
         return scopeProvider.getExposureDeclarationCandidates(exposure as Exposure)
             .filter(description => {
                 const detail = this.completionDetails.getCompletionDetail(description);
@@ -1653,6 +1705,38 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 };
                 return completionItem;
             });
+    }
+
+    private createExposurePathCompletionItem(
+        document: LangiumDocument,
+        description: AstNodeDescription,
+        startOffset: number,
+        endOffset: number
+    ): CompletionItem {
+        const spelling = description as AstNodeDescription & {
+            thinaiCompletionLabel?: string;
+            thinaiFilterText?: string;
+            thinaiSortText?: string;
+            thinaiPathContinuation?: boolean;
+            thinaiPathReplacement?: string;
+        };
+        const replacement = spelling.thinaiPathReplacement ?? description.name;
+        const newText = `${formatQualifiedName(replacement)}${spelling.thinaiPathContinuation ? '.' : ''}`;
+        return {
+            label: spelling.thinaiCompletionLabel ?? description.name,
+            filterText: spelling.thinaiFilterText ?? description.name,
+            sortText: spelling.thinaiSortText,
+            kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+            detail: this.completionDetails.getCompletionDetail(description),
+            data: { thinaiExposurePath: true },
+            textEdit: {
+                range: {
+                    start: document.textDocument.positionAt(startOffset),
+                    end: document.textDocument.positionAt(endOffset)
+                },
+                newText
+            }
+        };
     }
 
     private addSupplementaryKeywords(

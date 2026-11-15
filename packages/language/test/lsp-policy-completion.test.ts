@@ -917,6 +917,48 @@ describe('LSP policy completion', () => {
         });
     });
 
+    test('repairs a concatenated exposure item when the list continues', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                aggregate OrderAggregate {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                    enum OrderStatus { Draft, Placed }
+                }
+                exposes OrderAggregate, OrdAggOrdId, OrderAggregate.OrderStatus
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/exposes-concatenated-path.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'OrdAggOrdId';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => String(item.label)) ?? [];
+        expect(labels).toContain('OrderAggregate.OrderId');
+        expect(labels).toContain('OrderId');
+        expect(labels).not.toContain('Ordering.Domain.OrderAggregate.OrderId');
+        expect(labels).not.toContain('validate');
+        expect(labels).not.toContain('OrderLine');
+        const item = completion?.items.find(candidate => candidate.label === 'OrderAggregate.OrderId');
+        expect(item).toMatchObject({
+            sortText: '0',
+            filterText: 'OrderAggregate.OrderId',
+            textEdit: {
+                newText: 'OrderAggregate.OrderId',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(marker)),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
         const text = `bounded context Source
 
