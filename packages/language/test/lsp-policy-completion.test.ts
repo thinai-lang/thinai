@@ -402,8 +402,7 @@ describe('LSP policy completion', () => {
         const labels = completion?.items.map(item => item.label) ?? [];
         expect(labels).toContain('Request');
         const terminalLabels = completion?.items
-            .filter(item => !(item.textEdit && 'newText' in item.textEdit &&
-                typeof item.textEdit.newText === 'string' && item.textEdit.newText.endsWith('.')))
+            .filter(item => !(Array.isArray(item.commitCharacters) && item.commitCharacters.includes('.')))
             .map(item => item.label) ?? [];
         expect(terminalLabels).not.toContain('Order');
         expect(terminalLabels).not.toContain('OrderSummary');
@@ -825,7 +824,8 @@ describe('LSP policy completion', () => {
         expect(completion?.items.find(item => item.label === 'InventoryAggregate')).toMatchObject({
             sortText: '2',
             filterText: 'InventoryAggregate.InventoryItem',
-            textEdit: { newText: 'InventoryAggregate.', range: wholeTokenRange }
+            textEdit: { newText: 'InventoryAggregate', range: wholeTokenRange },
+            commitCharacters: ['.']
         });
     });
 
@@ -979,7 +979,7 @@ describe('LSP policy completion', () => {
         const cases: Array<[string, string, string]> = [
             ['InvAgg', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAggInve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
-            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem'],
             ['InvAggInve.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAggInve.reserve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
@@ -1061,7 +1061,7 @@ describe('LSP policy completion', () => {
             }
         }`;
         const cases: Array<[string, string, string]> = [
-            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem'],
             ['InvAggInve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAggInve.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
             ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve']

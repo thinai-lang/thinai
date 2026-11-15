@@ -1561,12 +1561,12 @@ in bounded context Ordering {
         const emptyOffice = consumerText.indexOf('__CURSOR__');
         const emptyItems = await completeAt(emptyConsumer, emptyOffice);
         expect(emptyItems?.items.map(item => item.label)).toContain('Catalog');
-        expect(emptyItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog.');
+        expect(emptyItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog');
 
         const partialOffset = consumerText.indexOf('__CURSOR__') + 'Cat'.length;
         const partialItems = await completeAt(partialConsumer, partialOffset);
         expect(partialItems?.items.map(item => item.label)).toContain('Catalog');
-        expect(partialItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog.');
+        expect(partialItems?.items.find(item => item.label === 'Catalog')?.textEdit?.newText).toBe('Catalog');
 
         const sameContextText = `bounded context C
 in bounded context C {
@@ -1597,7 +1597,7 @@ in bounded context C {
         await services.shared.workspace.DocumentBuilder.build([sameContext], { validation: false });
         const sameItems = await completeAt(sameContext, sameOffset);
         expect(sameItems?.items.map(item => item.label)).toContain('M');
-        expect(sameItems?.items.find(item => item.label === 'M')?.textEdit?.newText).toBe('M.');
+        expect(sameItems?.items.find(item => item.label === 'M')?.textEdit?.newText).toBe('M');
     });
 
     test('filters read-source structural roots with no accessible repository descendant', async () => {
@@ -1646,7 +1646,7 @@ in bounded context ${name} {
 
         const exposedItems = await completeAt(exposed, exposedText.indexOf('__CURSOR__'));
         expect(exposedItems?.items.map(item => item.label)).toContain('A');
-        expect(exposedItems?.items.find(item => item.label === 'A')?.textEdit?.newText).toBe('A.');
+        expect(exposedItems?.items.find(item => item.label === 'A')?.textEdit?.newText).toBe('A');
     });
 
     test('offers read models for projector targets with read-model icons', async () => {

@@ -140,7 +140,7 @@ in bounded context Shop {
     }
 }`);
         const addressItem = parameter.completion?.items.find(item => item.label === 'address');
-        expect(addressItem?.textEdit?.newText).toBe('address.');
+        expect(addressItem?.textEdit?.newText).toBe('address');
     });
 
     test('completes entity fields from specification result and parameter roots', async () => {
@@ -372,7 +372,7 @@ in bounded context Ordering {
     }
 }`);
         const item = result.completion?.items.find(candidate => candidate.label === 'Ordering');
-        expect(item?.textEdit?.newText ?? item?.insertText).toBe('Ordering.');
+        expect(item?.textEdit?.newText ?? item?.insertText).toBe('Ordering');
     });
 
     test('completes backtick-delimited names while the closing backtick is being typed', async () => {
@@ -1093,7 +1093,7 @@ in bounded context C {
 context map M { customer C -> supplier P }`);
         const item = completion.completion?.items.find(candidate => candidate.label === 'Order');
         expect(item).toBeDefined();
-        expect(item?.textEdit?.newText).toBe('Order.');
+        expect(item?.textEdit?.newText).toBe('Order');
     });
 
     test('does not offer private query service containers in journeys', async () => {
@@ -1368,8 +1368,8 @@ journey J {
         const context = items.find(item => item.label === 'Ordering');
         const service = items.find(item => item.label === 'App');
         const readModel = items.find(item => item.label === 'Summary');
-        expect(context?.textEdit?.newText).toBe('Ordering.');
-        expect(service?.textEdit?.newText).toBe('App.');
+        expect(context?.textEdit?.newText).toBe('Ordering');
+        expect(service?.textEdit?.newText).toBe('App');
         expect(readModel?.textEdit?.newText).toBe('Summary');
     });
 
@@ -1721,7 +1721,7 @@ in bounded context C {
             position: consumer.textDocument.positionAt(offset)
         });
         const queryService = completion?.items.find(item => item.label === 'Queries');
-        expect(queryService?.textEdit?.newText).toBe('Queries.');
+        expect(queryService?.textEdit?.newText).toBe('Queries');
     });
 
     test('requires a shared-kernel relationship for non-journey shared-kernel prefixes', async () => {
@@ -2075,7 +2075,7 @@ in bounded context C {
         }
     }
 }`);
-        expect(input.completion?.items.find(item => item.label === 'input')?.textEdit?.newText).toBe('input.');
+        expect(input.completion?.items.find(item => item.label === 'input')?.textEdit?.newText).toBe('input');
 
         const result = await build(`bounded context C
 in bounded context C {
@@ -2086,7 +2086,7 @@ in bounded context C {
         }
     }
 }`);
-        expect(result.completion?.items.find(item => item.label === 'result')?.textEdit?.newText).toBe('result.');
+        expect(result.completion?.items.find(item => item.label === 'result')?.textEdit?.newText).toBe('result');
     });
 
     test('does not expand compound keywords inside unrelated blocks', async () => {

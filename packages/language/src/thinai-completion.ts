@@ -596,7 +596,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (sortText !== undefined) {
             item.sortText = sortText;
         }
-        let insertText = formatQualifiedName(nodeDescription.name);
+        const insertText = formatQualifiedName(nodeDescription.name);
         const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
         const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
             .thinaiPathContinuation === true;
@@ -610,13 +610,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const typedPrefix = this.getTypedPrefix(context);
         const typedRootContinuation = typedPrefix.length > 0 ||
             target === undefined || (!isParameter(target) && !isMethod(target));
-        if (target && (
+        const pathContinuationEdit = target !== undefined && (
             this.isJourneyPathContinuation(refInfo, target, context) ||
             readSourcePathContinuation ||
             structuralSpecificationContinuation ||
-            pathContinuation && typedRootContinuation && this.shouldAppendPathDot(refInfo, context)
-        )) {
-            insertText = `${insertText}.`;
+            pathContinuation && typedRootContinuation
+        );
+        if (pathContinuationEdit) {
+            item.commitCharacters = ['.'];
         }
         if (insertText !== nodeDescription.name) {
             item.insertText = insertText;
@@ -678,7 +679,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             pathReplacement.thinaiPathReplaceStart <= context.offset) {
             // A partially typed earlier segment cannot be repaired by replacing
             // only the current token. Replace the whole typed path instead.
-            const newText = `${formatQualifiedName(pathReplacement.thinaiPathReplacement)}${pathContinuation ? '.' : ''}`;
+            const newText = formatQualifiedName(pathReplacement.thinaiPathReplacement);
+            if (pathContinuation) {
+                item.commitCharacters = ['.'];
+            }
             item.textEdit = {
                 range: {
                     start: context.textDocument.positionAt(pathReplacement.thinaiPathReplaceStart),
@@ -1630,13 +1634,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             active: true,
             items: this.dedupeCompletionCandidates(context, stream(descriptions), typedPrefix).map(description => {
                 const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
-                const insertText = `${formatQualifiedName(description.name)}${this.isReadSourceStructuralTarget(target) ? '.' : ''}`;
+                const continuation = this.isReadSourceStructuralTarget(target);
+                const insertText = formatQualifiedName(description.name);
                 const item: CompletionValueItem = {
                     nodeDescription: description,
                     kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
                     detail: this.completionDetails.getCompletionDetail(description),
                     sortText: '0',
-                    insertText
+                    insertText,
+                    ...(continuation ? { commitCharacters: ['.'] } : {})
                 };
                 const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
                 return langiumItem ?? {
@@ -1784,7 +1790,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
         const replacement = spelling.thinaiPathReplacement ?? description.name;
         const continuation = spelling.thinaiPathContinuation === true || appendDot;
-        const newText = `${formatQualifiedName(replacement)}${continuation ? '.' : ''}`;
+        const newText = formatQualifiedName(replacement);
         return {
             label: spelling.thinaiCompletionLabel ?? description.name,
             filterText: spelling.thinaiFilterText ?? description.name,
@@ -1792,6 +1798,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
             detail: this.completionDetails.getCompletionDetail(description),
             data: { thinaiTypedPathList: true },
+            ...(continuation ? { commitCharacters: ['.'] } : {}),
             textEdit: {
                 range: {
                     start: document.textDocument.positionAt(startOffset),
