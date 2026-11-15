@@ -364,6 +364,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const groups = new Map<string, AstNodeDescription[]>();
         const synthetic: AstNodeDescription[] = [];
         for (const description of candidates) {
+            if ((description as AstNodeDescription & { thinaiNoDedupe?: boolean }).thinaiNoDedupe) {
+                // Path completion builds its own labels and whole-path edits.
+                // Grouping by node would collapse deliberate variants such as
+                // the qualified path and the standalone terminal.
+                synthetic.push(description);
+                continue;
+            }
             const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
             if (!target || !('name' in target) || typeof target.name !== 'string') {
                 synthetic.push(description);
@@ -583,6 +590,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (spelling.thinaiFilterText) {
             item.filterText = spelling.thinaiFilterText;
         }
+        const sortText = (nodeDescription as AstNodeDescription & { thinaiSortText?: string }).thinaiSortText;
+        if (sortText !== undefined) {
+            item.sortText = sortText;
+        }
         let insertText = formatQualifiedName(nodeDescription.name);
         const target = nodeDescription.node ?? resolveAstNodeDescription(nodeDescription, this.thinaiServices);
         const pathContinuation = (nodeDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
@@ -661,7 +672,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             thinaiPathReplaceStart?: number;
         };
         if (pathReplacement.thinaiPathReplacement !== undefined &&
-            pathReplacement.thinaiPathReplaceStart !== undefined) {
+            pathReplacement.thinaiPathReplaceStart !== undefined &&
+            pathReplacement.thinaiPathReplaceStart <= context.offset) {
             // A partially typed earlier segment cannot be repaired by replacing
             // only the current token. Replace the whole typed path instead.
             const newText = `${formatQualifiedName(pathReplacement.thinaiPathReplacement)}${pathContinuation ? '.' : ''}`;

@@ -138,10 +138,19 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         // reference is actually the last path segment being edited. Treat it
         // as part of the prefix so completion offers its children.
         const trailingTerminalSegment = this.hasTrailingDot(terminalReference, container, offset);
-        const firstPathSegment = pathValues.length === 0 && !trailingTerminalSegment;
+        const pathReferences = pathValues as ReferenceInfo['reference'][];
+        const firstPathSegment = pathReferences.length === 0 && !trailingTerminalSegment;
+        const document = AstUtils.getDocument(container);
+        const text = document.textDocument.getText();
+        const firstPathRef = pathReferences[0];
+        const firstPathRefEnd = firstPathRef?.$refNode?.end;
+        const hasDotAfterFirstPath = firstPathRefEnd !== undefined && offset !== undefined &&
+            /^\s*\./u.test(text.slice(firstPathRefEnd, offset));
+        const singleFirstSegmentNoDot = pathReferences.length === 1 && !hasDotAfterFirstPath &&
+            terminalReference.$refText.length === 0;
         const completedPathCount = offset === undefined
             ? context.index ?? pathValues.length
-            : (pathValues as ReferenceInfo['reference'][]).filter(reference =>
+            : pathReferences.filter(reference =>
                 reference.$refNode !== undefined && reference.$refNode.end < offset
             ).length;
         const index = completingPathProperty
@@ -162,59 +171,169 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             return [];
         }
         const finalScope = this.callbacks.getUnsegmentedScope(this.getPathScopeContext(finalContext), finalType);
-        const allowedTargets = new Set(
-            this.callbacks.filterCompletionCandidates(finalContext, finalScope.getAllElements())
-                .map(description => this.callbacks.getDescriptionNode(description))
-                .filter((node): node is AstNode => node !== undefined)
-                .toArray()
-        );
+        const allowedDescriptions = this.callbacks
+            .filterCompletionCandidates(finalContext, finalScope.getAllElements())
+            .filter(description => this.callbacks.getDescriptionNode(description) !== undefined)
+            .toArray();
         const referenceType = this.getDeclaredReferenceType(context);
         if (!referenceType) {
             return [];
         }
-        if (firstPathSegment) {
-            // With no parsed path yet, terminal completion already offers the
-            // target. Add its enclosing containers so a qualified path can be
-            // started without typing the container name manually.
-            return completingPathProperty
-                ? this.getFirstPathSegmentCandidates(context, allowedTargets)
-                : undefined;
+        if (firstPathSegment || singleFirstSegmentNoDot) {
+            const firstSegmentStartOffset = firstPathSegment
+                ? terminalReference.$refNode?.offset
+                : firstPathRef?.$refNode?.offset;
+            const typedFirstSegment = firstPathSegment
+                ? terminalReference.$refText
+                : firstPathRef?.$refText ?? '';
+            if (!completingPathProperty) {
+                // Completing the terminal reference directly: only repair a
+                // partial token that actually contains the cursor. A recovered
+                // reference on a later line must not shadow default completion.
+                const terminalNode = terminalReference.$refNode;
+                if (typedFirstSegment.length === 0 || terminalNode === undefined ||
+                    offset === undefined || terminalNode.offset > offset) {
+                    return undefined;
+                }
+            }
+            const candidates = this.getFirstPathSegmentCandidates(
+                context,
+                allowedDescriptions,
+                typedFirstSegment,
+                firstSegmentStartOffset
+            );
+            return !completingPathProperty && candidates.length === 0 ? undefined : candidates;
         }
         const firstPathStartOffset = (pathValues as ReferenceInfo['reference'][])
-            .find(reference => reference.$refNode !== undefined)?.$refNode?.offset;
+            .find(reference => reference.$refNode !== undefined)?.$refNode?.offset ??
+            (trailingTerminalSegment ? terminalReference.$refNode?.offset : undefined);
+        const pathStartOffset = firstPathStartOffset !== undefined && offset !== undefined &&
+            firstPathStartOffset > offset ? undefined : firstPathStartOffset;
+        const allowedTargets = new Set(
+            allowedDescriptions
+                .map(description => this.callbacks.getDescriptionNode(description))
+                .filter((node): node is AstNode => node !== undefined)
+        );
         return this.getPathSegmentCompletions(
             context,
             referenceType,
             prefix,
             allowedTargets,
             completingPathProperty && pathProperty === 'path' && !isReadSourceReference(container),
-            firstPathStartOffset
+            pathStartOffset
         );
     }
 
+    /**
+     * A partially typed first segment cannot be repaired by replacing only the
+     * current token when the segment is followed by a dot later. The whole path
+     * is emitted as a completion label so accepting it always produces a valid
+     * reference. Full qualified paths sort before standalone names so the
+     * unambiguous choice is the first one the editor offers.
+     */
     private getFirstPathSegmentCandidates(
         context: ReferenceInfo,
-        allowedTargets: Set<AstNode>
+        allowedDescriptions: AstNodeDescription[],
+        typed: string,
+        replaceStart: number | undefined
     ): AstNodeDescription[] {
         const sourceContext = getOwningContextName(context.container);
         if (sourceContext === undefined) {
             return [];
         }
         const results = new Map<string, AstNodeDescription>();
-        for (const target of allowedTargets) {
-            if (getOwningContextName(target) !== sourceContext) {
+        const groups = new Map<AstNode, AstNodeDescription[]>();
+        for (const description of allowedDescriptions) {
+            const target = this.callbacks.getDescriptionNode(description);
+            if (!target) {
+                continue;
+            }
+            const group = groups.get(target) ?? [];
+            group.push(description);
+            groups.set(target, group);
+        }
+        const standaloneCounts = new Map<string, number>();
+        for (const descriptions of groups.values()) {
+            const standalone = descriptions.map(description => description.name)
+                .find(name => !name.includes('.'));
+            if (standalone !== undefined) {
+                standaloneCounts.set(standalone, (standaloneCounts.get(standalone) ?? 0) + 1);
+            }
+        }
+        for (const [target, descriptions] of groups) {
+            const names = descriptions.map(description => description.name);
+            const crossContext = getOwningContextName(target) !== sourceContext;
+            if (crossContext) {
                 // Cross-context paths need their context or shared-kernel root.
                 // Inner module and aggregate segments are offered after that.
                 const contextPart = AstUtils.getContainerOfType(target, isBoundedContextPart);
                 const boundedContext = contextPart?.context?.ref;
                 if (isBoundedContext(boundedContext)) {
-                    this.addFirstPathSegment(results, context, boundedContext, boundedContext.name);
+                    this.addFirstPathSegment(results, context, boundedContext, boundedContext.name, replaceStart);
+                } else {
+                    const sharedKernel = AstUtils.getContainerOfType(target, isSharedKernel);
+                    if (sharedKernel) {
+                        this.addFirstPathSegment(results, context, sharedKernel, sharedKernel.name, replaceStart);
+                    }
+                }
+            }
+            if (typed.length > 0) {
+                const fullName = names
+                    .filter(name => name.includes('.'))
+                    .sort((left, right) =>
+                        left.split('.').length - right.split('.').length || left.length - right.length
+                    )[0];
+                const standalone = names.find(name => !name.includes('.'));
+                if (!this.matchesTypedFirstSegment(fullName, standalone, typed)) {
                     continue;
                 }
-                const sharedKernel = AstUtils.getContainerOfType(target, isSharedKernel);
-                if (sharedKernel) {
-                    this.addFirstPathSegment(results, context, sharedKernel, sharedKernel.name);
+                const qualifiedName = fullName ?? standalone;
+                if (qualifiedName === undefined) {
+                    continue;
                 }
+                const ambiguous = standalone !== undefined &&
+                    (standaloneCounts.get(standalone) ?? 0) > 1;
+                if (ambiguous) {
+                    // The short name does not identify one declaration. Keep the
+                    // short label but insert the qualified path that resolves.
+                    this.addTerminalPathItem(
+                        results,
+                        target,
+                        qualifiedName,
+                        standalone,
+                        qualifiedName,
+                        '0',
+                        replaceStart
+                    );
+                } else {
+                    const exactStandalone = standalone !== undefined &&
+                        standalone.toLowerCase() === typed.toLowerCase();
+                    const showQualified = !exactStandalone && qualifiedName !== standalone;
+                    if (showQualified) {
+                        this.addTerminalPathItem(
+                            results,
+                            target,
+                            qualifiedName,
+                            qualifiedName,
+                            qualifiedName,
+                            '0',
+                            replaceStart
+                        );
+                    }
+                    if (standalone !== undefined) {
+                        this.addTerminalPathItem(
+                            results,
+                            target,
+                            standalone,
+                            standalone,
+                            qualifiedName,
+                            showQualified ? '1' : '0',
+                            replaceStart
+                        );
+                    }
+                }
+            }
+            if (crossContext) {
                 continue;
             }
             let current = target.$container;
@@ -222,7 +341,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (this.isPathContainer(current)) {
                     const name = (current as AstNode & { name?: unknown }).name;
                     if (typeof name === 'string' && name.length > 0) {
-                        this.addFirstPathSegment(results, context, current, name);
+                        this.addFirstPathSegment(results, context, current, name, replaceStart);
                     }
                 }
                 current = current.$container;
@@ -231,18 +350,104 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         return [...results.values()];
     }
 
+    private matchesTypedFirstSegment(
+        fullName: string | undefined,
+        standalone: string | undefined,
+        typed: string
+    ): boolean {
+        if (typed.length === 0) {
+            return true;
+        }
+        const parts = fullName?.split('.') ?? [];
+        if (parts.slice(0, -1).some(part => this.pathSegmentMatchesTyped(part, typed))) {
+            return true;
+        }
+        if (standalone !== undefined && this.pathSegmentMatchesTyped(standalone, typed)) {
+            return true;
+        }
+        // A concatenated prefix such as `InventoryAggregInventoryItem` keeps
+        // the terminal name intact. Match the leading part against the
+        // container chain so the whole-path repair stays available.
+        const terminal = parts.at(-1);
+        if (terminal !== undefined && typed.length > terminal.length &&
+            typed.toLowerCase().endsWith(terminal.toLowerCase())) {
+            const prefix = typed.slice(0, typed.length - terminal.length);
+            const containers = parts.slice(0, -1).join('');
+            return containers.length > 0 &&
+                (containers.toLowerCase().startsWith(prefix.toLowerCase()) ||
+                    this.fuzzyMatcher.match(prefix, containers));
+        }
+        return false;
+    }
+
+    private pathSegmentMatchesTyped(segment: string, typed: string): boolean {
+        return segment.toLowerCase().startsWith(typed.toLowerCase()) ||
+            this.fuzzyMatcher.match(typed, segment);
+    }
+
+    private addTerminalPathItem(
+        results: Map<string, AstNodeDescription>,
+        target: AstNode,
+        name: string,
+        label: string,
+        filterText: string,
+        sortText: string,
+        replaceStart: number | undefined
+    ): void {
+        const description = this.descriptions.createDescription(target, name, AstUtils.getDocument(target));
+        const metadata = description as AstNodeDescription & {
+            thinaiNoDedupe?: boolean;
+            thinaiCompletionLabel?: string;
+            thinaiFilterText?: string;
+            thinaiSortText?: string;
+            thinaiPathReplacement?: string;
+            thinaiPathReplaceStart?: number;
+        };
+        metadata.thinaiNoDedupe = true;
+        metadata.thinaiCompletionLabel = label;
+        metadata.thinaiFilterText = filterText;
+        metadata.thinaiSortText = sortText;
+        this.addPathReplacement(metadata, name, replaceStart);
+        results.set(`${description.documentUri.toString()}#${description.path}#${sortText}`, description);
+    }
+
     private addFirstPathSegment(
         results: Map<string, AstNodeDescription>,
         context: ReferenceInfo,
         target: AstNode,
-        fallbackName: string
+        fallbackName: string,
+        replaceStart: number | undefined
     ): void {
         const name = this.getImportedRootName(context, target, fallbackName);
         const document = AstUtils.getDocument(target);
         const description = this.descriptions.createDescription(target, name, document);
-        (description as AstNodeDescription & { thinaiPathContinuation?: boolean })
-            .thinaiPathContinuation = true;
+        const metadata = description as AstNodeDescription & {
+            thinaiPathContinuation?: boolean;
+            thinaiNoDedupe?: boolean;
+            thinaiSortText?: string;
+            thinaiPathReplacement?: string;
+            thinaiPathReplaceStart?: number;
+        };
+        metadata.thinaiPathContinuation = true;
+        metadata.thinaiNoDedupe = true;
+        metadata.thinaiSortText = '2';
+        this.addPathReplacement(metadata, name, replaceStart);
         results.set(`${description.documentUri.toString()}#${description.path}`, description);
+    }
+
+    private addPathReplacement(
+        metadata: {
+            thinaiPathReplacement?: string;
+            thinaiPathReplaceStart?: number;
+        },
+        name: string,
+        replaceStart: number | undefined
+    ): void {
+        if (replaceStart === undefined) {
+            return;
+        }
+        metadata.thinaiPathReplacement = name;
+        metadata.thinaiPathReplaceStart = replaceStart;
     }
 
     private findPathSegment(parts: string[], typed: string, searchFrom: number): number {
@@ -704,15 +909,21 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 }
                 if (partialPrefix && firstPathStartOffset !== undefined) {
                     const replacement = segmentDescription as AstNodeDescription & {
+                        thinaiNoDedupe?: boolean;
                         thinaiPathReplacement?: string;
                         thinaiPathReplaceStart?: number;
                         thinaiCompletionLabel?: string;
                         thinaiFilterText?: string;
+                        thinaiSortText?: string;
                     };
+                    // After a dot the user has committed to a qualified path, so
+                    // show the full path instead of a bare terminal name.
+                    replacement.thinaiNoDedupe = true;
                     replacement.thinaiPathReplacement = actualSegmentName;
                     replacement.thinaiPathReplaceStart = firstPathStartOffset;
-                    replacement.thinaiCompletionLabel = segment;
+                    replacement.thinaiCompletionLabel = actualSegmentName;
                     replacement.thinaiFilterText = segment;
+                    replacement.thinaiSortText = '0';
                 }
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);
             }
