@@ -30,6 +30,7 @@ import {
     type Module,
     type Parameter,
     isAggregate,
+    isAggregateReference,
     isApplicationService,
     isBehavior,
     isBoundedContext,
@@ -1006,6 +1007,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 ? { ...defaultCompletion, items: defaultCompletion.items.filter(item => item.kind !== CompletionItemKind.Keyword) }
                 : defaultCompletion;
         }
+        const typedReadSource = this.getTypedReadSourceCompletions(document, params.position);
+        if (typedReadSource.active) {
+            return { isIncomplete: false, items: typedReadSource.items };
+        }
         const readSourceContinuation = this.getReadSourceContinuationCompletions(document, params.position);
         if (readSourceContinuation.active) {
             return { isIncomplete: false, items: readSourceContinuation.items };
@@ -1031,7 +1036,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .filter((detail): detail is string => typeof detail === 'string'));
         const exposurePathActive = exposureCompletions.some(item => {
             const data = item.data;
-            return typeof data === 'object' && data !== null && 'thinaiExposurePath' in data;
+            return typeof data === 'object' && data !== null && 'thinaiTypedPathList' in data;
         });
         const constrainedValueCompletions = [
             ...optionalClauseCompletions,
@@ -1517,6 +1522,62 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         };
     }
 
+    private getTypedReadSourceCompletions(
+        document: LangiumDocument,
+        position: Position
+    ): { active: boolean; items: CompletionItem[] } {
+        const root = document.parseResult.value;
+        if (!root) {
+            return { active: false, items: [] };
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const node = AstUtils.streamAst(root)
+            .filter(candidate => isReadSourceReference(candidate) || isAggregateReference(candidate))
+            .filter(candidate => {
+                const reference = candidate.target;
+                const referenceNode = reference?.$refNode;
+                return referenceNode !== undefined && reference.ref === undefined &&
+                    referenceNode.offset <= offset && offset <= referenceNode.end;
+            })
+            .toArray()
+            .sort((left, right) =>
+                (left.target?.$refNode?.end ?? 0) - (right.target?.$refNode?.end ?? 0)
+            )
+            .at(-1);
+        if (!node) {
+            return { active: false, items: [] };
+        }
+        const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
+        const referenceInfo = {
+            container: node,
+            property: 'target',
+            reference: node.target
+        } as ReferenceInfo;
+        const descriptions = scopeProvider.getPathCompletionCandidates(referenceInfo, offset);
+        if (descriptions === undefined || descriptions.length === 0) {
+            return { active: false, items: [] };
+        }
+        const firstReference = node.path[0] ?? node.target;
+        const startOffset = firstReference?.$refNode?.offset;
+        if (startOffset === undefined) {
+            return { active: false, items: [] };
+        }
+        const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
+        return {
+            active: true,
+            items: descriptions.map(description => {
+                const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+                return this.createPathListCompletionItem(
+                    document,
+                    description,
+                    startOffset,
+                    endOffset,
+                    this.isReadSourceStructuralTarget(target)
+                );
+            })
+        };
+    }
+
     private getReadSourceContinuationCompletions(
         document: LangiumDocument,
         position: Position
@@ -1662,7 +1723,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                                 !exposedNames.has(label) && !exposedShortNames.has(label);
                         })
                         .map(description =>
-                            this.createExposurePathCompletionItem(document, description, prefixStart, endOffset)
+                            this.createPathListCompletionItem(document, description, prefixStart, endOffset)
                         );
                 }
             }
@@ -1707,11 +1768,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             });
     }
 
-    private createExposurePathCompletionItem(
+    private createPathListCompletionItem(
         document: LangiumDocument,
         description: AstNodeDescription,
         startOffset: number,
-        endOffset: number
+        endOffset: number,
+        appendDot = false
     ): CompletionItem {
         const spelling = description as AstNodeDescription & {
             thinaiCompletionLabel?: string;
@@ -1721,14 +1783,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             thinaiPathReplacement?: string;
         };
         const replacement = spelling.thinaiPathReplacement ?? description.name;
-        const newText = `${formatQualifiedName(replacement)}${spelling.thinaiPathContinuation ? '.' : ''}`;
+        const continuation = spelling.thinaiPathContinuation === true || appendDot;
+        const newText = `${formatQualifiedName(replacement)}${continuation ? '.' : ''}`;
         return {
             label: spelling.thinaiCompletionLabel ?? description.name,
             filterText: spelling.thinaiFilterText ?? description.name,
             sortText: spelling.thinaiSortText,
             kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
             detail: this.completionDetails.getCompletionDetail(description),
-            data: { thinaiExposurePath: true },
+            data: { thinaiTypedPathList: true },
             textEdit: {
                 range: {
                     start: document.textDocument.positionAt(startOffset),

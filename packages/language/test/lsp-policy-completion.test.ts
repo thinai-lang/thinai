@@ -959,6 +959,174 @@ describe('LSP policy completion', () => {
         });
     });
 
+    test('applies the path policy inside invokes', async () => {
+        const base = `bounded context Ordering in bounded context Ordering {
+            aggregate InventoryAggregate {
+                root entity InventoryItem {
+                    method reserve(orderId: string) {}
+                    identifier sku: InventorySku
+                }
+                value object InventorySku {
+                    raw: string
+                }
+            }
+            application service InventoryReservation {
+                method onOrderPlaced(source: string) {
+                    invokes __TARGET__
+                }
+            }
+        }`;
+        const cases: Array<[string, string, string]> = [
+            ['InvAgg', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
+            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve'],
+            ['InvAgg.InventoryIte.reserve', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve']
+        ];
+        for (const [typed, label, newText] of cases) {
+            const text = base.replace('__TARGET__', typed);
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/invokes-path-${typed.replace(/\W/gu, '-')}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const marker = `invokes ${typed}`;
+            const offset = text.indexOf(marker) + marker.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const item = completion?.items.find(candidate => candidate.label === label);
+            expect(item, typed).toBeDefined();
+            expect(item?.textEdit, typed).toMatchObject({
+                newText,
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(marker) + 'invokes '.length),
+                    end: document.textDocument.positionAt(offset)
+                }
+            });
+        }
+    });
+
+    test('keeps segmented invokes completion for an exact path prefix', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate InventoryAggregate {
+                root entity InventoryItem {
+                    method reserve(orderId: string) {}
+                    identifier sku: InventorySku
+                }
+                value object InventorySku {
+                    raw: string
+                }
+            }
+            application service InventoryReservation {
+                method onOrderPlaced(source: string) {
+                    invokes InventoryAggregate.InventoryItem.
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invokes-exact-path.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'invokes InventoryAggregate.InventoryItem.';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(item => item.label === 'reserve')).toMatchObject({
+            textEdit: { newText: 'reserve' }
+        });
+    });
+
+    test('applies the path policy inside specification links', async () => {
+        const base = `bounded context Ordering in bounded context Ordering {
+            aggregate InventoryAggregate {
+                root entity InventoryItem {
+                    method reserve(orderId: string) {}
+                    identifier sku: InventorySku
+                }
+                value object InventorySku {
+                    raw: string
+                }
+            }
+            application service App {
+                method run() {
+                    behavior "Use [[__TARGET__]]."
+                }
+            }
+        }`;
+        const cases: Array<[string, string, string]> = [
+            ['InvAgg.', 'InventoryAggregate.InventoryItem', 'InventoryAggregate.InventoryItem.'],
+            ['InvAgg.InventoryIte.', 'InventoryAggregate.InventoryItem.reserve', 'InventoryAggregate.InventoryItem.reserve']
+        ];
+        for (const [typed, label, newText] of cases) {
+            const text = base.replace('__TARGET__', typed);
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/spec-path-${typed.replace(/\W/gu, '-')}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const offset = text.indexOf(`[[${typed}`) + `[[${typed}`.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const item = completion?.items.find(candidate => candidate.label === label);
+            expect(item, typed).toBeDefined();
+            expect(item?.textEdit, typed).toMatchObject({
+                newText,
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(`[[${typed}`) + 2),
+                    end: document.textDocument.positionAt(offset)
+                }
+            });
+        }
+    });
+
+    test('applies the path policy to a partial reads-from source', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate OrderAggregate {
+                root entity Order { identifier id: OrderId }
+                value object OrderId { raw: string }
+            }
+            aggregate InventoryAggregate {
+                root entity InventoryItem { identifier sku: InventorySku }
+                value object InventorySku { raw: string }
+            }
+            read model OrderSummary {}
+            query repository Q {
+                serves OrderSummary
+                reads from OrderAggregate, OrdAgg
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/reads-partial-source.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'reads from OrderAggregate, OrdAgg';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => String(item.label)) ?? [];
+        expect(labels).toContain('InventoryAggregate');
+        expect(labels).not.toContain('Ordering.InventoryAggregate');
+        expect(completion?.items.find(item => item.label === 'InventoryAggregate')).toMatchObject({
+            filterText: 'InventoryAggregate',
+            textEdit: {
+                newText: 'InventoryAggregate',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(marker) + 'reads from OrderAggregate, '.length),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
         const text = `bounded context Source
 
