@@ -3319,6 +3319,24 @@ in bounded context ${name} {
         }
     });
 
+    test('does not offer value-object member keywords while typing a backticked field name', async () => {
+        const prefix = 'bounded context Ordering\nin bounded context Ordering {\n  value object Money {\n    amount: decimal\n    `d';
+        const source = `${prefix}\n  }\n}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/backticked-value-object-field-completion.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(prefix.length)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).not.toContain('constructor');
+        expect(labels).not.toContain('method');
+    });
+
     test('preserves comments and ignores braces inside them when completing the first block member', async () => {
         const prefix = `bounded context Ordering
 in bounded context Ordering {

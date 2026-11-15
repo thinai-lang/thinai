@@ -156,6 +156,11 @@ export class ThinaiBlockCompletion {
         }
         const labels = this.keywordContinuations.getSiblingKeywordLabelsAt(block, offset);
         const prefix = text.slice(linePrefixStart(openingBrace), offset).trim();
+        if (prefix.includes('`')) {
+            // A backtick starts or continues a quoted identifier. Declaration
+            // keywords must not replace the partially typed field name.
+            return [];
+        }
         const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
         const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
         const completions = this.createKeywordCompletions(matchingLabels, document, position, typedPrefix);
