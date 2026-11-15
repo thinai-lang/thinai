@@ -231,6 +231,64 @@ in bounded context Ordering {
         ]);
     });
 
+    test('expands selection ranges at the end of statements', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    event OrderConfirmed
+    aggregate OrderAggregate {
+        root entity Order {
+            method place() {
+                emits OrderConfirmed
+            }
+            method submit() {
+                invokes OrderAggregate.Order.place
+            }
+            identifier id: OrderId
+        }
+        value object OrderId { raw: string }
+    }
+    data object Holder { x: OrderAggregate.OrderId }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/end-of-statement-selection-ranges.tni'), source
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const textsAt = (marker: string): string[] => {
+            const offset = source.indexOf(marker) + marker.length;
+            let current = createThinaiSelectionRange(document, document.textDocument.positionAt(offset));
+            const texts: string[] = [];
+            while (current) {
+                texts.push(document.textDocument.getText(current.range));
+                current = current.parent;
+            }
+            return texts;
+        };
+
+        const emits = textsAt('emits OrderConfirmed');
+        expect(emits[0]).toBe('OrderConfirmed');
+        expect(emits[1]).toBe('emits OrderConfirmed');
+        expect(emits[2]).toContain('method place()');
+        expect(emits[3]).toContain('root entity Order');
+
+        const invokes = textsAt('invokes OrderAggregate.Order.place');
+        expect(invokes.slice(0, 3)).toEqual([
+            'place',
+            'OrderAggregate.Order.place',
+            'invokes OrderAggregate.Order.place'
+        ]);
+        expect(invokes[3]).toContain('method submit()');
+
+        const type = textsAt('x: OrderAggregate.OrderId');
+        expect(type.slice(0, 3)).toEqual([
+            'OrderId',
+            'OrderAggregate.OrderId',
+            'x: OrderAggregate.OrderId'
+        ]);
+        expect(type[3]).toContain('data object Holder');
+    });
+
     test('applies configured indentation to structurally indented completion edits', () => {
         const completionText = '\n  method\n  }';
         expect(applyConfiguredIndentation(completionText, 2, 2, true)).toBe('\n    method\n  }');

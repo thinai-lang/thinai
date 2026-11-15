@@ -1,4 +1,4 @@
-import { AstUtils, CstUtils, GrammarUtils, type AstNode, type LangiumDocument, type Reference } from 'langium';
+import { AstUtils, CstUtils, GrammarUtils, type AstNode, type CstNode, type LangiumDocument, type Reference } from 'langium';
 import { Range, SelectionRange, type Position } from 'vscode-languageserver-types';
 import { isMethod, isSpecificationText, isSpecificationTextPart } from './generated/ast.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
@@ -21,7 +21,7 @@ export function createThinaiSelectionRange(
         return createLineSelectionRange(document, position);
     }
 
-    const leaf = CstUtils.findLeafNodeAtOffset(root, offset);
+    const leaf = findSelectionLeaf(root, document.textDocument.getText(), offset);
     if (!leaf) {
         return createLineSelectionRange(document, position);
     }
@@ -70,6 +70,21 @@ export function createThinaiSelectionRange(
         (parent, range) => SelectionRange.create(range, parent),
         undefined
     );
+}
+
+function findSelectionLeaf(root: CstNode, text: string, offset: number) {
+    const leaf = CstUtils.findLeafNodeAtOffset(root, offset);
+    if (leaf) {
+        return leaf;
+    }
+    if (offset <= 0) {
+        return undefined;
+    }
+    const previous = CstUtils.findLeafNodeAtOffset(root, offset - 1);
+    if (!previous || /[\r\n]/u.test(text.slice(previous.end, offset))) {
+        return undefined;
+    }
+    return previous;
 }
 
 function findReferenceNode(node: AstNode, offset: number): AstNode | undefined {
