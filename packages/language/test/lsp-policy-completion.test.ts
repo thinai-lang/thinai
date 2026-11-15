@@ -1132,6 +1132,47 @@ describe('LSP policy completion', () => {
         });
     });
 
+    test('matches a concatenated chain across lowercase-starting segments', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                exposes OrderPlaced
+                event OrderPlaced {
+                    orderId: string
+                }
+            }
+            application service App {
+                method run() {
+                    behavior "Use [[DomainOrderPlaceorderI]]."
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/spec-lowercase-chain.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = '[[DomainOrderPlaceorderI';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const item = completion?.items.find(candidate =>
+            candidate.label === 'Domain.OrderPlaced.orderId'
+        );
+        expect(item).toBeDefined();
+        expect(item).toMatchObject({
+            filterText: 'Domain.OrderPlaced.orderId',
+            textEdit: {
+                newText: 'Domain.OrderPlaced.orderId',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(marker) + 2),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
         const text = `bounded context Source
 

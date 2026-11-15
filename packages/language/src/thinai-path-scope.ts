@@ -403,58 +403,42 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (segments.length === 0 || typed.length === 0) {
             return false;
         }
-        if (segments.length === 1) {
-            return this.pathSegmentMatchesTyped(segments[0]!, typed);
-        }
-        for (let index = 2; index < typed.length; index++) {
-            if (!this.isUppercaseIdentifierStart(typed[index]!)) {
-                continue;
+        const memo = new Map<string, boolean>();
+        const match = (segmentIndex: number, typedIndex: number): boolean => {
+            if (segmentIndex === segments.length) {
+                return typedIndex === typed.length;
             }
-            const prefix = typed.slice(0, index);
-            const suffix = typed.slice(index);
-            if (this.pathFragmentMatches(prefix, segments[0]!) &&
-                this.matchesSegmentChain(segments.slice(1), suffix)) {
-                return true;
+            const key = `${segmentIndex}:${typedIndex}`;
+            const cached = memo.get(key);
+            if (cached !== undefined) {
+                return cached;
             }
-        }
-        return false;
+            const segment = segments[segmentIndex]!;
+            const remainingSegments = segments.length - segmentIndex - 1;
+            let matched = false;
+            for (let end = typedIndex + 2; end <= typed.length; end++) {
+                if (typed.length - end < remainingSegments * 2) {
+                    continue;
+                }
+                const fragment = typed.slice(typedIndex, end);
+                if (this.pathFragmentMatches(fragment, segment) && match(segmentIndex + 1, end)) {
+                    matched = true;
+                    break;
+                }
+            }
+            memo.set(key, matched);
+            return matched;
+        };
+        return match(0, 0);
     }
 
     /**
      * A dotless token can abbreviate both the container and the terminal, for
-     * example `InvenAggreInveIte`. Split at camel-case boundaries and require
-     * both halves to match so an abbreviation never matches an unrelated path.
+     * example `InvenAggreInveIte`. Every part must match consecutive segments;
+     * boundaries are searched rather than assumed to be camel-case.
      */
     private matchesConcatenatedFirstSegment(parts: string[], typed: string): boolean {
-        const terminal = parts.at(-1);
-        if (terminal === undefined || parts.length < 2) {
-            return false;
-        }
-        const containers = parts.slice(0, -1).join('');
-        if (containers.length === 0) {
-            return false;
-        }
-        if (typed.length > terminal.length && typed.toLowerCase().endsWith(terminal.toLowerCase())) {
-            const prefix = typed.slice(0, typed.length - terminal.length);
-            if (this.pathFragmentMatches(prefix, containers)) {
-                return true;
-            }
-        }
-        for (let index = 2; index < typed.length - 1; index++) {
-            if (!this.isUppercaseIdentifierStart(typed[index]!)) {
-                continue;
-            }
-            const prefix = typed.slice(0, index);
-            const suffix = typed.slice(index);
-            if (suffix.length < 2) {
-                continue;
-            }
-            if (this.pathFragmentMatches(prefix, containers) &&
-                this.pathFragmentMatches(suffix, terminal)) {
-                return true;
-            }
-        }
-        return false;
+        return parts.length >= 2 && this.matchesSegmentChain(parts, typed);
     }
 
     private pathFragmentMatches(fragment: string, segment: string): boolean {
@@ -475,10 +459,6 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         }
         const prefix = `${actualPath}.`;
         return [...allowedPaths].some(path => path.startsWith(prefix));
-    }
-
-    private isUppercaseIdentifierStart(char: string): boolean {
-        return char !== char.toLowerCase() && char === char.toUpperCase();
     }
 
     private pathSegmentMatchesTyped(segment: string, typed: string): boolean {
