@@ -778,6 +778,57 @@ describe('LSP policy completion', () => {
         }
     });
 
+    test('matches an abbreviated container and terminal in a concatenated first segment', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            aggregate InventoryAggregate {
+                root entity InventoryItem {
+                    identifier sku: InventorySku
+                }
+                value object InventorySku {
+                    raw: string
+                }
+            }
+            repository InventoryRepository {
+                manages InvenAggreInveIte
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/concatenated-abbreviations.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'manages InvenAggreInveIte';
+        const offset = text.indexOf(marker) + marker.length;
+        const start = text.indexOf(marker) + 'manages '.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => String(item.label)) ?? [];
+        expect(labels).toContain('InventoryAggregate.InventoryItem');
+        expect(labels).toContain('InventoryItem');
+        expect(labels).toContain('InventoryAggregate');
+        const wholeTokenRange = {
+            start: document.textDocument.positionAt(start),
+            end: document.textDocument.positionAt(offset)
+        };
+        expect(completion?.items.find(item => item.label === 'InventoryAggregate.InventoryItem')).toMatchObject({
+            sortText: '0',
+            filterText: 'InventoryAggregate.InventoryItem',
+            textEdit: { newText: 'InventoryAggregate.InventoryItem', range: wholeTokenRange }
+        });
+        expect(completion?.items.find(item => item.label === 'InventoryItem')).toMatchObject({
+            sortText: '1',
+            filterText: 'InventoryAggregate.InventoryItem',
+            textEdit: { newText: 'InventoryItem', range: wholeTokenRange }
+        });
+        expect(completion?.items.find(item => item.label === 'InventoryAggregate')).toMatchObject({
+            sortText: '2',
+            filterText: 'InventoryAggregate.InventoryItem',
+            textEdit: { newText: 'InventoryAggregate.', range: wholeTokenRange }
+        });
+    });
+
     test('shows only the full path after a partially typed dotted path', async () => {
         const base = `bounded context Ordering in bounded context Ordering {
             aggregate OrderAggregate {

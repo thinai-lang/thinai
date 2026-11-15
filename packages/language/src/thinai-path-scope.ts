@@ -277,6 +277,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     }
                 }
             }
+            let qualifiedName: string | undefined;
             if (typed.length > 0) {
                 const fullName = names
                     .filter(name => name.includes('.'))
@@ -287,7 +288,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (!this.matchesTypedFirstSegment(fullName, standalone, typed)) {
                     continue;
                 }
-                const qualifiedName = fullName ?? standalone;
+                qualifiedName = fullName ?? standalone;
                 if (qualifiedName === undefined) {
                     continue;
                 }
@@ -341,7 +342,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (this.isPathContainer(current)) {
                     const name = (current as AstNode & { name?: unknown }).name;
                     if (typeof name === 'string' && name.length > 0) {
-                        this.addFirstPathSegment(results, context, current, name, replaceStart);
+                        this.addFirstPathSegment(results, context, current, name, replaceStart, qualifiedName);
                     }
                 }
                 current = current.$container;
@@ -365,19 +366,53 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (standalone !== undefined && this.pathSegmentMatchesTyped(standalone, typed)) {
             return true;
         }
-        // A concatenated prefix such as `InventoryAggregInventoryItem` keeps
-        // the terminal name intact. Match the leading part against the
-        // container chain so the whole-path repair stays available.
+        return this.matchesConcatenatedFirstSegment(parts, typed);
+    }
+
+    /**
+     * A dotless token can abbreviate both the container and the terminal, for
+     * example `InvenAggreInveIte`. Split at camel-case boundaries and require
+     * both halves to match so an abbreviation never matches an unrelated path.
+     */
+    private matchesConcatenatedFirstSegment(parts: string[], typed: string): boolean {
         const terminal = parts.at(-1);
-        if (terminal !== undefined && typed.length > terminal.length &&
-            typed.toLowerCase().endsWith(terminal.toLowerCase())) {
+        if (terminal === undefined || parts.length < 2) {
+            return false;
+        }
+        const containers = parts.slice(0, -1).join('');
+        if (containers.length === 0) {
+            return false;
+        }
+        if (typed.length > terminal.length && typed.toLowerCase().endsWith(terminal.toLowerCase())) {
             const prefix = typed.slice(0, typed.length - terminal.length);
-            const containers = parts.slice(0, -1).join('');
-            return containers.length > 0 &&
-                (containers.toLowerCase().startsWith(prefix.toLowerCase()) ||
-                    this.fuzzyMatcher.match(prefix, containers));
+            if (this.pathFragmentMatches(prefix, containers)) {
+                return true;
+            }
+        }
+        for (let index = 2; index < typed.length - 1; index++) {
+            if (!this.isUppercaseIdentifierStart(typed[index]!)) {
+                continue;
+            }
+            const prefix = typed.slice(0, index);
+            const suffix = typed.slice(index);
+            if (suffix.length < 2) {
+                continue;
+            }
+            if (this.pathFragmentMatches(prefix, containers) &&
+                this.pathFragmentMatches(suffix, terminal)) {
+                return true;
+            }
         }
         return false;
+    }
+
+    private pathFragmentMatches(fragment: string, segment: string): boolean {
+        return segment.toLowerCase().startsWith(fragment.toLowerCase()) ||
+            this.fuzzyMatcher.match(fragment, segment);
+    }
+
+    private isUppercaseIdentifierStart(char: string): boolean {
+        return char !== char.toLowerCase() && char === char.toUpperCase();
     }
 
     private pathSegmentMatchesTyped(segment: string, typed: string): boolean {
@@ -416,7 +451,8 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         context: ReferenceInfo,
         target: AstNode,
         fallbackName: string,
-        replaceStart: number | undefined
+        replaceStart: number | undefined,
+        filterText?: string
     ): void {
         const name = this.getImportedRootName(context, target, fallbackName);
         const document = AstUtils.getDocument(target);
@@ -425,12 +461,16 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             thinaiPathContinuation?: boolean;
             thinaiNoDedupe?: boolean;
             thinaiSortText?: string;
+            thinaiFilterText?: string;
             thinaiPathReplacement?: string;
             thinaiPathReplaceStart?: number;
         };
         metadata.thinaiPathContinuation = true;
         metadata.thinaiNoDedupe = true;
         metadata.thinaiSortText = '2';
+        if (filterText !== undefined) {
+            metadata.thinaiFilterText = filterText;
+        }
         this.addPathReplacement(metadata, name, replaceStart);
         results.set(`${description.documentUri.toString()}#${description.path}`, description);
     }
