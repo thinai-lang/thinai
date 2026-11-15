@@ -922,7 +922,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     replacement.thinaiPathReplacement = actualSegmentName;
                     replacement.thinaiPathReplaceStart = firstPathStartOffset;
                     replacement.thinaiCompletionLabel = actualSegmentName;
-                    replacement.thinaiFilterText = segment;
+                    replacement.thinaiFilterText = actualSegmentName;
                     replacement.thinaiSortText = '0';
                 }
                 results.set(`${segmentDescription.documentUri.toString()}#${segmentDescription.path}`, segmentDescription);

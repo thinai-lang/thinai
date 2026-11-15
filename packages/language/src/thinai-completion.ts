@@ -1626,7 +1626,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     (fullName === typedPrefix || shortName === typedPrefix);
                 return this.matchesCompletionPrefix(description.name, typedPrefix) &&
                     !alreadyExposed && !exactCurrentSegment &&
-                    !existingItems.some(item => item.label === description.name && item.detail === detail);
+                    !existingItems.some(item => item.detail === detail);
             })
             .map(description => {
                 const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);

@@ -653,6 +653,7 @@ describe('LSP policy completion', () => {
                 candidate.label === 'InventoryAggregate.InventoryItem'
             );
             expect(item, target).toBeDefined();
+            expect(item?.filterText, target).toBe('InventoryAggregate.InventoryItem');
             expect(item?.textEdit, target).toMatchObject({
                 newText: 'InventoryAggregate.InventoryItem',
                 range: {
@@ -800,6 +801,8 @@ describe('LSP policy completion', () => {
             const labels = completion?.items.map(item => String(item.label)) ?? [];
             expect(labels, typed).toContain('OrderAggregate.OrderId');
             expect(labels, typed).not.toContain('OrderId');
+            const item = completion?.items.find(candidate => candidate.label === 'OrderAggregate.OrderId');
+            expect(item?.filterText, typed).toBe('OrderAggregate.OrderId');
         }
     });
 
@@ -824,6 +827,43 @@ describe('LSP policy completion', () => {
         const item = completion?.items.find(candidate => candidate.label === 'OrderId');
         expect(item).toBeDefined();
         expect(item?.textEdit).toMatchObject({ newText: 'OrderId' });
+    });
+
+    test('keeps the canonical path and filters by it in an exposes list', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                aggregate OrderAggregate {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                exposes OrderAggregate, OrdAgg.OrdId
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/exposes-partial-path.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'exposes OrderAggregate, OrdAgg.OrdId';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => String(item.label)) ?? [];
+        expect(labels).toContain('OrderAggregate.OrderId');
+        expect(labels).not.toContain('Ordering.Domain.OrderAggregate.OrderId');
+        const item = completion?.items.find(candidate => candidate.label === 'OrderAggregate.OrderId');
+        expect(item).toMatchObject({
+            filterText: 'OrderAggregate.OrderId',
+            textEdit: {
+                newText: 'OrderAggregate.OrderId',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf(marker) + marker.lastIndexOf(' ') + 1),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
     });
 
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
