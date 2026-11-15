@@ -1228,6 +1228,50 @@ describe('LSP policy completion', () => {
         }
     });
 
+    test('matches a one-character final segment abbreviation', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                exposes OrderAggregate, OrderPlaced
+                aggregate OrderAggregate {
+                    root entity Order { identifier id: OrderId }
+                    value object OrderId { raw: string }
+                }
+                event OrderPlaced {
+                    orderId: string
+                }
+            }
+            application service App {
+                method run() {
+                    behavior "Use [[DomO]]."
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/spec-one-character-segment.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = '[[DomO';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        for (const label of ['Domain.OrderAggregate', 'Domain.OrderPlaced']) {
+            const item = completion?.items.find(candidate => candidate.label === label);
+            expect(item, label).toMatchObject({
+                filterText: label,
+                textEdit: {
+                    newText: label,
+                    range: {
+                        start: document.textDocument.positionAt(text.indexOf(marker) + 2),
+                        end: document.textDocument.positionAt(offset)
+                    }
+                }
+            });
+        }
+    });
+
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
         const text = `bounded context Source
 

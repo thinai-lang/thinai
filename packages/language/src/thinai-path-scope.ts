@@ -420,9 +420,11 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             }
             const segment = segments[segmentIndex]!;
             const remainingSegments = segments.length - segmentIndex - 1;
+            const minimumLength = remainingSegments === 0 ? 1 : 2;
+            const minimumRemaining = remainingSegments === 0 ? 0 : (remainingSegments - 1) * 2 + 1;
             let matched = false;
-            for (let end = typedIndex + 2; end <= typed.length; end++) {
-                if (typed.length - end < remainingSegments * 2) {
+            for (let end = typedIndex + minimumLength; end <= typed.length; end++) {
+                if (typed.length - end < minimumRemaining) {
                     continue;
                 }
                 const fragment = typed.slice(typedIndex, end);
@@ -718,17 +720,17 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         const rootMatchesTyped = [...candidates.values()]
             .some(description => this.pathSegmentMatchesTyped(description.name, typed));
             if (typed.length > 0 && !rootMatchesTyped) {
-                const pathCandidates = this.getFirstPathSegmentCandidates(
-                    context,
-                    this.expandSpecificationShapeDescriptions(context, allowedDescriptions, scope),
-                    typed,
-                    part.target?.$refNode?.offset,
-                    false
-                );
-                if (pathCandidates.length > 0) {
-                    return pathCandidates;
-                }
+            const pathCandidates = this.getFirstPathSegmentCandidates(
+                context,
+                this.expandSpecificationShapeDescriptions(context, allowedDescriptions, scope),
+                typed,
+                part.target?.$refNode?.offset,
+                false
+            );
+            if (pathCandidates.length > 0) {
+                return pathCandidates;
             }
+        }
         return [...candidates.values()];
     }
 
