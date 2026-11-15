@@ -1173,6 +1173,61 @@ describe('LSP policy completion', () => {
         });
     });
 
+    test('matches nested specification shape members in a dotless chain', async () => {
+        const base = `bounded context Ordering in bounded context Ordering {
+            value object OrderLineSnapshot {
+                sku: string
+                quantity: integer
+            }
+            module Domain {
+                exposes OrderPlaced
+                event OrderPlaced {
+                    lines: List<OrderLineSnapshot>
+                }
+            }
+            application service App {
+                method run() {
+                    behavior "Use [[__TARGET__]]."
+                }
+            }
+        }`;
+        const cases: Array<[string, string, boolean]> = [
+            ['DomOrPlalin', 'Domain.OrderPlaced.lines', true],
+            ['DomOrPlalinsk', 'Domain.OrderPlaced.lines.sku', false]
+        ];
+        for (const [typed, label, parentOnly] of cases) {
+            const text = base.replace('__TARGET__', typed);
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/spec-shape-chain-${typed}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const marker = `[[${typed}`;
+            const offset = text.indexOf(marker) + marker.length;
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            const labels = completion?.items.map(item => String(item.label)) ?? [];
+            expect(labels, typed).toContain(label);
+            expect(labels, typed).not.toContain('OrderLineSnapshot');
+            if (parentOnly) {
+                expect(labels, typed).not.toContain('Domain.OrderPlaced.lines.sku');
+            }
+            const item = completion?.items.find(candidate => candidate.label === label);
+            expect(item).toMatchObject({
+                filterText: label,
+                textEdit: {
+                    newText: label,
+                    range: {
+                        start: document.textDocument.positionAt(text.indexOf(marker) + 2),
+                        end: document.textDocument.positionAt(offset)
+                    }
+                }
+            });
+        }
+    });
+
     test('offers the context root at the first segment of a cross-context mirror path', async () => {
         const text = `bounded context Source
 

@@ -235,7 +235,8 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         context: ReferenceInfo,
         allowedDescriptions: AstNodeDescription[],
         typed: string,
-        replaceStart: number | undefined
+        replaceStart: number | undefined,
+        allowContainerChain = true
     ): AstNodeDescription[] {
         const sourceContext = getOwningContextName(context.container);
         if (sourceContext === undefined &&
@@ -286,10 +287,11 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                         left.split('.').length - right.split('.').length || left.length - right.length
                     );
                 const standalone = names.find(name => !name.includes('.'));
+                const allowChainForTarget = allowContainerChain || isMethod(target);
                 const fullName = dottedNames.find(name =>
-                    this.matchesTypedFirstSegment(name, undefined, typed)
+                    this.matchesTypedFirstSegment(name, undefined, typed, allowChainForTarget)
                 ) ?? dottedNames[0];
-                if (!this.matchesTypedFirstSegment(fullName, standalone, typed)) {
+                if (!this.matchesTypedFirstSegment(fullName, standalone, typed, allowChainForTarget)) {
                     continue;
                 }
                 const declarationDepth = typeof (target as { name?: unknown }).name === 'string'
@@ -345,7 +347,9 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     }
                 }
             }
-            if (crossContext) {
+            if (crossContext || descriptions.some(description =>
+                (description as AstNodeDescription & { thinaiNoContainers?: boolean }).thinaiNoContainers
+            )) {
                 continue;
             }
             let current = target.$container;
@@ -365,7 +369,8 @@ export class ThinaiPathScope extends DefaultScopeProvider {
     private matchesTypedFirstSegment(
         fullName: string | undefined,
         standalone: string | undefined,
-        typed: string
+        typed: string,
+        allowContainerChain = true
     ): boolean {
         if (typed.length === 0) {
             return true;
@@ -374,7 +379,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (parts.slice(0, -1).some(part => this.pathSegmentMatchesTyped(part, typed))) {
             return true;
         }
-        if (this.matchesContainerChain(parts.slice(0, -1), typed)) {
+        if (allowContainerChain && this.matchesContainerChain(parts.slice(0, -1), typed)) {
             return true;
         }
         if (standalone !== undefined && this.pathSegmentMatchesTyped(standalone, typed)) {
@@ -712,18 +717,67 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         const typed = part.target?.$refText ?? '';
         const rootMatchesTyped = [...candidates.values()]
             .some(description => this.pathSegmentMatchesTyped(description.name, typed));
-        if (typed.length > 0 && !rootMatchesTyped) {
-            const pathCandidates = this.getFirstPathSegmentCandidates(
-                context,
-                allowedDescriptions,
-                typed,
-                part.target?.$refNode?.offset
-            );
-            if (pathCandidates.length > 0) {
-                return pathCandidates;
+            if (typed.length > 0 && !rootMatchesTyped) {
+                const pathCandidates = this.getFirstPathSegmentCandidates(
+                    context,
+                    this.expandSpecificationShapeDescriptions(context, allowedDescriptions, scope),
+                    typed,
+                    part.target?.$refNode?.offset,
+                    false
+                );
+                if (pathCandidates.length > 0) {
+                    return pathCandidates;
+                }
+            }
+        return [...candidates.values()];
+    }
+
+    /**
+     * Nested shape members are not part of the normal scope. Add their full
+     * paths so a dotless chain such as `DomOrPlalinsk` can resolve to
+     * `Domain.OrderPlaced.lines.sku`.
+     */
+    private expandSpecificationShapeDescriptions(
+        context: ReferenceInfo,
+        descriptions: AstNodeDescription[],
+        scope: Scope
+    ): AstNodeDescription[] {
+        const results = new Map<string, AstNodeDescription>();
+        const queue: AstNodeDescription[] = [];
+        const add = (description: AstNodeDescription): void => {
+            const key = `${description.documentUri.toString()}#${description.path}#${description.name}`;
+            if (results.has(key)) {
+                return;
+            }
+            results.set(key, description);
+            queue.push(description);
+        };
+        for (const description of descriptions) {
+            add(description);
+        }
+        while (queue.length > 0) {
+            const description = queue.shift()!;
+            const target = this.callbacks.getDescriptionNode(description);
+            if (!target || !this.hasNavigableShapeMembers(target)) {
+                continue;
+            }
+            const prefix = description.name.split('.');
+            for (const member of this.getSpecificationShapeMembers(context, prefix, scope)) {
+                const name = this.nameProvider.getName(member);
+                if (!name) {
+                    continue;
+                }
+                const memberDescription = this.descriptions.createDescription(
+                    member,
+                    [...prefix, name].join('.'),
+                    AstUtils.getDocument(member)
+                );
+                (memberDescription as AstNodeDescription & { thinaiNoContainers?: boolean })
+                    .thinaiNoContainers = true;
+                add(memberDescription);
             }
         }
-        return [...candidates.values()];
+        return [...results.values()];
     }
 
     private isBareResultCollision(context: ReferenceInfo, target: AstNode): boolean {
