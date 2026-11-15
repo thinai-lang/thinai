@@ -10,11 +10,16 @@ import {
     type Stream
 } from 'langium';
 import {
+    isAggregate,
+    isApplicationService,
+    isBoundedContext,
     isBoundedContextPart,
     isDataObject,
     isDomainEvent,
+    isDomainService,
     isEntity,
     isEnumType,
+    isFactory,
     isField,
     isImportableComponent,
     isIntegrationEvent,
@@ -24,8 +29,11 @@ import {
     isModel,
     isModule,
     isParameter,
+    isProjector,
+    isQueryService,
     isReadModel,
     isReadSourceReference,
+    isSharedKernel,
     isSpecificationTextPart,
     isValueObject,
     type DataObject,
@@ -39,6 +47,7 @@ import {
 } from './generated/ast.js';
 import { getNavigableTypeReferences } from './thinai-type-utils.js';
 import { unquoteIdentifier } from './thinai-identifiers.js';
+import { getOwningContextName } from './thinai-scope-utils.js';
 
 type FieldShape = DataObject | DomainEvent | Entity | IntegrationEvent | ReadModel | ValueObject;
 
@@ -123,13 +132,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         // reference is actually the last path segment being edited. Treat it
         // as part of the prefix so completion offers its children.
         const trailingTerminalSegment = this.hasTrailingDot(terminalReference, container, offset);
-        if (pathValues.length === 0 && !trailingTerminalSegment) {
-            // A path property with no parsed path means the user has not begun
-            // a qualified path yet; suppress its generic completion so path
-            // containers are not offered as a first token. A terminal property
-            // still falls through to normal reference completion.
-            return completingPathProperty ? [] : undefined;
-        }
+        const firstPathSegment = pathValues.length === 0 && !trailingTerminalSegment;
         const completedPathCount = offset === undefined
             ? context.index ?? pathValues.length
             : (pathValues as ReferenceInfo['reference'][]).filter(reference =>
@@ -163,6 +166,14 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         if (!referenceType) {
             return [];
         }
+        if (firstPathSegment) {
+            // With no parsed path yet, terminal completion already offers the
+            // target. Add its enclosing containers so a qualified path can be
+            // started without typing the container name manually.
+            return completingPathProperty
+                ? this.getFirstPathSegmentCandidates(context, allowedTargets)
+                : undefined;
+        }
         return this.getPathSegmentCompletions(
             context,
             referenceType,
@@ -170,6 +181,76 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             allowedTargets,
             completingPathProperty && pathProperty === 'path' && !isReadSourceReference(container)
         );
+    }
+
+    private getFirstPathSegmentCandidates(
+        context: ReferenceInfo,
+        allowedTargets: Set<AstNode>
+    ): AstNodeDescription[] {
+        const sourceContext = getOwningContextName(context.container);
+        if (sourceContext === undefined) {
+            return [];
+        }
+        const results = new Map<string, AstNodeDescription>();
+        for (const target of allowedTargets) {
+            if (getOwningContextName(target) !== sourceContext) {
+                // Cross-context paths need their context or shared-kernel root.
+                // Inner module and aggregate segments are offered after that.
+                const contextPart = AstUtils.getContainerOfType(target, isBoundedContextPart);
+                const boundedContext = contextPart?.context?.ref;
+                if (isBoundedContext(boundedContext)) {
+                    this.addFirstPathSegment(results, context, boundedContext, boundedContext.name);
+                    continue;
+                }
+                const sharedKernel = AstUtils.getContainerOfType(target, isSharedKernel);
+                if (sharedKernel) {
+                    this.addFirstPathSegment(results, context, sharedKernel, sharedKernel.name);
+                }
+                continue;
+            }
+            let current = target.$container;
+            while (current) {
+                if (this.isPathContainer(current)) {
+                    const name = (current as AstNode & { name?: unknown }).name;
+                    if (typeof name === 'string' && name.length > 0) {
+                        this.addFirstPathSegment(results, context, current, name);
+                    }
+                }
+                current = current.$container;
+            }
+        }
+        return [...results.values()];
+    }
+
+    private addFirstPathSegment(
+        results: Map<string, AstNodeDescription>,
+        context: ReferenceInfo,
+        target: AstNode,
+        fallbackName: string
+    ): void {
+        const name = this.getImportedRootName(context, target, fallbackName);
+        const document = AstUtils.getDocument(target);
+        const description = this.descriptions.createDescription(target, name, document);
+        (description as AstNodeDescription & { thinaiPathContinuation?: boolean })
+            .thinaiPathContinuation = true;
+        results.set(`${description.documentUri.toString()}#${description.path}`, description);
+    }
+
+    private getImportedRootName(context: ReferenceInfo, target: AstNode, fallbackName: string): string {
+        const model = AstUtils.getDocument(context.container).parseResult.value;
+        if (!isModel(model)) {
+            return fallbackName;
+        }
+        const component = model.imports
+            .flatMap(declaration => declaration.components)
+            .find(candidate => candidate.component.ref === target);
+        return component?.alias ?? fallbackName;
+    }
+
+    private isPathContainer(target: AstNode): boolean {
+        return isModule(target) || isAggregate(target) || isEntity(target) || isValueObject(target) ||
+            isApplicationService(target) || isQueryService(target) || isDomainService(target) ||
+            isProjector(target) || isFactory(target) || isSharedKernel(target);
     }
 
     private getPathPropertyName(property: string, container: Record<string, unknown>): string | undefined {

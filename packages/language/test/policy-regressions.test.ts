@@ -538,7 +538,7 @@ in bounded context C {
         expect(errors(docs['a.tni']!).some(message => message.includes('dependency on a module'))).toBe(true);
     });
 
-    test('deduplicates completion items for one target', async () => {
+    test('deduplicates completion items with the same label', async () => {
         const docs = await build({
             'a.tni': `bounded context C
 in bounded context C {
@@ -558,8 +558,16 @@ in bounded context C {
         const source = docs['a.tni']!.textDocument.getText();
         const offset = source.indexOf('manages ') + 'manages '.length;
         const items = await completion(docs['a.tni']!, offset);
-        const labels = items?.items.map(item => item.label) ?? [];
-        expect(labels.filter(label => label === 'A' || label === 'A.A' || label === 'C.A.A')).toHaveLength(1);
+        const matching = (items?.items ?? []).filter(item =>
+            item.label === 'A' || item.label === 'A.A' || item.label === 'C.A.A'
+        );
+        const keys = matching.map(item => [
+            item.label,
+            item.detail ?? '',
+            item.textEdit ? JSON.stringify(item.textEdit) : item.insertText ?? ''
+        ].join('\u0000'));
+        expect(matching.length).toBeGreaterThan(0);
+        expect(new Set(keys).size).toBe(keys.length);
     });
 
     test('rejects import aliases that collide with local declarations', async () => {

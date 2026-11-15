@@ -401,8 +401,12 @@ describe('LSP policy completion', () => {
         });
         const labels = completion?.items.map(item => item.label) ?? [];
         expect(labels).toContain('Request');
-        expect(labels).not.toContain('Order');
-        expect(labels).not.toContain('OrderSummary');
+        const terminalLabels = completion?.items
+            .filter(item => !(item.textEdit && 'newText' in item.textEdit &&
+                typeof item.textEdit.newText === 'string' && item.textEdit.newText.endsWith('.')))
+            .map(item => item.label) ?? [];
+        expect(terminalLabels).not.toContain('Order');
+        expect(terminalLabels).not.toContain('OrderSummary');
     });
 
     test('offers enum states for initial values and allowed context-map integration patterns', async () => {
@@ -563,6 +567,97 @@ describe('LSP policy completion', () => {
             position: allowedDocument.textDocument.positionAt(exposedRootOffset)
         });
         expect(exposedRootCompletion?.items.some(item => item.label === 'ExposedCode')).toBe(true);
+    });
+
+    test('offers enclosing path containers at the first path segment', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                aggregate OrderAggregate {
+                    root entity Order {
+                        identifier id: OrderId
+                    }
+                    value object OrderId {
+                        raw: string
+                    }
+                }
+                exposes OrderAggregate, OrderAggregate.OrderId
+            }
+            aggregate InventoryAggregate {
+                root entity InventoryItem {
+                    identifier sku: InventorySku
+                }
+                value object InventorySku {
+                    raw: string
+                }
+            }
+            repository InventoryRepository {
+                manages Inventory
+            }
+            value object UsesSku {
+                field: Inventory
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/first-path-segment-containers.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+
+        const managesOffset = text.indexOf('manages Inventory') + 'manages Inventory'.length;
+        const managesCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(managesOffset)
+        });
+        const managesLabels = managesCompletion?.items.map(item => item.label) ?? [];
+        expect(managesLabels).toContain('InventoryAggregate');
+        expect(managesLabels).toContain('InventoryItem');
+
+        const typeOffset = text.indexOf('field: Inventory') + 'field: Inventory'.length;
+        const typeCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(typeOffset)
+        });
+        const typeLabels = typeCompletion?.items.map(item => item.label) ?? [];
+        expect(typeLabels).toContain('InventoryAggregate');
+        expect(typeLabels).toContain('InventorySku');
+    });
+
+    test('offers the context root at the first segment of a cross-context mirror path', async () => {
+        const text = `bounded context Source
+
+in bounded context Source {
+    aggregate Request {
+        root entity Request {
+            identifier id: RequestId
+        }
+        value object RequestId {
+            raw: string
+        }
+    }
+}
+
+bounded context Mirror
+
+in bounded context Mirror {
+    value object LocalId mirrors 
+}
+
+context map MirrorSource {
+    customer Mirror -> supplier Source
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/mirror-first-path-segment.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: false });
+
+        const offset = text.indexOf('mirrors ') + 'mirrors '.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => item.label) ?? [];
+        expect(labels).toContain('Source');
     });
 
     test('filters private cross-context types and domain events from completion', async () => {
