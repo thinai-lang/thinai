@@ -7,6 +7,7 @@ import {
     applyConfiguredIndentationToCompletions,
     createThinaiServices,
     createThinaiSelectionRange,
+    getSpecificationLinkAutoDeleteRange,
     isQueryRepositoryReadCompletionPosition
 } from 'thinai-language';
 
@@ -16,6 +17,7 @@ let client: LanguageClient;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const thinaiServices = createThinaiServices(EmptyFileSystem);
     registerThinaiSelectionRanges(context, thinaiServices.shared);
+    registerSpecificationLinkAutoDelete(context);
     client = await startLanguageClient(context);
     registerQueryRepositoryReadCompletionTrigger(context, thinaiServices.Thinai);
 }
@@ -50,6 +52,60 @@ function registerThinaiSelectionRanges(
             });
         }
     }));
+}
+
+function registerSpecificationLinkAutoDelete(context: vscode.ExtensionContext): void {
+    const previousTexts = new Map<string, string>();
+    const applying = new Set<string>();
+    const remember = (document: vscode.TextDocument): void => {
+        previousTexts.set(document.uri.toString(), document.getText());
+    };
+    for (const document of vscode.workspace.textDocuments) {
+        remember(document);
+    }
+    context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument(remember),
+        vscode.workspace.onDidCloseTextDocument(document => previousTexts.delete(document.uri.toString())),
+        vscode.workspace.onDidChangeTextDocument(event => {
+            const uri = event.document.uri.toString();
+            const previous = previousTexts.get(uri);
+            const current = event.document.getText();
+            previousTexts.set(uri, current);
+            if (!previous || applying.has(uri) || event.document.languageId !== 'thinai' ||
+                event.contentChanges.length !== 1) {
+                return;
+            }
+            const change = event.contentChanges[0]!;
+            const closer = getSpecificationLinkAutoDeleteRange(
+                previous,
+                current,
+                change.rangeOffset,
+                change.rangeLength,
+                change.text
+            );
+            if (!closer) {
+                return;
+            }
+            const editor = vscode.window.visibleTextEditors.find(candidate =>
+                candidate.document.uri.toString() === uri
+            );
+            if (!editor) {
+                return;
+            }
+            applying.add(uri);
+            void editor.edit(builder => {
+                builder.delete(new vscode.Range(
+                    editor.document.positionAt(closer.start),
+                    editor.document.positionAt(closer.end)
+                ));
+            }).then(() => {
+                previousTexts.set(uri, editor.document.getText());
+                applying.delete(uri);
+            }, () => {
+                applying.delete(uri);
+            });
+        })
+    );
 }
 
 function registerQueryRepositoryReadCompletionTrigger(

@@ -7,6 +7,7 @@ export * from './thinai-indentation.js';
 export * from './thinai-journey-utils.js';
 export * from './thinai-operation-utils.js';
 export * from './thinai-selection-range.js';
+export * from './thinai-auto-close.js';
 export * from './thinai-model-export.js';
 export * from './generated/ast.js';
 export * from './generated/grammar.js';

@@ -164,6 +164,73 @@ in bounded context Ordering {
         }
     });
 
+    test('expands qualified references by syntax prefixes', async () => {
+        const source = `bounded context Ordering
+in bounded context Ordering {
+    module Domain {
+        value object DeliveryAddress { city: string }
+        event OrderPlaced { delivery: DeliveryAddress }
+        aggregate OrderAggregate {
+            root entity Order {
+                method place() {}
+                identifier id: OrderId
+            }
+            value object OrderId { raw: string }
+        }
+    }
+    application service App {
+        method run() {
+            behavior "Use [[Domain.OrderPlaced.delivery.city]]."
+            invokes Domain.OrderAggregate.Order.place
+        }
+    }
+    data object Holder { x: Domain.OrderAggregate.OrderId }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/qualified-selection-ranges.tni'), source
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+
+        const textsAt = (marker: string, segment: string): string[] => {
+            const offset = source.indexOf(marker) + marker.indexOf(segment) + 1;
+            let current = createThinaiSelectionRange(document, document.textDocument.positionAt(offset));
+            const texts: string[] = [];
+            while (current) {
+                texts.push(document.textDocument.getText(current.range));
+                current = current.parent;
+            }
+            return texts;
+        };
+
+        expect(textsAt('[[Domain.OrderPlaced.delivery.city]]', 'delivery').slice(0, 5)).toEqual([
+            'delivery',
+            'Domain.OrderPlaced.delivery',
+            'Domain.OrderPlaced.delivery.city',
+            '[[Domain.OrderPlaced.delivery.city]]',
+            '"Use [[Domain.OrderPlaced.delivery.city]]."'
+        ]);
+        expect(textsAt('invokes Domain.OrderAggregate.Order.place', 'place').slice(0, 3)).toEqual([
+            'place',
+            'Domain.OrderAggregate.Order.place',
+            'invokes Domain.OrderAggregate.Order.place'
+        ]);
+        expect(textsAt('invokes Domain.OrderAggregate.Order.place', 'OrderAggregate').slice(0, 5)).toEqual([
+            'OrderAggregate',
+            'Domain.OrderAggregate',
+            'Domain.OrderAggregate.Order',
+            'Domain.OrderAggregate.Order.place',
+            'invokes Domain.OrderAggregate.Order.place'
+        ]);
+        expect(textsAt('x: Domain.OrderAggregate.OrderId', 'OrderAggregate').slice(0, 5)).toEqual([
+            'OrderAggregate',
+            'Domain.OrderAggregate',
+            'Domain.OrderAggregate.OrderId',
+            'x: Domain.OrderAggregate.OrderId',
+            'data object Holder { x: Domain.OrderAggregate.OrderId }'
+        ]);
+    });
+
     test('applies configured indentation to structurally indented completion edits', () => {
         const completionText = '\n  method\n  }';
         expect(applyConfiguredIndentation(completionText, 2, 2, true)).toBe('\n    method\n  }');

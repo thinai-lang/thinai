@@ -1,6 +1,6 @@
-import { AstUtils, CstUtils, GrammarUtils, type LangiumDocument } from 'langium';
+import { AstUtils, CstUtils, GrammarUtils, type AstNode, type LangiumDocument, type Reference } from 'langium';
 import { Range, SelectionRange, type Position } from 'vscode-languageserver-types';
-import { isMethod, isSpecificationText } from './generated/ast.js';
+import { isMethod, isSpecificationText, isSpecificationTextPart } from './generated/ast.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
 
 /**
@@ -28,26 +28,107 @@ export function createThinaiSelectionRange(
 
     const specification = AstUtils.getContainerOfType(leaf.astNode, isSpecificationText);
     const method = AstUtils.getContainerOfType(leaf.astNode, isMethod);
-    const quotedValue = specification?.$cstNode ?? CstUtils.getDatatypeNode(leaf);
     const projectClause = method ? findProjectClause(method, offset) : undefined;
-    const selectionNode = quotedValue ?? projectClause ?? leaf.astNode.$cstNode ?? leaf;
+    let referenceNode = findReferenceNode(leaf.astNode, offset);
+    let pathRanges = referenceNode ? createPathSelectionRanges(document, referenceNode, offset) : [];
+    if (pathRanges.length === 0) {
+        const specificationPart = AstUtils.getContainerOfType(leaf.astNode, isSpecificationTextPart);
+        if (specificationPart) {
+            const partRanges = createPathSelectionRanges(document, specificationPart, offset);
+            if (partRanges.length > 0) {
+                referenceNode = specificationPart;
+                pathRanges = partRanges;
+            }
+        }
+    }
 
+    const quotedValue = specification?.$cstNode ?? CstUtils.getDatatypeNode(leaf);
+    const base = projectClause ?? referenceNode?.$cstNode ?? quotedValue ?? leaf.astNode.$cstNode ?? leaf;
     const ranges: SelectionRange['range'][] = [];
-    let current: typeof selectionNode | undefined = selectionNode;
-    while (current) {
-        const range = current.range;
+    const pushRange = (range: SelectionRange['range']): void => {
         const previous = ranges.at(-1);
-        if (!previous || previous.start.line !== range.start.line || previous.start.character !== range.start.character
-            || previous.end.line !== range.end.line || previous.end.character !== range.end.character) {
+        if (!previous || previous.start.line !== range.start.line ||
+            previous.start.character !== range.start.character ||
+            previous.end.line !== range.end.line ||
+            previous.end.character !== range.end.character) {
             ranges.push(range);
         }
-        current = current.container;
+    };
+    for (const range of pathRanges) {
+        pushRange(range);
+    }
+    if (base) {
+        pushRange(base.range);
+        let current = base.container;
+        while (current) {
+            pushRange(current.range);
+            current = current.container;
+        }
     }
 
     return ranges.reduceRight<SelectionRange | undefined>(
         (parent, range) => SelectionRange.create(range, parent),
         undefined
     );
+}
+
+function findReferenceNode(node: AstNode, offset: number): AstNode | undefined {
+    let current: AstNode | undefined = node;
+    while (current) {
+        const references = AstUtils.streamReferences(current).toArray();
+        if (references.some(info => containsOffset(info.reference.$refNode, offset))) {
+            return current;
+        }
+        current = current.$container;
+    }
+    return undefined;
+}
+
+function createPathSelectionRanges(
+    document: LangiumDocument,
+    node: AstNode,
+    offset: number
+): Range[] {
+    const text = document.textDocument.getText();
+    const references = AstUtils.streamReferences(node)
+        .map(info => info.reference)
+        .toArray()
+        .filter((reference): reference is Reference => reference.$refNode !== undefined)
+        .sort((left, right) => left.$refNode!.offset - right.$refNode!.offset);
+    const currentIndex = references.findIndex(reference => containsOffset(reference.$refNode, offset));
+    if (currentIndex < 0) {
+        return [];
+    }
+    let start = currentIndex;
+    let end = currentIndex;
+    while (start > 0 && isDotGap(text, references[start - 1]!, references[start]!)) {
+        start--;
+    }
+    while (end < references.length - 1 && isDotGap(text, references[end]!, references[end + 1]!)) {
+        end++;
+    }
+    const current = references[currentIndex]!;
+    const pathStart = references[start]!.$refNode!.range.start;
+    const ranges: Range[] = [current.$refNode!.range];
+    for (let index = currentIndex; index <= end; index++) {
+        ranges.push(Range.create(pathStart, references[index]!.$refNode!.range.end));
+    }
+    return ranges;
+}
+
+function isDotGap(text: string, left: Reference, right: Reference): boolean {
+    const leftNode = left.$refNode;
+    const rightNode = right.$refNode;
+    return leftNode !== undefined && rightNode !== undefined &&
+        /^[\t \r\n]*\.[\t \r\n]*$/u.test(text.slice(leftNode.end, rightNode.offset));
+}
+
+function containsOffset(
+    referenceNode: { offset: number; end: number } | undefined,
+    offset: number
+): boolean {
+    return referenceNode !== undefined &&
+        referenceNode.offset <= offset && offset <= referenceNode.end;
 }
 
 /**
