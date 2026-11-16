@@ -708,7 +708,7 @@ in bounded context Ordering {
     }
 }`);
         const exactLabels = exactCurrent.completion?.items.map(item => item.label) ?? [];
-        expect(exactLabels).not.toContain('W');
+        expect(exactLabels).toContain('W');
         expect(exactLabels).not.toContain('V');
         expect(exactLabels).toContain('Weekly');
     });

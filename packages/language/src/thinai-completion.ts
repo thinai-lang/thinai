@@ -1039,11 +1039,13 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const hasBoundedContextCandidates = defaultCompletion?.items.some(item =>
             item.detail?.startsWith('BoundedContext ')
         ) === true;
-        const exposureCompletions = this.getExposureDeclarationCompletions(
+        const exposureResult = this.getExposureDeclarationCompletions(
             document,
             params.position,
             defaultCompletion
         );
+        const exposureCompletions = exposureResult.items;
+        const exposureExcludedLabels = exposureResult.excludedLabels;
         const exposureDetails = new Set(exposureCompletions
             .map(item => item.detail)
             .filter((detail): detail is string => typeof detail === 'string'));
@@ -1135,14 +1137,9 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 .filter(item => this.isSiblingStatementCompletion(item))
                 .map(item => [item.label, item]))
             : new Map();
-        const completionWithEmptyBlockEdits = completionWithKeywords
-            ? {
-                ...completionWithKeywords,
-                items: completionWithKeywords.items.map(item => emptyBlockReplacements.get(item.label) ?? item)
-            }
-            : completionWithKeywords;
         const completionItems = (completionWithKeywords?.items ?? [])
             .filter(item => !exposureDetails.has(item.detail as string))
+            .filter(item => !exposureExcludedLabels.has(String(item.label)))
             .filter(item => !exposurePathActive || item.kind === CompletionItemKind.Keyword)
             .filter(item => !relationshipContinuationLabels.has(item.label))
             .filter(item => item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string' ||
@@ -1158,7 +1155,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         if (!importContext) {
             if (constrainedValueCompletions.length === 0 && inProgressKeywordCompletions.length === 0 &&
                 modelGapKeywords.length === 0) {
-                const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, completionWithEmptyBlockEdits);
+                const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, {
+                    isIncomplete: completionWithKeywords?.isIncomplete ?? false,
+                    items: completionItems
+                });
                 return this.filterContextSensitiveKeywordCompletions(document, params.position, completion, sourceStructure);
             }
             const completion = this.blockCompletion.filterSameLineSiblingCompletions(document, params.position, {
@@ -1675,27 +1675,36 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         document: LangiumDocument,
         position: Position,
         defaultCompletion: CompletionList | undefined
-    ): CompletionItem[] {
+    ): { items: CompletionItem[]; excludedLabels: Set<string> } {
         const root = document.parseResult.value;
         if (!root) {
-            return [];
+            return { items: [], excludedLabels: new Set() };
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         const exposure = AstUtils.streamAst(root)
             .filter(node => node.$type === 'Exposure')
+            .filter(node => node.$cstNode !== undefined && node.$cstNode.offset <= offset)
+            .toArray()
+            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)
             .find(node => {
-                const cstNode = node.$cstNode;
-                return cstNode !== undefined && cstNode.offset <= offset && offset <= cstNode.end;
+                const cstNode = node.$cstNode!;
+                if (offset <= cstNode.end) {
+                    return true;
+                }
+                // The exposure list may continue after the parsed node when the
+                // cursor is at a trailing comma or its following whitespace.
+                const gap = text.slice(cstNode.end, offset);
+                return /^[\s,]*$/u.test(gap) && text.slice(cstNode.offset, offset).trimEnd().endsWith(',');
             });
         if (!exposure?.$cstNode) {
-            return [];
+            return { items: [], excludedLabels: new Set() };
         }
 
         const source = text.slice(exposure.$cstNode.offset, offset).trimStart();
         const exposesMatch = /^exposes\b/u.exec(source);
         if (!exposesMatch) {
-            return [];
+            return { items: [], excludedLabels: new Set() };
         }
         const listSource = source.slice(exposesMatch[0].length);
         const typedRaw = listSource.split(',').at(-1)?.trim() ?? '';
@@ -1708,6 +1717,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .map(name => normalizeIdentifierText(name.trim()))
             .filter(name => name.length > 0));
         const exposedShortNames = new Set([...exposedNames].map(name => name.split('.').at(-1) ?? name));
+        const excludedLabels = new Set([...exposedNames, ...exposedShortNames]);
         const existingItems = defaultCompletion?.items ?? [];
         const completionContext = this.getLangiumCompletionContext(document, position);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
@@ -1730,62 +1740,62 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 const descriptions = scopeProvider.getPathCompletionCandidates(referenceInfo, offset);
                 if (descriptions !== undefined && descriptions.length > 0) {
                     const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
-                    return descriptions
-                        .filter(description => {
-                            const label = (description as AstNodeDescription & {
-                                thinaiCompletionLabel?: string;
-                            }).thinaiCompletionLabel ?? description.name;
-                            const shortLabel = label.split('.').at(-1) ?? label;
-                            const lowerTyped = typedPrefix.toLowerCase();
-                            const exactCurrentSegment = shortLabel.toLowerCase() === lowerTyped ||
-                                label.toLowerCase() === lowerTyped;
-                            return !exactCurrentSegment &&
-                                !exposedNames.has(label) && !exposedShortNames.has(label);
-                        })
-                        .map(description =>
-                            this.createPathListCompletionItem(document, description, prefixStart, endOffset)
-                        );
+                    return {
+                        items: descriptions
+                            .filter(description => {
+                                const label = (description as AstNodeDescription & {
+                                    thinaiCompletionLabel?: string;
+                                }).thinaiCompletionLabel ?? description.name;
+                                const shortLabel = label.split('.').at(-1) ?? label;
+                                return !exposedNames.has(label) && !exposedShortNames.has(shortLabel);
+                            })
+                            .map(description =>
+                                this.createPathListCompletionItem(document, description, prefixStart, endOffset)
+                            ),
+                        excludedLabels
+                    };
                 }
             }
         }
-        return scopeProvider.getExposureDeclarationCandidates(exposure as Exposure)
-            .filter(description => {
-                const detail = this.completionDetails.getCompletionDetail(description);
-                const fullName = normalizeIdentifierText(description.name);
-                const shortName = fullName.split('.').at(-1) ?? fullName;
-                const alreadyExposed = exposedNames.has(fullName) || exposedNames.has(shortName) ||
-                    exposedShortNames.has(shortName);
-                const exactCurrentSegment = typedPrefix.length > 0 &&
-                    (fullName === typedPrefix || shortName === typedPrefix);
-                return this.matchesCompletionPrefix(description.name, typedPrefix) &&
-                    !alreadyExposed && !exactCurrentSegment &&
-                    !existingItems.some(item => item.detail === detail);
-            })
-            .map(description => {
-                const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
-                const insertText = `${needsLeadingSpace ? ' ' : ''}${formatQualifiedName(description.name)}`;
-                const item: CompletionValueItem = {
-                    nodeDescription: description,
-                    kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
-                    detail: this.completionDetails.getCompletionDetail(description),
-                    sortText: '0',
-                    insertText
-                };
-                const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
-                const completionItem = langiumItem ?? {
-                    ...item,
-                    label: description.name
-                };
-                const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
-                completionItem.textEdit = {
-                    range: {
-                        start: document.textDocument.positionAt(prefixStart),
-                        end: document.textDocument.positionAt(endOffset)
-                    },
-                    newText: insertText
-                };
-                return completionItem;
-            });
+        return {
+            items: scopeProvider.getExposureDeclarationCandidates(exposure as Exposure)
+                .filter(description => {
+                    const detail = this.completionDetails.getCompletionDetail(description);
+                    const fullName = normalizeIdentifierText(description.name);
+                    const shortName = fullName.split('.').at(-1) ?? fullName;
+                    const alreadyExposed = exposedNames.has(fullName) || exposedNames.has(shortName) ||
+                        exposedShortNames.has(shortName);
+                    return this.matchesCompletionPrefix(description.name, typedPrefix) &&
+                        !alreadyExposed &&
+                        !existingItems.some(item => item.detail === detail);
+                })
+                .map(description => {
+                    const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
+                    const insertText = `${needsLeadingSpace ? ' ' : ''}${formatQualifiedName(description.name)}`;
+                    const item: CompletionValueItem = {
+                        nodeDescription: description,
+                        kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
+                        detail: this.completionDetails.getCompletionDetail(description),
+                        sortText: '0',
+                        insertText
+                    };
+                    const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
+                    const completionItem = langiumItem ?? {
+                        ...item,
+                        label: description.name
+                    };
+                    const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
+                    completionItem.textEdit = {
+                        range: {
+                            start: document.textDocument.positionAt(prefixStart),
+                            end: document.textDocument.positionAt(endOffset)
+                        },
+                        newText: insertText
+                    };
+                    return completionItem;
+                }),
+            excludedLabels
+        };
     }
 
     private createPathListCompletionItem(
