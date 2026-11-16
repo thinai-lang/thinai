@@ -1072,6 +1072,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             ...this.queryRepositoryCompletion.getMethodReadsFromCompletions(document, params.position)
         ].filter(item => typeof item.label !== 'string' ||
             !constrainedLabels.has(item.label) && !optionalClauseLabels.has(item.label));
+        const inProgressKeywordLabels = new Set(inProgressKeywordCompletions.map(item => String(item.label)));
         const standalonePartialKeyword = this.isStandalonePartialKeywordPrefix(document, params.position);
         const blockKeywords = incompleteStatement && !standalonePartialKeyword
             ? []
@@ -1094,7 +1095,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const completionWithBlockKeywords = this.contextMapCompletion.filterKeywords(
             document,
             params.position,
-            this.addFallbackKeywords(clauseScopedCompletion, blockKeywords)
+            this.addFallbackKeywords(clauseScopedCompletion, blockKeywords, inProgressKeywordLabels)
         );
         const completionWithModelGapKeywords = this.addSupplementaryKeywords(completionWithBlockKeywords, modelGapKeywords);
         // Compound rewriting can invalidate the parser's keyword (for example
@@ -1107,7 +1108,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 document,
                 params.position
             ),
-            blockKeywords
+            blockKeywords,
+            inProgressKeywordLabels
         );
         const offersCompoundReadsFrom = [...blockKeywords, ...inProgressKeywordCompletions]
             .some(item => item.label === 'reads from');
@@ -1522,20 +1524,45 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private addFallbackKeywords(
         completion: CompletionList | undefined,
-        fallbacks: CompletionItem[]
+        fallbacks: CompletionItem[],
+        allowedKeywordLabels: ReadonlySet<string> = new Set()
     ): CompletionList | undefined {
         if (fallbacks.length === 0) {
             return completion;
         }
-        const hasKeyword = completion?.items.some(item => item.kind === CompletionItemKind.Keyword) === true;
-        if (hasKeyword) {
-            return completion;
-        }
+        const recoveredBlock = fallbacks.some(item => {
+            const data = item.data;
+            return typeof data === 'object' && data !== null && 'thinaiRecoveredBlock' in data;
+        });
         const items = completion?.items ?? [];
-        const labels = new Set(items.map(item => item.label));
+        // A recovered block came from the source braces, so its sibling
+        // keywords replace parser-derived keywords from the wrong container.
+        if (!recoveredBlock) {
+            const hasKeyword = items.some(item => item.kind === CompletionItemKind.Keyword);
+            if (hasKeyword) {
+                return completion;
+            }
+            const labels = new Set(items.map(item => item.label));
+            return {
+                isIncomplete: completion?.isIncomplete ?? false,
+                items: [...items, ...fallbacks.filter(item => !labels.has(String(item.label)))]
+            };
+        }
+        const fallbackLabels = new Set(fallbacks.map(item => String(item.label)));
+        const nonKeywords = items.filter(item => item.kind !== CompletionItemKind.Keyword);
+        const matchingKeywords = items.filter(item =>
+            item.kind === CompletionItemKind.Keyword &&
+            typeof item.label === 'string' &&
+            (fallbackLabels.has(item.label) || allowedKeywordLabels.has(item.label))
+        );
+        const labels = new Set([...nonKeywords, ...matchingKeywords].map(item => item.label));
         return {
             isIncomplete: completion?.isIncomplete ?? false,
-            items: [...items, ...fallbacks.filter(item => !labels.has(item.label))]
+            items: [
+                ...nonKeywords,
+                ...matchingKeywords,
+                ...fallbacks.filter(item => !labels.has(String(item.label)))
+            ]
         };
     }
 

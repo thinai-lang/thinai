@@ -3061,9 +3061,16 @@ in bounded context X {
 in bounded context X {
     ${typed}${marker}
 }`;
+        const contextAfterMemberSource = (typed: string): string => `bounded context X
+in bounded context X {
+    module Existing {
+        value object Value { raw: string }
+    }
+    ${typed}${marker}
+}`;
 
         for (const typed of ['i', 'in', 'in ', 'int', 'integration']) {
-            for (const source of [moduleSource, contextSource]) {
+            for (const source of [moduleSource, contextSource, contextAfterMemberSource]) {
                 const result = await build(source(typed));
                 const labels = result.completion?.items.map(item => item.label) ?? [];
                 expect(labels, JSON.stringify(typed)).toContain('integration event');

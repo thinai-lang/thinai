@@ -137,7 +137,18 @@ export class ThinaiBlockCompletion {
             // no declaration keywords; do not fall back to an outer container.
             return [];
         }
-        const block = candidates.find(candidate => {
+        // Parser recovery can close the surrounding block when the typed text
+        // is a keyword; use the innermost brace still open in the source.
+        const braceOwner = openingBrace >= 0 && root.$cstNode
+            ? CstUtils.findLeafNodeAtOffset(root.$cstNode, openingBrace)?.astNode
+            : undefined;
+        const linePrefix = text.slice(lineStart, offset).trim();
+        const braceOwnerLabels = braceOwner
+            ? this.keywordContinuations.getSiblingKeywordLabelsAt(braceOwner, offset)
+            : [];
+        const braceOwnerAllowed = braceOwner !== undefined &&
+            (linePrefix.length === 0 || this.matchesKeywordPrefix(braceOwnerLabels, linePrefix));
+        const candidateBlock = candidates.find(candidate => {
             const cstNode = candidate.$cstNode!;
             if (openingBrace < cstNode.offset) {
                 return false;
@@ -156,6 +167,8 @@ export class ThinaiBlockCompletion {
                 prefix
             );
         });
+        const block = candidateBlock ?? (braceOwnerAllowed ? braceOwner : undefined);
+        const recoveredBlock = candidateBlock === undefined && braceOwnerAllowed;
         if (!block) {
             return [];
         }
@@ -168,8 +181,20 @@ export class ThinaiBlockCompletion {
         }
         const typedPrefix = /^[\p{L}_][\p{L}_ ]*$/u.test(prefix) ? prefix : '';
         const matchingLabels = typedPrefix ? labels.filter(label => this.matchesKeywordPrefix([label], typedPrefix)) : labels;
-        const completions = this.createKeywordCompletions(matchingLabels, document, position, typedPrefix);
-        return this.moveEmptyBlockCompletionsToNextLine(completions, document, position, block, openingBrace);
+        const completions = this.moveEmptyBlockCompletionsToNextLine(
+            this.createKeywordCompletions(matchingLabels, document, position, typedPrefix),
+            document,
+            position,
+            block,
+            openingBrace
+        );
+        if (recoveredBlock) {
+            for (const item of completions) {
+                const data = typeof item.data === 'object' && item.data !== null ? item.data : {};
+                item.data = { ...data, thinaiRecoveredBlock: true };
+            }
+        }
+        return completions;
     }
 
     getBlockChildIndentation(document: LangiumDocument, parent: AstNode | undefined, offset: number): string {
