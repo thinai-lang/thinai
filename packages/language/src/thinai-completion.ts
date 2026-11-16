@@ -40,6 +40,7 @@ import {
     isDomainEvent,
     isEnumType,
     isEntity,
+    isExposure,
     isFactory,
     isField,
     isImport,
@@ -51,7 +52,6 @@ import {
     isMethodInvocation,
     isModel,
     isModule,
-    isNamedDeclarationReference,
     isParameter,
     isPostcondition,
     isPrecondition,
@@ -1682,39 +1682,41 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
-        const exposure = AstUtils.streamAst(root)
-            .filter(node => node.$type === 'Exposure')
-            .filter(node => node.$cstNode !== undefined && node.$cstNode.offset <= offset)
-            .toArray()
-            .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)
-            .find(node => {
-                const cstNode = node.$cstNode!;
-                if (offset <= cstNode.end) {
-                    return true;
-                }
-                // The exposure list may continue after the parsed node when the
-                // cursor is at a trailing comma or its following whitespace.
-                const gap = text.slice(cstNode.end, offset);
-                return /^[\s,]*$/u.test(gap) && text.slice(cstNode.offset, offset).trimEnd().endsWith(',');
-            });
+        const rootCst = root.$cstNode;
+        if (!rootCst) {
+            return { items: [], excludedLabels: new Set() };
+        }
+        const leaf = CstUtils.findLeafNodeBeforeOffset(rootCst, offset);
+        const visibleNode = leaf?.hidden === true ? CstUtils.getPreviousNode(leaf, false) : leaf;
+        const exposure = AstUtils.getContainerOfType(visibleNode?.astNode, isExposure);
         if (!exposure?.$cstNode) {
             return { items: [], excludedLabels: new Set() };
         }
-
-        const source = text.slice(exposure.$cstNode.offset, offset).trimStart();
-        const exposesMatch = /^exposes\b/u.exec(source);
-        if (!exposesMatch) {
+        const exposureCst = exposure.$cstNode;
+        const lastLeaf = CstUtils.findLeafNodeBeforeOffset(exposureCst, offset);
+        // A trailing comma is the last token of the exposure CST, but the
+        // cursor sits after it, where no parsed list item exists yet.
+        const afterComma = lastLeaf?.tokenType.name === ',' && lastLeaf.offset < offset;
+        if (offset > exposureCst.end && !afterComma) {
             return { items: [], excludedLabels: new Set() };
         }
-        const listSource = source.slice(exposesMatch[0].length);
-        const typedRaw = listSource.split(',').at(-1)?.trim() ?? '';
+        const keywordEnd = GrammarUtils.findNodeForKeyword(exposureCst, 'exposes')?.end ?? exposureCst.offset;
+        if (offset < keywordEnd) {
+            return { items: [], excludedLabels: new Set() };
+        }
+
+        const currentReference = exposure.declarations
+            .filter(node => node.$cstNode !== undefined &&
+                node.$cstNode.offset <= offset && offset <= node.$cstNode.end)
+            .at(-1);
+        const typedRaw = currentReference?.$cstNode
+            ? text.slice(currentReference.$cstNode.offset, offset)
+            : afterComma ? '' : text.slice(keywordEnd, offset).trimStart();
         const typedPrefix = normalizeIdentifierText(typedRaw);
-        const prefixStart = offset - typedRaw.length;
-        const completedSource = listSource.includes(',')
-            ? listSource.slice(0, listSource.lastIndexOf(','))
-            : '';
-        const exposedNames = new Set(completedSource.split(',')
-            .map(name => normalizeIdentifierText(name.trim()))
+        const prefixStart = currentReference?.$cstNode?.offset ?? offset - typedRaw.length;
+        const exposedNames = new Set(exposure.declarations
+            .filter(node => node.$cstNode !== undefined && node.$cstNode.end <= prefixStart)
+            .map(node => normalizeIdentifierText(node.$cstNode!.text.trim()))
             .filter(name => name.length > 0));
         const exposedShortNames = new Set([...exposedNames].map(name => name.split('.').at(-1) ?? name));
         const excludedLabels = new Set([...exposedNames, ...exposedShortNames]);
@@ -1723,14 +1725,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         if (typedPrefix.length > 0) {
             // An incomplete list item is often parsed as the next empty item, so
-            // the reference candidate machinery never sees the typed text. Read
-            // the item from the source and apply the shared path policy here.
-            const currentReference = AstUtils.streamAst(exposure)
-                .filter(isNamedDeclarationReference)
-                .filter(node => node.$cstNode !== undefined &&
-                    node.$cstNode.offset <= offset && offset <= node.$cstNode.end)
-                .toArray()
-                .at(-1);
+            // the reference candidate machinery never sees the typed text.
+            // Apply the shared path policy to the parsed reference instead.
             if (currentReference) {
                 const referenceInfo = {
                     container: currentReference,

@@ -711,6 +711,84 @@ in bounded context Ordering {
         expect(exactLabels).toContain('W');
         expect(exactLabels).not.toContain('V');
         expect(exactLabels).toContain('Weekly');
+
+        const afterNewline = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V,
+        ${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+    }
+}`);
+        const afterNewlineLabels = afterNewline.completion?.items.map(item => item.label) ?? [];
+        expect(afterNewlineLabels).toContain('W');
+        expect(afterNewlineLabels).not.toContain('V');
+
+        const afterLineComment = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V,
+        // next
+        ${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+    }
+}`);
+        const afterLineCommentLabels = afterLineComment.completion?.items.map(item => item.label) ?? [];
+        expect(afterLineCommentLabels).toContain('W');
+        expect(afterLineCommentLabels).not.toContain('V');
+
+        const afterBlockComment = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V, /* next */ ${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+    }
+}`);
+        const afterBlockCommentLabels = afterBlockComment.completion?.items.map(item => item.label) ?? [];
+        expect(afterBlockCommentLabels).toContain('W');
+        expect(afterBlockCommentLabels).not.toContain('V');
+
+        const commentBeforeItem = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V, /* note */ We${marker}
+        value object V { raw: string }
+        value object Weekly { raw: string }
+    }
+}`);
+        const weekly = commentBeforeItem.completion?.items.find(item => item.label === 'Weekly');
+        expect(weekly).toBeDefined();
+        const applied = applyCompletionItem(commentBeforeItem.document, commentBeforeItem.text, weekly!);
+        expect(applied).toContain('/* note */ Weekly');
+
+        const spaced = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V ${marker}
+        value object V { raw: string }
+        value object W { raw: string }
+    }
+}`);
+        const spacedLabels = spaced.completion?.items.map(item => item.label) ?? [];
+        expect(spacedLabels).not.toContain('W');
+    });
+
+    test('does not apply exposure filtering outside the exposure list', async () => {
+        const siblingModule = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes V,
+        value object V { raw: string }
+    }
+    module Web {
+        data object D { field: ${marker} }
+        value object V { raw: string }
+    }
+}`);
+        expect(siblingModule.completion?.items.map(item => item.label)).toContain('V');
     });
 
     test('offers exposed sibling-module integration-event payload types', async () => {
