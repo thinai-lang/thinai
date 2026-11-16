@@ -790,12 +790,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         const specificationPathContainer = isSpecificationTextPart(context.container) &&
             this.isStructuralSpecificationPathTarget(target) && !this.isTerminalSpecificationSegment(context);
         if (isModuleReference(context.container) && context.property === 'target') {
-            const dependencyClause = context.container.$container;
-            if (!isModuleDependency(dependencyClause)) {
+            // Completion can synthesize a ModuleReference nested inside the
+            // parsed one; locate the owning clause instead of using $container.
+            const dependencyClause = AstUtils.getContainerOfType(context.container, isModuleDependency);
+            if (!dependencyClause) {
                 return false;
             }
-            const dependencySource = dependencyClause.$container;
-            if (!isModule(dependencySource)) {
+            const dependencySource = AstUtils.getContainerOfType(dependencyClause, isModule);
+            if (!dependencySource) {
                 return false;
             }
             const alreadyDependsOn = getModuleDependencies(dependencySource).some(dependency =>

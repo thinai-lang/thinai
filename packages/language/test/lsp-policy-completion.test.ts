@@ -332,6 +332,116 @@ describe('LSP policy completion', () => {
         expect(labels).not.toContain('A');
         expect(labels).not.toContain('C');
         expect(labels).not.toContain('Foreign');
+
+        for (const typed of ['D', 'Do', 'Dom']) {
+            const partialText = `bounded context Ordering in bounded context Ordering {
+                module Api {
+                    depends on ${typed}
+                }
+                module Domain {}
+                module Other {}
+            }`;
+            const partialDocument = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/partial-module-dependency-${typed}.tni`), partialText
+            );
+            documents.push(partialDocument);
+            await services.shared.workspace.DocumentBuilder.build([partialDocument], { validation: true });
+            const token = `depends on ${typed}`;
+            const partialOffset = partialText.indexOf(token) + token.length;
+            const partialCompletion = await services.Thinai.lsp.CompletionProvider?.getCompletion(partialDocument, {
+                textDocument: { uri: partialDocument.uri.toString() },
+                position: partialDocument.textDocument.positionAt(partialOffset)
+            });
+            const partialLabels = partialCompletion?.items.map(item => item.label) ?? [];
+            expect(partialLabels, typed).toContain('Domain');
+            expect(partialLabels, typed).not.toContain('Api');
+        }
+    });
+
+    test('completes partial prefixes for path-based references', async () => {
+        const marker = '__completion_position__';
+        const cases = [
+            {
+                name: 'event emission',
+                text: `bounded context O
+in bounded context O {
+    event OrderPlaced
+    aggregate A {
+        root entity E {
+            identifier id: Id
+            method place() { emits O${marker} }
+        }
+        value object Id { raw: string }
+    }
+}`,
+                expected: 'OrderPlaced'
+            },
+            {
+                name: 'application service read source',
+                text: `bounded context O
+in bounded context O {
+    aggregate A {
+        root entity Order { identifier id: Id }
+        value object Id { raw: string }
+    }
+    repository OrderRepo { manages A.Order }
+    application service App {
+        method run() { reads from O${marker} }
+    }
+}`,
+                expected: 'OrderRepo'
+            },
+            {
+                name: 'query repository source',
+                text: `bounded context O
+in bounded context O {
+    aggregate OrderAggregate {
+        root entity E { identifier id: Id }
+        value object Id { raw: string }
+    }
+    read model OrderSummary {}
+    query repository Q { serves OrderSummary reads from O${marker} }
+}`,
+                expected: 'OrderAggregate'
+            },
+            {
+                name: 'projection target',
+                text: `bounded context O
+in bounded context O {
+    read model OrderSummary {}
+    projector P {
+        method run() { projects O${marker} }
+    }
+}`,
+                expected: 'OrderSummary'
+            },
+            {
+                name: 'query repository read model',
+                text: `bounded context O
+in bounded context O {
+    read model OrderSummary {}
+    query repository Q { serves O${marker} }
+}`,
+                expected: 'OrderSummary'
+            }
+        ];
+        for (const [index, completionCase] of cases.entries()) {
+            const offset = completionCase.text.indexOf(marker);
+            const text = completionCase.text.replace(marker, '');
+            const document = services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/path-reference-prefix-${index}.tni`), text
+            );
+            documents.push(document);
+            await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+            const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+                textDocument: { uri: document.uri.toString() },
+                position: document.textDocument.positionAt(offset)
+            });
+            expect(
+                completion?.items.map(item => item.label),
+                completionCase.name
+            ).toContain(completionCase.expected);
+        }
     });
 
     test('filters mirrors to foreign identifier value objects and query repositories to local read models', async () => {
