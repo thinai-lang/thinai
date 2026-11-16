@@ -829,6 +829,60 @@ describe('LSP policy completion', () => {
         });
     });
 
+    test('matches a dotless shared-kernel path abbreviation', async () => {
+        const text = `shared kernel Extra {
+            value object Note {
+                text: string
+            }
+        }
+        bounded context Ordering
+        in bounded context Ordering {
+            data object OrderLineInput {
+                note: ExtNot
+            }
+        }
+        context map M {
+            sharedKernel Extra {
+                participants: [Ordering]
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/shared-kernel-abbreviation.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const token = 'note: ExtNot';
+        const offset = text.indexOf(token) + token.length;
+        const start = text.indexOf(token) + 'note: '.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const items = new Map((completion?.items ?? []).map(item => [String(item.label), item]));
+        expect(items.get('Extra.Note')).toMatchObject({
+            sortText: '0',
+            filterText: 'Extra.Note',
+            textEdit: {
+                newText: 'Extra.Note',
+                range: {
+                    start: document.textDocument.positionAt(start),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+        expect(items.get('Note')).toMatchObject({
+            sortText: '1',
+            filterText: 'Extra.Note',
+            textEdit: {
+                newText: 'Note',
+                range: {
+                    start: document.textDocument.positionAt(start),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('shows only the full path after a partially typed dotted path', async () => {
         const base = `bounded context Ordering in bounded context Ordering {
             aggregate OrderAggregate {

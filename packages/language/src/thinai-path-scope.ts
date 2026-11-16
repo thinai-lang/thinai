@@ -297,11 +297,17 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 const declarationDepth = typeof (target as { name?: unknown }).name === 'string'
                     ? getDeclarationPath(target as AstNode & { name: string }).length
                     : 1;
+                // A dotless abbreviation of the whole path keeps the qualified
+                // spelling even when the declaration itself has no inner path.
+                const abbreviatedPath = crossContext && fullName !== undefined &&
+                    this.matchesConcatenatedFirstSegment(fullName.split('.'), typed);
                 // A declaration directly in the context has no qualified path;
                 // its short name is the canonical path.
-                qualifiedName = declarationDepth <= 1
-                    ? standalone ?? fullName
-                    : fullName ?? standalone;
+                qualifiedName = abbreviatedPath
+                    ? fullName
+                    : declarationDepth <= 1
+                        ? standalone ?? fullName
+                        : fullName ?? standalone;
                 if (qualifiedName === undefined) {
                     continue;
                 }
