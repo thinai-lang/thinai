@@ -16,6 +16,12 @@ jobs:
         node-version: [22.x]
     steps:
       - uses: actions/checkout@v4
+      - name: Check out public documentation
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/checkout@v4
+        with:
+          repository: thinai-lang/thinai-lang.github.io
+          path: site
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -23,4 +29,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+        env:
+          THINAI_DOCS_REPO: ${{ github.workspace }}/site
+      - name: Check public documentation mirrors
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          THINAI_REPO: ${{ github.workspace }}
+        run: |
+          node site/scripts/sync-examples.mjs --check
+          node site/scripts/sync-grammar.mjs --check
       - run: npm pack --dry-run --workspaces
