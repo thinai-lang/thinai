@@ -1,7 +1,7 @@
 /**
  * VS Code removes single-character auto-closing pairs when the opener is
  * deleted, but not multi-character pairs such as `[[`/`]]`. This returns the
- * closer range to remove after a deletion immediately before `]]`.
+ * closer range to remove after a deletion immediately before one or two `]`.
  */
 export function getSpecificationLinkAutoDeleteRange(
     previousText: string,
@@ -13,14 +13,15 @@ export function getSpecificationLinkAutoDeleteRange(
     if (insertedText.length > 0 || rangeLength === 0 || rangeOffset < 0) {
         return undefined;
     }
-    if (currentText.slice(rangeOffset, rangeOffset + 2) !== ']]') {
+    const doubleCloser = currentText.slice(rangeOffset, rangeOffset + 2) === ']]';
+    if (!doubleCloser && currentText[rangeOffset] !== ']') {
         return undefined;
     }
     const deleted = previousText.slice(rangeOffset, rangeOffset + rangeLength);
     if (deleted.endsWith('[[')) {
-        return { start: rangeOffset, end: rangeOffset + 2 };
+        return { start: rangeOffset, end: rangeOffset + (doubleCloser ? 2 : 1) };
     }
-    if (deleted === '[' && previousText[rangeOffset - 1] === '[') {
+    if (deleted === '[') {
         return { start: rangeOffset, end: rangeOffset + 1 };
     }
     return undefined;
