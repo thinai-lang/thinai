@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.7-alpha.7 - 2026-11-16
+
+- Rework completion path matching for qualified, abbreviated, and dotless chains across invokes, exposures, and specification links.
+- Keep exposure completion consistent after `exposes`, rank local declarations first, and exclude targets already exposed.
+- Add smart selection expansion for qualified paths, statements, blocks, and `[[...]]` references.
+- Auto-close and symmetrically delete `[[...]]` specification links.
+- Use commit characters instead of inserting trailing dots for container completions.
+- Suppress automatic completion after complete generic collection types.
+- Improve module, import, formatting, and journey/query completion behavior.
+- Restrict integration-event handlers to consumer bounded contexts; local reactions must use domain events.
+- Add document symbols for bounded-context parts so the editor breadcrumb includes the bounded context.
+- Refresh examples, demo notes, and Thinai editor defaults.
+- Align the language, CLI, and extension on the shared `0.1.7-alpha.7` release version.
+
 ## 0.1.6-alpha.6 - 2026-11-05
 
 - Allow `exposes` anywhere in a module body; a module may declare it at most once.
