@@ -650,6 +650,31 @@ in bounded context Ordering {
         expect(typedLabels).not.toContain('Outer.Foreign');
     });
 
+    test('ranks direct exposure declarations before path variants and methods', async () => {
+        const result = await build(`bounded context Shipping
+in bounded context Shipping {
+    module Operations {
+        data object ShipmentLookup {
+            shipmentId: string
+        }
+        query service ShipmentQueries {
+            method find() returns string {
+                behavior "Find."
+            }
+        }
+        exposes Sh${marker}
+    }
+}`);
+        const items = result.completion?.items ?? [];
+        const labels = items.map(item => item.label);
+        expect(labels.slice(0, 2)).toEqual(['ShipmentLookup', 'ShipmentQueries']);
+        expect(items.find(item => item.label === 'ShipmentLookup')?.sortText).toBe('0');
+        expect(items.find(item => item.label === 'ShipmentQueries')?.sortText).toBe('0');
+        expect(items.find(item => item.label === 'Shipping.Operations.ShipmentLookup')?.sortText).toBe('1');
+        expect(items.find(item => item.label === 'Shipping.Operations.ShipmentQueries')?.sortText).toBe('1');
+        expect(items.find(item => item.label === 'ShipmentQueries.find')?.sortText).toBe('3');
+    });
+
     test('keeps exposure completions consistent after the exposes keyword', async () => {
         const exact = await build(`bounded context Ordering
 in bounded context Ordering {

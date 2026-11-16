@@ -1773,8 +1773,22 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                                 const shortLabel = label.split('.').at(-1) ?? label;
                                 return !exposedNames.has(label) && !exposedShortNames.has(shortLabel);
                             })
-                            .map(description =>
-                                this.createPathListCompletionItem(document, description, prefixStart, endOffset)
+                            .map(description => {
+                                const item = this.createPathListCompletionItem(
+                                    document,
+                                    description,
+                                    prefixStart,
+                                    endOffset
+                                );
+                                item.sortText = this.getExposureSortText(
+                                    description,
+                                    typedPrefix,
+                                    item.sortText
+                                );
+                                return item;
+                            })
+                            .sort((left, right) =>
+                                Number(left.sortText ?? 0) - Number(right.sortText ?? 0)
                             ),
                         excludedLabels
                     };
@@ -1798,7 +1812,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                         nodeDescription: description,
                         kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
                         detail: this.completionDetails.getCompletionDetail(description),
-                        sortText: '0',
+                        sortText: this.getExposureSortText(description, typedPrefix),
                         insertText,
                         data: { thinaiTypedPathList: true }
                     };
@@ -1816,7 +1830,10 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                         newText: insertText
                     };
                     return completionItem;
-                }),
+                })
+                .sort((left, right) =>
+                    Number(left.sortText ?? 0) - Number(right.sortText ?? 0)
+                ),
             excludedLabels
         };
     }
@@ -1830,6 +1847,29 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .filter((name): name is string => name !== undefined)
             .map(name => normalizeIdentifierText(name.trim()))
             .filter(name => name.length > 0);
+    }
+
+    private getExposureSortText(
+        description: AstNodeDescription,
+        typedPrefix: string,
+        originalSortText?: string
+    ): string {
+        if (description.type === 'Method') {
+            return '3';
+        }
+        const label = (description as AstNodeDescription & {
+            thinaiCompletionLabel?: string;
+        }).thinaiCompletionLabel ?? description.name;
+        const shortLabel = label.split('.').at(-1) ?? label;
+        const normalPrefix = typedPrefix.length === 0 ||
+            shortLabel.toLowerCase().startsWith(typedPrefix.toLowerCase());
+        if (!normalPrefix) {
+            return originalSortText ?? '0';
+        }
+        if (label.includes('.')) {
+            return '1';
+        }
+        return description.type === 'Module' ? '2' : '0';
     }
 
     private createPathListCompletionItem(
