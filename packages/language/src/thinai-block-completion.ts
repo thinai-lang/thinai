@@ -18,6 +18,10 @@ import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
 import { scanThinaiSource } from './thinai-source-scanner.js';
 import { inferIndentationOptions } from './thinai-indentation.js';
 
+function stripComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/\/\/[^\r\n]*/gu, '');
+}
+
 interface BlockCompletionCallbacks {
     createKeywordCompletionItem(
         document: LangiumDocument,
@@ -82,8 +86,9 @@ export class ThinaiBlockCompletion {
         const nextStart = children
             .filter(node => node.offset >= offset)
             .reduce((start, node) => Math.min(start, node.offset), text.length);
-        const beforeLine = text.slice(previousEnd, lineStart);
-        const after = text.slice(offset, nextStart);
+        const beforeLine = stripComments(text.slice(previousEnd, lineStart));
+        const currentChild = children.find(node => node.offset <= offset && offset <= node.end);
+        const after = stripComments(text.slice(currentChild?.end ?? offset, nextStart));
         const gap = text.slice(previousEnd, nextStart);
         if (!/^\s*$/.test(beforeLine) || !/^\s*$/.test(after) ||
             !/[\r\n]/.test(gap) && !(previousEnd === 0 && nextStart === text.length)) {

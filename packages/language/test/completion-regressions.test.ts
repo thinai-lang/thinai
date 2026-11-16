@@ -453,6 +453,24 @@ journey Checkout {
         expect(priorResultCompletion?.items.map(item => item.label)).toEqual(expect.arrayContaining(['Draft', 'Placed']));
     });
 
+    test('offers top-level keywords after a comment between declarations', async () => {
+        const lineComment = await build(`bounded context X
+// Actors who perform a journey.
+act${marker}`);
+        expect(lineComment.completion?.items.map(item => item.label)).toContain('actor');
+
+        const blockComment = await build(`bounded context X
+/* Actors who perform a journey. */
+act${marker}`);
+        expect(blockComment.completion?.items.map(item => item.label)).toContain('actor');
+
+        const existingActor = await build(`bounded context X
+// Actors who perform a journey.
+act${marker}or Customer
+actor Warehouse`);
+        expect(existingActor.completion?.items.map(item => item.label)).toContain('actor');
+    });
+
     test('offers clause keywords only after a declaration name is complete', async () => {
         const valueObjectName = await build(`bounded context X
 in bounded context X {
