@@ -1022,13 +1022,34 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             return [];
         }
         const firstPathStartOffset = part.target.$refNode?.offset;
+        const typedSegment = reference.$refText.length > 0
+            ? reference.$refText
+            : part.targets[index]?.$refText ?? '';
         if (reference.$refText.length === 0) {
             const prefix = [part.target, ...part.targets.slice(0, index)].map(candidate => candidate.$refText);
-            return this.getPathSegmentCompletions(context, referenceType, prefix, undefined, false, firstPathStartOffset);
+            return this.getPathSegmentCompletions(
+                context,
+                referenceType,
+                prefix,
+                undefined,
+                false,
+                firstPathStartOffset,
+                undefined,
+                typedSegment
+            );
         }
         if (index >= part.targets.length) {
             const prefix = [part.target, ...part.targets].map(candidate => candidate.$refText);
-            return this.getPathSegmentCompletions(context, referenceType, prefix, undefined, false, firstPathStartOffset);
+            return this.getPathSegmentCompletions(
+                context,
+                referenceType,
+                prefix,
+                undefined,
+                false,
+                firstPathStartOffset,
+                undefined,
+                typedSegment
+            );
         }
         const fullPath = [part.target, ...part.targets.slice(0, index + 1)]
             .map(candidate => candidate.$refText).join('.');
@@ -1038,7 +1059,16 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         }
         const prefix = [part.target, ...part.targets.slice(0, index)]
             .map(candidate => candidate.$refText);
-        return this.getPathSegmentCompletions(context, referenceType, prefix, undefined, false, firstPathStartOffset);
+        return this.getPathSegmentCompletions(
+            context,
+            referenceType,
+            prefix,
+            undefined,
+            false,
+            firstPathStartOffset,
+            undefined,
+            typedSegment
+        );
     }
 
     private getSpecificationRootPathSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
@@ -1093,10 +1123,43 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         allowedTargets?: Set<AstNode>,
         pathOnly = false,
         firstPathStartOffset?: number,
-        allowedPaths?: ReadonlySet<string>
+        allowedPaths?: ReadonlySet<string>,
+        typedSegment = ''
     ): AstNodeDescription[] {
         const results = new Map<string, AstNodeDescription>();
         const scope = this.callbacks.getUnsegmentedScope(this.getPathScopeContext(context), referenceType);
+        if (typedSegment.length > 0 && prefix.length > 0 && isSpecificationTextPart(context.container)) {
+            const expanded = this.expandSpecificationShapeDescriptions(
+                context,
+                scope.getAllElements().toArray(),
+                scope
+            );
+            for (const description of expanded) {
+                const parts = description.name.split('.');
+                const match = this.matchPathPrefix(parts, prefix);
+                if (!match) {
+                    continue;
+                }
+                const remaining = parts.slice(match.nextIndex);
+                if (remaining.length < 2 || !this.matchesSegmentChain(remaining, typedSegment)) {
+                    continue;
+                }
+                const target = this.callbacks.getDescriptionNode(description);
+                if (!target) {
+                    continue;
+                }
+                const fullPath = parts.join('.');
+                this.addTerminalPathItem(
+                    results,
+                    target,
+                    fullPath,
+                    fullPath,
+                    fullPath,
+                    '0',
+                    firstPathStartOffset
+                );
+            }
+        }
         for (const description of scope.getAllElements()) {
             const candidate = this.callbacks.getDescriptionNode(description);
             const parts = description.name.split('.');

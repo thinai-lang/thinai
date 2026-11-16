@@ -1373,6 +1373,47 @@ in bounded context O {
         });
     });
 
+    test('matches a dotless continuation chain after a path prefix', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            value object OrderLineSnapshot {
+                sku: string
+            }
+            integration event OrderConfirmed {
+                orderId: string
+                lines: List<OrderLineSnapshot>
+            }
+            application service App {
+                method run() {
+                    behavior "Use [[Ordering.OrConflinessku]]."
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/spec-continuation-chain.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const token = 'Ordering.OrConflinessku';
+        const offset = text.indexOf(token) + token.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(candidate =>
+            candidate.label === 'Ordering.OrderConfirmed.lines.sku'
+        )).toMatchObject({
+            filterText: 'Ordering.OrderConfirmed.lines.sku',
+            sortText: '0',
+            textEdit: {
+                newText: 'Ordering.OrderConfirmed.lines.sku',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf('[[Ordering') + 2),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('matches nested specification shape members in a dotless chain', async () => {
         const base = `bounded context Ordering in bounded context Ordering {
             value object OrderLineSnapshot {
