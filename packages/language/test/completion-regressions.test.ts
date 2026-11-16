@@ -490,6 +490,13 @@ in bounded context X {
 }`);
         expect(sharedKernelModuleValueObject.completion?.items.map(item => item.label)).not.toContain('mirrors');
 
+        const sharedKernelBacktickedValueObject = await build(`shared kernel K {
+    value object \`Order Id\` ${marker} {
+        raw: string
+    }
+}`);
+        expect(sharedKernelBacktickedValueObject.completion?.items.map(item => item.label)).not.toContain('mirrors');
+
         const contextName = await build(`bounded context Ord${marker}ering
 `);
         expect(contextName.completion?.items.map(item => item.label)).not.toContain('realizes');

@@ -1882,7 +1882,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }
         const offset = document.textDocument.offsetAt(position);
         const linePrefix = document.textDocument.getText().slice(getLineStartOffset(document, offset), offset);
-        if (!/^\s*value\s+object\s+[\p{L}_][\p{L}_\p{N}]*\s+$/u.test(linePrefix)) {
+        if (!/^\s*value\s+object\s+.+\s+$/u.test(linePrefix)) {
             return completion;
         }
         const sharedKernel = AstUtils.streamAst(root)
