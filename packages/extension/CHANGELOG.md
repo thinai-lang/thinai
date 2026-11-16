@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8-alpha.8 - 2026-11-17
+
+- Warn when a context-map integration pattern is listed on the wrong customer or supplier side, and offer only role-appropriate patterns in completion.
+- Validate public documentation snippets and check the public example and grammar mirrors in CI.
+- Refresh the public examples, coverage notes, and documentation tables.
+- Align the language, CLI, and extension on the shared `0.1.8-alpha.8` release version.
+
 ## 0.1.7-alpha.7 - 2026-11-16
 
 - Rework completion path matching for qualified, abbreviated, and dotless chains across invokes, exposures, and specification links.
