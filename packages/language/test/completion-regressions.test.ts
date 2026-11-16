@@ -650,6 +650,41 @@ in bounded context Ordering {
         expect(typedLabels).not.toContain('Outer.Foreign');
     });
 
+    test('keeps exposure completions consistent after the exposes keyword', async () => {
+        const exact = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes${marker}
+        value object Owned { raw: string }
+    }
+}`);
+        const spaced = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes ${marker}
+        value object Owned { raw: string }
+    }
+}`);
+        const commented = await build(`bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        exposes
+        // next
+        ${marker}
+        value object Owned { raw: string }
+    }
+}`);
+        const exactLabels = exact.completion?.items.map(item => item.label) ?? [];
+        const spacedLabels = spaced.completion?.items.map(item => item.label) ?? [];
+        const commentedLabels = commented.completion?.items.map(item => item.label) ?? [];
+        expect(new Set(spacedLabels)).toEqual(new Set(exactLabels));
+        expect(new Set(commentedLabels)).toEqual(new Set(exactLabels));
+        expect(spacedLabels).toContain('Owned');
+        expect(spacedLabels).toContain('Api.Owned');
+        expect(spacedLabels).toContain('Ordering.Api.Owned');
+        expect(spacedLabels).not.toContain('Api');
+    });
+
     test('keeps exposure completion responses JSON-serializable', async () => {
         const result = await build(`bounded context O
 in bounded context O {

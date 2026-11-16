@@ -1041,15 +1041,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         ) === true;
         const exposureResult = this.getExposureDeclarationCompletions(
             document,
-            params.position,
-            defaultCompletion
+            params.position
         );
         const exposureCompletions = exposureResult.items;
         const exposureExcludedLabels = exposureResult.excludedLabels;
         const exposureDetails = new Set(exposureCompletions
             .map(item => item.detail)
             .filter((detail): detail is string => typeof detail === 'string'));
-        const exposurePathActive = exposureCompletions.some(item => {
+        const exposureListActive = exposureCompletions.some(item => {
             const data = item.data;
             return typeof data === 'object' && data !== null && 'thinaiTypedPathList' in data;
         });
@@ -1140,7 +1139,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         const completionItems = (completionWithKeywords?.items ?? [])
             .filter(item => !exposureDetails.has(item.detail as string))
             .filter(item => !exposureExcludedLabels.has(String(item.label)))
-            .filter(item => !exposurePathActive || item.kind === CompletionItemKind.Keyword)
+            .filter(item => !exposureListActive || item.kind === CompletionItemKind.Keyword)
             .filter(item => !relationshipContinuationLabels.has(item.label))
             .filter(item => item.kind !== CompletionItemKind.Keyword || typeof item.label !== 'string' ||
                 !constrainedLabels.has(item.label))
@@ -1673,8 +1672,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
 
     private getExposureDeclarationCompletions(
         document: LangiumDocument,
-        position: Position,
-        defaultCompletion: CompletionList | undefined
+        position: Position
     ): { items: CompletionItem[]; excludedLabels: Set<string> } {
         const root = document.parseResult.value;
         if (!root) {
@@ -1697,7 +1695,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         // A trailing comma is the last token of the exposure CST, but the
         // cursor sits after it, where no parsed list item exists yet.
         const afterComma = lastLeaf?.tokenType.name === ',' && lastLeaf.offset < offset;
-        if (offset > exposureCst.end && !afterComma) {
+        const emptyList = exposure.declarations.length === 0;
+        if (offset > exposureCst.end && !afterComma && !emptyList) {
             return { items: [], excludedLabels: new Set() };
         }
         const keywordEnd = GrammarUtils.findNodeForKeyword(exposureCst, 'exposes')?.end ?? exposureCst.offset;
@@ -1711,16 +1710,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .at(-1);
         const typedRaw = currentReference?.$cstNode
             ? text.slice(currentReference.$cstNode.offset, offset)
-            : afterComma ? '' : text.slice(keywordEnd, offset).trimStart();
+            : afterComma || emptyList ? '' : text.slice(keywordEnd, offset).trimStart();
         const typedPrefix = normalizeIdentifierText(typedRaw);
         const prefixStart = currentReference?.$cstNode?.offset ?? offset - typedRaw.length;
-        const exposedNames = new Set(exposure.declarations
-            .filter(node => node.$cstNode !== undefined && node.$cstNode.end <= prefixStart)
-            .map(node => normalizeIdentifierText(node.$cstNode!.text.trim()))
-            .filter(name => name.length > 0));
+        const exposedNames = new Set([
+            ...this.getOtherExposureNames(exposure),
+            ...exposure.declarations
+                .filter(node => node.$cstNode !== undefined && node.$cstNode.end <= prefixStart)
+                .map(node => normalizeIdentifierText(node.$cstNode!.text.trim()))
+                .filter(name => name.length > 0)
+        ]);
         const exposedShortNames = new Set([...exposedNames].map(name => name.split('.').at(-1) ?? name));
         const excludedLabels = new Set([...exposedNames, ...exposedShortNames]);
-        const existingItems = defaultCompletion?.items ?? [];
         const completionContext = this.getLangiumCompletionContext(document, position);
         const scopeProvider = this.thinaiServices.references.ScopeProvider as ThinaiScopeProvider;
         if (typedPrefix.length > 0) {
@@ -1756,14 +1757,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return {
             items: scopeProvider.getExposureDeclarationCandidates(exposure as Exposure)
                 .filter(description => {
-                    const detail = this.completionDetails.getCompletionDetail(description);
                     const fullName = normalizeIdentifierText(description.name);
                     const shortName = fullName.split('.').at(-1) ?? fullName;
                     const alreadyExposed = exposedNames.has(fullName) || exposedNames.has(shortName) ||
                         exposedShortNames.has(shortName);
                     return this.matchesCompletionPrefix(description.name, typedPrefix) &&
-                        !alreadyExposed &&
-                        !existingItems.some(item => item.detail === detail);
+                        !alreadyExposed;
                 })
                 .map(description => {
                     const needsLeadingSpace = prefixStart > 0 && !/\s/.test(text[prefixStart - 1]!);
@@ -1773,7 +1772,8 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                         kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
                         detail: this.completionDetails.getCompletionDetail(description),
                         sortText: '0',
-                        insertText
+                        insertText,
+                        data: { thinaiTypedPathList: true }
                     };
                     const langiumItem = completionContext ? this.fillCompletionItem(completionContext, item) : undefined;
                     const completionItem = langiumItem ?? {
@@ -1792,6 +1792,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 }),
             excludedLabels
         };
+    }
+
+    private getOtherExposureNames(exposure: Exposure): string[] {
+        const module = AstUtils.getContainerOfType(exposure, isModule);
+        return (module?.exposures ?? [])
+            .filter(candidate => candidate !== exposure)
+            .flatMap(candidate => candidate.declarations)
+            .map(node => node.$cstNode?.text)
+            .filter((name): name is string => name !== undefined)
+            .map(name => normalizeIdentifierText(name.trim()))
+            .filter(name => name.length > 0);
     }
 
     private createPathListCompletionItem(
