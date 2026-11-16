@@ -222,8 +222,9 @@ Method-level `reads from` documents optional data dependencies and may have a
 descriptive `when` guard. Application services read aggregate repositories;
 query services read query repositories; projectors use events and write their
 declared `projects` targets. A projector method handles exactly one domain or
-integration event; a projector may declare methods for both kinds. CQRS
-projectors do not read query repositories.
+integration event. A projector in the event's owning bounded context reacts to
+the domain event; an integration event is handled only by a consumer context.
+CQRS projectors do not read query repositories.
 Aggregate-repository and external query-API reads are explicit projector
 exceptions, since current-state lookups can make replay results differ. Domain
 services may read domain repositories when a business rule requires it. An
@@ -289,7 +290,8 @@ a bare import of the same file may appear only once. A context map authorizes a
 cross-context integration-event relationship when it is imported with the other
 endpoint's document, or when it is declared in the same document as both
 endpoints. Only IntegrationEvents cross bounded-context boundaries; DomainEvents
-remain private. Customer-supplier
+remain private. An integration event is handled only outside its owning bounded
+context; same-context reactions use the domain event. Customer-supplier
 relationships point from customer/downstream to supplier/upstream, while
 `integrationPatterns` are quoted labels from a predefined set, listed on the
 endpoint they describe. They are descriptive metadata: they do not assert

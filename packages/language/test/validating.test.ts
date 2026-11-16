@@ -1545,30 +1545,65 @@ in bounded context Ordering {
         expect(semanticDiagnostics(document).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
     });
 
-    test('allows one projector to handle domain and integration events', async () => {
-        const document = await parse(`
+    test('rejects handling a local integration event in the same bounded context', async () => {
+        const projector = await parse(`
             bounded context Ordering in bounded context Ordering {
-                event OrderPlaced
+                integration event LocalIntegration {
+                    orderId: string
+                }
+                read model LocalView {
+                    orderId: string
+                }
+                projector LocalProjector {
+                    method onLocal(source: LocalIntegration) {
+                        projects LocalView
+                    }
+                }
+            }
+        `);
+        expect(semanticDiagnostics(projector).map(diagnostic => diagnostic.message)).toContain(
+            'An integration event can be handled only outside its owning bounded context; use the domain event for same-context reactions.'
+        );
+
+        const handler = await parse(`
+            bounded context Ordering in bounded context Ordering {
+                integration event LocalIntegration {
+                    orderId: string
+                }
+                application service LocalHandler {
+                    method onLocal(source: LocalIntegration)
+                }
+            }
+        `);
+        expect(semanticDiagnostics(handler).map(diagnostic => diagnostic.message)).toContain(
+            'An integration event can be handled only outside its owning bounded context; use the domain event for same-context reactions.'
+        );
+    });
+
+    test('allows an authorized projector to handle another context integration event', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            in bounded context Ordering {
                 module Contracts {
                     exposes OrderPlacedV1
                     integration event OrderPlacedV1 {
                         orderId: string
                     }
                 }
-                read model DomainView {
+            }
+            in bounded context Shipping {
+                read model ShipmentView {
                     orderId: string
                 }
-                read model IntegrationView {
-                    orderId: string
-                }
-                projector OrderProjector {
-                    method onOrderPlaced(source: OrderPlaced) {
-                        projects DomainView
-                    }
-                    method onOrderPlacedV1(source: Contracts.OrderPlacedV1) {
-                        projects IntegrationView
+                projector ShipmentProjector {
+                    method onOrderPlaced(source: Ordering.Contracts.OrderPlacedV1) {
+                        projects ShipmentView
                     }
                 }
+            }
+            context map Fulfillment {
+                customer Shipping -> supplier Ordering
             }
         `);
 

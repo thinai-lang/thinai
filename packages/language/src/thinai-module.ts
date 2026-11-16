@@ -14,6 +14,7 @@ import { createThinaiParser, ThinaiParserErrorMessageProvider } from './thinai-p
 import { ThinaiSemanticTokenProvider } from './thinai-semantic-token-provider.js';
 import { ThinaiDefinitionProvider } from './thinai-definition-provider.js';
 import { ThinaiDocumentLinkProvider } from './thinai-document-link-provider.js';
+import { ThinaiDocumentSymbolProvider } from './thinai-document-symbol-provider.js';
 import { ThinaiNodeKindProvider } from './thinai-node-kind-provider.js';
 import { ThinaiFormatter } from './thinai-formatter.js';
 import { ThinaiFileOperationHandler } from './thinai-file-operation-handler.js';
@@ -73,6 +74,7 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
         CallHierarchyProvider: services => new ThinaiCallHierarchyProvider(services),
         DefinitionProvider: services => new ThinaiDefinitionProvider(services),
         DocumentLinkProvider: () => new ThinaiDocumentLinkProvider(),
+        DocumentSymbolProvider: services => new ThinaiDocumentSymbolProvider(services),
         HoverProvider: services => new ThinaiHoverProvider(services),
         RenameProvider: services => new ThinaiRenameProvider(services),
         SemanticTokenProvider: services => new ThinaiSemanticTokenProvider(services)

@@ -654,14 +654,23 @@ export class ThinaiValidator {
                     property: 'type'
                 });
             }
-            if (event && isIntegrationEvent(event) && isCrossContextOwned(method, event) &&
-                !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
-                accept('error', this.referencePolicy.isIntegrationEventExposed(event)
-                    ? 'Consuming this integration event requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.'
-                    : 'An integration event in a module must be exposed by its module and every enclosing module before another bounded context can consume it.', {
-                    node: eventParameters[0],
-                    property: 'type'
-                });
+            if (event && isIntegrationEvent(event)) {
+                const eventContext = getOwningContextName(event);
+                const methodContext = getOwningContextName(method);
+                if (eventContext !== undefined && eventContext === methodContext) {
+                    accept('error', 'An integration event can be handled only outside its owning bounded context; use the domain event for same-context reactions.', {
+                        node: eventParameters[0],
+                        property: 'type'
+                    });
+                } else if (isCrossContextOwned(method, event) &&
+                    !this.referencePolicy.hasAuthorizedEventRelationship(method, event)) {
+                    accept('error', this.referencePolicy.isIntegrationEventExposed(event)
+                        ? 'Consuming this integration event requires an authorized context-map relationship from an imported map or a map declared in the same document as both endpoints.'
+                        : 'An integration event in a module must be exposed by its module and every enclosing module before another bounded context can consume it.', {
+                        node: eventParameters[0],
+                        property: 'type'
+                    });
+                }
             }
         }
         if (method.returnType || method.returnCollection) {

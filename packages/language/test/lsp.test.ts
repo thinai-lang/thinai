@@ -653,8 +653,18 @@ in bounded context Ordering {
             textDocument: { uri }
         });
         expect(symbols?.map(symbol => symbol.name)).toEqual(expect.arrayContaining([
-            'Ordering', 'Order', 'OrderPlaced'
+            'Ordering'
         ]));
+        const contextContainer = symbols?.find(symbol =>
+            symbol.name === 'Ordering' && (symbol.children?.length ?? 0) > 0
+        );
+        expect(contextContainer).toMatchObject({
+            kind: SymbolKind.Namespace,
+            name: 'Ordering'
+        });
+        expect(contextContainer?.children?.map(child => child.name)).toEqual(
+            expect.arrayContaining(['Order', 'OrderPlaced'])
+        );
 
         const hover = await services.Thinai.lsp.HoverProvider?.getHoverContent(document, {
             textDocument: { uri },
