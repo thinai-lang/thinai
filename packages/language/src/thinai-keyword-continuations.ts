@@ -399,7 +399,8 @@ export class ThinaiKeywordContinuations {
                 continuations.add('kind');
             } else if (isModule(node) && new RegExp(`^module\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('depends');
-            } else if (isValueObject(node) && new RegExp(`^value\\s+object\\s+${identifierSource}$`, 'iu').test(headerSource)) {
+            } else if (isValueObject(node) && !isInSharedKernel(node) &&
+                new RegExp(`^value\\s+object\\s+${identifierSource}$`, 'iu').test(headerSource)) {
                 continuations.add('mirrors');
             }
             if (continuations.size === 0) {
@@ -573,6 +574,9 @@ export class ThinaiKeywordContinuations {
             return /\s$/u.test(source) ? ['kind'] : [];
         }
         if (isValueObject(node)) {
+            if (isInSharedKernel(node)) {
+                return [];
+            }
             const start = node.$cstNode?.offset;
             const source = start === undefined ? '' : document.textDocument.getText().slice(start, document.textDocument.offsetAt(position));
             return node.mirrors === undefined && !source.includes('{') && /\s$/u.test(source) ? ['mirrors'] : [];

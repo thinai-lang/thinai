@@ -474,6 +474,22 @@ in bounded context X {
 }`);
         expect(valueObjectClause.completion?.items.map(item => item.label)).toContain('mirrors');
 
+        const sharedKernelValueObject = await build(`shared kernel K {
+    value object OrderId ${marker} {
+        raw: string
+    }
+}`);
+        expect(sharedKernelValueObject.completion?.items.map(item => item.label)).not.toContain('mirrors');
+
+        const sharedKernelModuleValueObject = await build(`shared kernel K {
+    module Types {
+        value object OrderId ${marker} {
+            raw: string
+        }
+    }
+}`);
+        expect(sharedKernelModuleValueObject.completion?.items.map(item => item.label)).not.toContain('mirrors');
+
         const contextName = await build(`bounded context Ord${marker}ering
 `);
         expect(contextName.completion?.items.map(item => item.label)).not.toContain('realizes');

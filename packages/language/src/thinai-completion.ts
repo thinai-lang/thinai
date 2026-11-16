@@ -1075,7 +1075,12 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 inProgressKeywordCompletions
             );
         const scopedDefaultCompletion = this.filterSharedKernelModuleKeywords(document, params.position, defaultCompletion);
-        const clauseScopedCompletion = this.filterRepeatedModuleClauseKeywords(document, params.position, scopedDefaultCompletion);
+        const valueObjectScopedCompletion = this.filterSharedKernelMirrorKeyword(
+            document,
+            params.position,
+            scopedDefaultCompletion
+        );
+        const clauseScopedCompletion = this.filterRepeatedModuleClauseKeywords(document, params.position, valueObjectScopedCompletion);
         const completionWithBlockKeywords = this.contextMapCompletion.filterKeywords(
             document,
             params.position,
@@ -1860,6 +1865,36 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 return allowed.has(item.label) || allowed.has(firstWord) ||
                     inTypePosition && typeKeywords.has(item.label);
             })
+        };
+    }
+
+    private filterSharedKernelMirrorKeyword(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const root = document.parseResult.value;
+        if (!root) {
+            return completion;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        const linePrefix = document.textDocument.getText().slice(getLineStartOffset(document, offset), offset);
+        if (!/^\s*value\s+object\s+[\p{L}_][\p{L}_\p{N}]*\s+$/u.test(linePrefix)) {
+            return completion;
+        }
+        const sharedKernel = AstUtils.streamAst(root)
+            .filter(isSharedKernel)
+            .find(node => node.$cstNode !== undefined &&
+                node.$cstNode.offset <= offset && offset <= node.$cstNode.end);
+        if (!sharedKernel) {
+            return completion;
+        }
+        return {
+            ...completion,
+            items: completion.items.filter(item => item.label !== 'mirrors')
         };
     }
 
