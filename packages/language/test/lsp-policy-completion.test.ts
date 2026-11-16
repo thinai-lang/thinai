@@ -1174,6 +1174,42 @@ in bounded context O {
         }
     });
 
+    test('completes a dotless prefix of an invocation container chain', async () => {
+        const text = `bounded context Ordering in bounded context Ordering {
+            module Domain {
+                exposes OrderAggregate
+                aggregate OrderAggregate {
+                    root entity Order {
+                        method place() {}
+                    }
+                }
+            }
+            module Api {
+                depends on Domain
+                application service OrderApplication {
+                    method placeOrder() {
+                        invokes DomOrdAgg
+                    }
+                }
+            }
+        }`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/invokes-container-prefix.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const marker = 'invokes DomOrdAgg';
+        const offset = text.indexOf(marker) + marker.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        const labels = completion?.items.map(item => String(item.label)) ?? [];
+        expect(labels).toContain('Domain.OrderAggregate.Order.place');
+        expect(labels).toContain('OrderAggregate');
+        expect(labels).toContain('Domain');
+    });
+
     test('keeps segmented invokes completion for an exact path prefix', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             aggregate InventoryAggregate {

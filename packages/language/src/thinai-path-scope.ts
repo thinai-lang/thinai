@@ -396,15 +396,18 @@ export class ThinaiPathScope extends DefaultScopeProvider {
 
     /**
      * A dotless token can abbreviate a run of container segments without the
-     * terminal being typed, for example `InvAggInve` before an invokes target.
+     * terminal being typed, for example `DomOrdAgg` before an invokes target.
      */
     private matchesContainerChain(containers: string[], typed: string): boolean {
         if (containers.length < 2) {
             return false;
         }
         for (let start = 0; start < containers.length - 1; start++) {
-            if (this.matchesSegmentChain(containers.slice(start), typed)) {
-                return true;
+            const remaining = containers.slice(start);
+            for (let end = 2; end <= remaining.length; end++) {
+                if (this.matchesSegmentChain(remaining.slice(0, end), typed)) {
+                    return true;
+                }
             }
         }
         return false;
