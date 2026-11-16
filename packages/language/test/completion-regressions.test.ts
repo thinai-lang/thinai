@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
 import { AstUtils, EmptyFileSystem, isReference, type LangiumDocument, URI } from 'langium';
 import { clearDocuments } from 'langium/test';
-import { CompletionItemKind, type CompletionItem, type CompletionList, type TextEdit } from 'vscode-languageserver';
+import { CompletionItemKind, CompletionTriggerKind, type CompletionItem, type CompletionList, type TextEdit } from 'vscode-languageserver';
 import { createThinaiServices, isField } from '../src/index.js';
 import { getTypeReferences } from '../src/thinai-type-utils.js';
 
@@ -469,6 +469,43 @@ act${marker}`);
 act${marker}or Customer
 actor Warehouse`);
         expect(existingActor.completion?.items.map(item => item.label)).toContain('actor');
+    });
+
+    test('does not open completion after a complete generic collection type', async () => {
+        const source = `bounded context X
+in bounded context X {
+    aggregate A {
+        root entity E {
+            lines: List<OrderLine>
+            identifier id: Id
+        }
+        value object OrderLine { sku: string }
+        value object Id { raw: string }
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/complete-generic-field.tni'), source
+        );
+        documents.push(document);
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const offset = source.indexOf('lines: List<OrderLine>') + 'lines: List<OrderLine>'.length;
+        const provider = services.Thinai.lsp.CompletionProvider;
+        const triggered = await provider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset),
+            context: {
+                triggerKind: CompletionTriggerKind.TriggerCharacter,
+                triggerCharacter: '>'
+            }
+        });
+        expect(triggered?.items).toEqual([]);
+
+        const invoked = await provider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset),
+            context: { triggerKind: CompletionTriggerKind.Invoked }
+        });
+        expect(invoked?.items.map(item => item.label)).toContain('constructor');
     });
 
     test('offers clause keywords only after a declaration name is complete', async () => {

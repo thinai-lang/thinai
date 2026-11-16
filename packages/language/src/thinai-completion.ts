@@ -14,6 +14,7 @@ import {
 import { DefaultCompletionProvider, type CompletionContext, type CompletionValueItem } from 'langium/lsp';
 import {
     CompletionItemKind,
+    CompletionTriggerKind,
     TextEdit,
     type CompletionItem,
     type CompletionList,
@@ -1003,6 +1004,14 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             offset
         );
         if (specificationContext === 'text') {
+            return { isIncomplete: false, items: [] };
+        }
+        if (params.context?.triggerKind === CompletionTriggerKind.TriggerCharacter &&
+            params.context.triggerCharacter === '>' &&
+            this.isCompleteCollectionTypeEnd(document, params.position)) {
+            // A complete generic type is the end of the field, parameter, or
+            // return type. Do not open sibling/declaration suggestions until
+            // the user starts the next token with a space or newline.
             return { isIncomplete: false, items: [] };
         }
         const defaultCompletion = await super.getCompletion(document, params, cancelToken);
@@ -2531,6 +2540,26 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         return prefix.length > 0 && siblingKeywordPrefixes.some(keyword =>
             prefix.length < keyword.length && keyword.toLowerCase().startsWith(prefix)
         );
+    }
+
+    private isCompleteCollectionTypeEnd(document: LangiumDocument, position: Position): boolean {
+        const offset = document.textDocument.offsetAt(position);
+        if (document.textDocument.getText()[offset - 1] !== '>') {
+            return false;
+        }
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        return AstUtils.streamAst(root).toArray().some(node => {
+            if (isField(node) || isParameter(node)) {
+                return node.collection?.$cstNode?.end === offset;
+            }
+            if (isMethod(node)) {
+                return node.returnCollection?.$cstNode?.end === offset;
+            }
+            return false;
+        });
     }
 
     private isInIncompleteTypePosition(node: AstNode, document: LangiumDocument, position: Position): boolean {
