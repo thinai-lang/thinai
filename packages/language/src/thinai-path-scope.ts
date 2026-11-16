@@ -239,8 +239,9 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         allowContainerChain = true
     ): AstNodeDescription[] {
         const sourceContext = getOwningContextName(context.container);
-        if (sourceContext === undefined &&
-            !isJourneyStep(context.container) && !isMethodInvocation(context.container)) {
+        const journeyStep = AstUtils.getContainerOfType(context.container, isJourneyStep);
+        if (sourceContext === undefined && !isJourneyStep(context.container) && !isMethodInvocation(context.container) &&
+            journeyStep === undefined) {
             return [];
         }
         const results = new Map<string, AstNodeDescription>();

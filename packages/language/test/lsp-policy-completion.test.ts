@@ -1931,6 +1931,56 @@ context map MirrorSource {
         expect(queryLabels).toContain('findOrder');
     });
 
+    test('matches a dotless path inside a journey when guard', async () => {
+        const text = `bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        application service OrderApplication {
+            method priceOrder(orderId: string) returns decimal {
+                behavior "Price the order."
+            }
+            method placeOrder() returns string {
+                behavior "Place the order."
+            }
+        }
+        exposes OrderApplication.priceOrder, OrderApplication.placeOrder
+    }
+}
+actor Customer
+journey PlaceOrder {
+    by Customer {
+        invoke Ordering.Api.OrderApplication.priceOrder
+            when "signed"
+        invoke Ordering.Api.OrderApplication.placeOrder
+            when "The price [[OrderApiOrdApplipricOrdresul]] has been calculated."
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/journey-when-dotless-path.tni'), text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build([document], { validation: false });
+        const token = 'OrderApiOrdApplipricOrdresul';
+        const offset = text.indexOf(token) + token.length;
+        const completion = await services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
+            textDocument: { uri: document.uri.toString() },
+            position: document.textDocument.positionAt(offset)
+        });
+        expect(completion?.items.find(candidate =>
+            candidate.label === 'Ordering.Api.OrderApplication.priceOrder.result'
+        )).toMatchObject({
+            filterText: 'Ordering.Api.OrderApplication.priceOrder.result',
+            sortText: '0',
+            textEdit: {
+                newText: 'Ordering.Api.OrderApplication.priceOrder.result',
+                range: {
+                    start: document.textDocument.positionAt(text.indexOf('[[OrderApi') + 2),
+                    end: document.textDocument.positionAt(offset)
+                }
+            }
+        });
+    });
+
     test('journey references do not require module exposure for commands', async () => {
         const text = `bounded context Ordering in bounded context Ordering {
             module Internal {

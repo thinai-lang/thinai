@@ -673,6 +673,25 @@ in bounded context Shipping {
         expect(items.find(item => item.label === 'Shipping.Operations.ShipmentLookup')?.sortText).toBe('1');
         expect(items.find(item => item.label === 'Shipping.Operations.ShipmentQueries')?.sortText).toBe('1');
         expect(items.find(item => item.label === 'ShipmentQueries.find')?.sortText).toBe('3');
+
+        const abbreviated = await build(`bounded context Shipping
+in bounded context Shipping {
+    module Operations {
+        data object ShipmentLookup {
+            shipmentId: string
+        }
+        query service ShipmentQueries {
+            method find() returns string {
+                behavior "Find."
+            }
+        }
+        exposes ShipQue${marker}
+    }
+}`);
+        const abbreviatedItems = abbreviated.completion?.items ?? [];
+        expect(abbreviatedItems[0]?.label).toBe('ShipmentQueries');
+        expect(abbreviatedItems.find(item => item.label === 'ShipmentQueries')?.sortText).toBe('0');
+        expect(abbreviatedItems.find(item => item.label === 'Operations.ShipmentQueries')?.sortText).toBe('1');
     });
 
     test('keeps exposure completions consistent after the exposes keyword', async () => {

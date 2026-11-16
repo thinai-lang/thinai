@@ -1862,7 +1862,7 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         }).thinaiCompletionLabel ?? description.name;
         const shortLabel = label.split('.').at(-1) ?? label;
         const normalPrefix = typedPrefix.length === 0 ||
-            shortLabel.toLowerCase().startsWith(typedPrefix.toLowerCase());
+            this.completionNameMatches(shortLabel, typedPrefix);
         if (!normalPrefix) {
             return originalSortText ?? '0';
         }
