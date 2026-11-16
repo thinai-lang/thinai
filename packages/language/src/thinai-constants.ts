@@ -5,6 +5,18 @@ export const INTEGRATION_PATTERNS = new Set([
     'PublishedLanguage'
 ]);
 
+/** Patterns conventionally used on the downstream/customer side. */
+export const CUSTOMER_INTEGRATION_PATTERNS = new Set([
+    'Conformist',
+    'AntiCorruptionLayer'
+]);
+
+/** Patterns conventionally used on the upstream/supplier side. */
+export const SUPPLIER_INTEGRATION_PATTERNS = new Set([
+    'OpenHostService',
+    'PublishedLanguage'
+]);
+
 /** Words that cannot be used as bare identifiers by the grammar. */
 export const THINAI_KEYWORDS = new Set([
     'actor', 'aggregate', 'application', 'as', 'behavior', 'boolean', 'bounded',

@@ -295,7 +295,11 @@ context; same-context reactions use the domain event. Customer-supplier
 relationships point from customer/downstream to supplier/upstream, while
 `integrationPatterns` are quoted labels from a predefined set, listed on the
 endpoint they describe. They are descriptive metadata: they do not assert
-implementation conformance and do not affect event authorization. A
+implementation conformance and do not affect event authorization. The
+conventional side mapping is `Conformist` and `AntiCorruptionLayer` on the
+customer/downstream endpoint, and `OpenHostService` and `PublishedLanguage` on
+the supplier/upstream endpoint. A partnership may use any pattern on either
+side. A mismatched customer/supplier pattern is reported as a warning. A
 customer-supplier relationship authorizes the customer to consume supplier
 IntegrationEvents; a partnership authorizes consumption in either direction.
 

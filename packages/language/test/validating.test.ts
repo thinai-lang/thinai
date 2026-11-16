@@ -3196,6 +3196,46 @@ in bounded context Ordering {
         ))).toBe(true);
     });
 
+    test('warns about integration patterns on the wrong side of a customer-supplier relationship', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                customer Shipping { integrationPatterns: ["OpenHostService"] }
+                    -> supplier Ordering { integrationPatterns: ["Conformist"] }
+            }
+        `);
+
+        const warnings = document.diagnostics
+            ?.filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning)
+            .map(diagnostic => String(diagnostic.message)) ?? [];
+        expect(warnings).toContain(
+            "Integration pattern 'OpenHostService' is not conventionally used on the customer side. Expected: Conformist, AntiCorruptionLayer."
+        );
+        expect(warnings).toContain(
+            "Integration pattern 'Conformist' is not conventionally used on the supplier side. Expected: OpenHostService, PublishedLanguage."
+        );
+    });
+
+    test('allows conventional integration patterns and all patterns in a partnership', async () => {
+        const document = await parse(`
+            bounded context Ordering
+            bounded context Shipping
+            context map Fulfillment {
+                customer Shipping { integrationPatterns: ["AntiCorruptionLayer", "Conformist"] }
+                    -> supplier Ordering { integrationPatterns: ["OpenHostService", "PublishedLanguage"] }
+                partner Ordering { integrationPatterns: ["Conformist", "OpenHostService"] }
+                    <-> partner Shipping { integrationPatterns: ["AntiCorruptionLayer", "PublishedLanguage"] }
+            }
+        `);
+
+        const warnings = document.diagnostics
+            ?.filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning) ?? [];
+        expect(warnings.filter(diagnostic =>
+            String(diagnostic.message).includes('not conventionally used')
+        )).toEqual([]);
+    });
+
     test('underlines the unknown integration pattern rather than the whole pattern list', async () => {
         const source = `bounded context Ordering
 bounded context Shipping

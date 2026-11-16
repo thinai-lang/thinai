@@ -32,7 +32,7 @@ import { areRelationshipPairDefinitionsCompatible, getRelationshipPairSemantics,
 import type { ThinaiServices } from './thinai-module.js';
 import { findCstTokenOffset, getSiblingStatementPolicy, isLineSeparatedSibling, siblingContainerPolicies } from './thinai-layout.js';
 import { getExportedName, resolveImportUri } from './thinai-scope-utils.js';
-import { INTEGRATION_PATTERNS } from './thinai-constants.js';
+import { INTEGRATION_PATTERNS, CUSTOMER_INTEGRATION_PATTERNS, SUPPLIER_INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiReferencePolicy } from './thinai-reference-policy.js';
 
 type DuplicateDeclarationCallback = (
@@ -436,6 +436,14 @@ export class ThinaiModelValidator {
         }
 
         for (const endpoint of endpoints) {
+            const side = isCustomerSupplierRelationship(relationship)
+                ? endpoint === relationship.customer ? 'customer' : 'supplier'
+                : undefined;
+            const allowedPatterns = side === 'customer'
+                ? CUSTOMER_INTEGRATION_PATTERNS
+                : side === 'supplier'
+                    ? SUPPLIER_INTEGRATION_PATTERNS
+                    : undefined;
             const seenPatterns = new Set<string>();
             for (const [index, pattern] of endpoint.integrationPatterns.entries()) {
                 if (seenPatterns.has(pattern)) {
@@ -449,6 +457,14 @@ export class ThinaiModelValidator {
                 seenPatterns.add(pattern);
                 if (!INTEGRATION_PATTERNS.has(pattern)) {
                     accept('error', `Unknown integration pattern '${pattern}'. Expected one of: ${[...INTEGRATION_PATTERNS].join(', ')}.`, {
+                        node: endpoint,
+                        property: 'integrationPatterns',
+                        index
+                    });
+                    continue;
+                }
+                if (side !== undefined && allowedPatterns !== undefined && !allowedPatterns.has(pattern)) {
+                    accept('warning', `Integration pattern '${pattern}' is not conventionally used on the ${side} side. Expected: ${[...allowedPatterns].join(', ')}.`, {
                         node: endpoint,
                         property: 'integrationPatterns',
                         index

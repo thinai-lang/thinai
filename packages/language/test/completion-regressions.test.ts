@@ -2670,34 +2670,64 @@ context map M {
 }`);
         const emptyListLabels = emptyList.completion?.items.map(item => item.label) ?? [];
         expect(emptyListLabels).toEqual(expect.arrayContaining([
-            'AntiCorruptionLayer', 'Conformist', 'OpenHostService', 'PublishedLanguage'
+            'OpenHostService', 'PublishedLanguage'
         ]));
+        expect(emptyListLabels).not.toContain('AntiCorruptionLayer');
+        expect(emptyListLabels).not.toContain('Conformist');
         expect(emptyListLabels).not.toContain('integrationPatterns');
         expect(emptyListLabels).not.toContain('customer');
+
+        const customerList = await build(`bounded context A
+bounded context B
+context map M {
+  customer A {
+    integrationPatterns: [${marker}]
+  } -> supplier B
+}`);
+        const customerListLabels = customerList.completion?.items.map(item => item.label) ?? [];
+        expect(customerListLabels).toEqual(expect.arrayContaining([
+            'AntiCorruptionLayer', 'Conformist'
+        ]));
+        expect(customerListLabels).not.toContain('OpenHostService');
+        expect(customerListLabels).not.toContain('PublishedLanguage');
+
+        const partnerList = await build(`bounded context A
+bounded context B
+context map M {
+  partner A {
+    integrationPatterns: [${marker}]
+  } <-> partner B
+}`);
+        const partnerListLabels = partnerList.completion?.items.map(item => item.label) ?? [];
+        expect(partnerListLabels).toEqual(expect.arrayContaining([
+            'AntiCorruptionLayer', 'Conformist', 'OpenHostService', 'PublishedLanguage'
+        ]));
 
         const afterComma = await build(`bounded context A
 bounded context B
 context map M {
   customer A -> supplier B {
-    integrationPatterns: ["AntiCorruptionLayer", ${marker}]
+    integrationPatterns: ["OpenHostService", ${marker}]
   }
 }`);
         const afterCommaLabels = afterComma.completion?.items.map(item => item.label) ?? [];
         expect(afterCommaLabels).toEqual(expect.arrayContaining([
-            'Conformist', 'OpenHostService', 'PublishedLanguage'
+            'PublishedLanguage'
         ]));
         expect(afterCommaLabels).not.toContain('AntiCorruptionLayer');
+        expect(afterCommaLabels).not.toContain('Conformist');
+        expect(afterCommaLabels).not.toContain('OpenHostService');
         expect(afterCommaLabels).not.toContain('integrationPatterns');
 
         const unquotedPrefix = await build(`bounded context A
 bounded context B
 context map M {
   customer A -> supplier B {
-    integrationPatterns: [Ant${marker}]
+    integrationPatterns: [Pub${marker}]
   }
 }`);
         const unquotedPrefixLabels = unquotedPrefix.completion?.items.map(item => item.label) ?? [];
-        expect(unquotedPrefixLabels).toContain('AntiCorruptionLayer');
+        expect(unquotedPrefixLabels).toContain('PublishedLanguage');
         expect(unquotedPrefixLabels).not.toContain('integrationPatterns');
         expect(unquotedPrefixLabels).not.toContain('customer');
 
@@ -2705,23 +2735,23 @@ context map M {
 bounded context B
 context map M {
   customer A -> supplier B {
-    integrationPatterns: ["AntiCorruptionLayer", Con${marker}]
+    integrationPatterns: ["OpenHostService", Pub${marker}]
   }
 }`);
         const afterCommaPrefixLabels = afterCommaPrefix.completion?.items.map(item => item.label) ?? [];
-        expect(afterCommaPrefixLabels).toContain('Conformist');
-        expect(afterCommaPrefixLabels).not.toContain('AntiCorruptionLayer');
+        expect(afterCommaPrefixLabels).toContain('PublishedLanguage');
+        expect(afterCommaPrefixLabels).not.toContain('OpenHostService');
         expect(afterCommaPrefixLabels).not.toContain('integrationPatterns');
 
         const openQuote = await build(`bounded context A
 bounded context B
 context map M {
   customer A -> supplier B {
-    integrationPatterns: ["Ant${marker}]
+    integrationPatterns: ["Pub${marker}]
   }
 }`);
         expect(openQuote.completion?.items.map(item => item.label) ?? [])
-            .toContain('AntiCorruptionLayer');
+            .toContain('PublishedLanguage');
     });
 
     test('does not continue compound keywords from unopened declaration headers', async () => {

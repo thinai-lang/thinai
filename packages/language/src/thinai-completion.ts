@@ -25,6 +25,7 @@ import type { CancellationToken } from 'vscode-jsonrpc';
 import type { ThinaiServices } from './thinai-module.js';
 import {
     type CollectionType,
+    type ContextMapEndpoint,
     type Exposure,
     type Field,
     type ImportComponent,
@@ -37,6 +38,7 @@ import {
     isBoundedContext,
     isContextMap,
     isContextMapEndpoint,
+    isCustomerSupplierRelationship,
     isDomainEvent,
     isEnumType,
     isEntity,
@@ -76,7 +78,7 @@ import {
     toImportPath
 } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
-import { INTEGRATION_PATTERNS } from './thinai-constants.js';
+import { INTEGRATION_PATTERNS, CUSTOMER_INTEGRATION_PATTERNS, SUPPLIER_INTEGRATION_PATTERNS } from './thinai-constants.js';
 import { ThinaiCompletionDetails } from './thinai-completion-details.js';
 import {
     getIncompleteStatementSuffixes,
@@ -2756,7 +2758,6 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
     }
 
     private getIntegrationPatternCompletions(document: LangiumDocument, position: Position): CompletionItem[] {
-        const values = [...INTEGRATION_PATTERNS];
         const offset = document.textDocument.offsetAt(position);
         const text = document.textDocument.getText();
         const root = document.parseResult.value;
@@ -2764,10 +2765,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return [];
         }
         const endpoint = AstUtils.streamAst(root)
-            .filter(node => node.$type === 'ContextMapEndpoint')
+            .filter(isContextMapEndpoint)
             .filter(node => node.$cstNode !== undefined && node.$cstNode.offset <= offset && offset <= node.$cstNode.end)
             .toArray()
             .sort((left, right) => right.$cstNode!.offset - left.$cstNode!.offset)[0];
+        const values = this.getIntegrationPatternValues(endpoint);
         const property = endpoint?.$cstNode
             ? (GrammarUtils.findNodesForKeyword(endpoint.$cstNode, 'integrationPatterns')
                 .filter(node => node.offset < offset)
@@ -2853,6 +2855,19 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     newText: value
                 }
             }));
+    }
+
+    private getIntegrationPatternValues(endpoint: ContextMapEndpoint | undefined): string[] {
+        if (!endpoint) {
+            return [...INTEGRATION_PATTERNS];
+        }
+        const relationship = endpoint.$container;
+        if (isCustomerSupplierRelationship(relationship)) {
+            return [...(endpoint === relationship.customer
+                ? CUSTOMER_INTEGRATION_PATTERNS
+                : SUPPLIER_INTEGRATION_PATTERNS)];
+        }
+        return [...INTEGRATION_PATTERNS];
     }
 
     private findIntegrationPatternsPropertyStart(text: string, offset: number): number | undefined {
