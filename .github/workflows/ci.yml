@@ -38,4 +38,5 @@ jobs:
         run: |
           node site/scripts/sync-examples.mjs --check
           node site/scripts/sync-grammar.mjs --check
+          diff -qr .agents/skills/thinai-model site/.agents/skills/thinai-model
       - run: npm pack --dry-run --workspaces
