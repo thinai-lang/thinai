@@ -75,6 +75,21 @@ export EVAL_LLM_SESSION_HEADER="<header-name>"
 export EVAL_LLM_SESSION_ID="<stable-session-id>"
 ```
 
+`EVAL_LLM_SESSION_HEADER` and `EVAL_LLM_SESSION_ID` can be omitted for gateways
+that do not require a stable session. For OpenCode Go, use
+`deepseek-v4.1-flash` through the OpenAI-compatible inference API:
+
+```bash
+export EVAL_LLM_MODEL="deepseek-v4.1-flash"
+export EVAL_LLM_BASE_URL="https://opencode.ai/inference/go/openai/v1"
+export EVAL_LLM_SESSION_HEADER="x-opencode-session"
+export EVAL_LLM_SESSION_ID="thinai-lai-evals"
+# Set EVAL_LLM_API_KEY from your OpenCode Console personal API key.
+```
+
+Create the key in the [OpenCode Console](https://opencode.ai/console) under
+**Account → Personal API keys**. Do not commit it.
+
 Install the Langium AI CLI if needed, then run:
 
 ```bash

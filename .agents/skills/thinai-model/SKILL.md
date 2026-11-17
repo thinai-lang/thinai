@@ -1,6 +1,6 @@
 ---
 name: thinai-model
-description: Use Thinai as the source of truth when implementing or reviewing a domain model. Covers model discovery, context slices, module visibility, MCP/CLI/LSP access, and verification.
+description: Use or author Thinai models. Covers model discovery, context slices, module visibility, MCP/CLI/LSP access, authoring references, validation, and verification.
 user-invocable: false
 ---
 
@@ -17,6 +17,16 @@ Use whichever interface the environment provides:
 - **MCP** — structured, read-only model queries when an MCP server is available.
 
 The model is the source of truth. Do not infer domain rules from generated code.
+
+## Reference files
+
+Load these only when the task needs them:
+
+- `references/authoring.md` — condensed language and authoring guide.
+- `references/validation.md` — validation checklist for context maps, events, modules, CQRS, and journeys.
+- `references/examples/` — small validated models.
+
+Before writing or changing a model, read `references/authoring.md`. Before changing a context map, event handler, module boundary, or query repository, also read `references/validation.md`.
 
 ## Workflow
 
@@ -44,6 +54,9 @@ The model is the source of truth. Do not infer domain rules from generated code.
    - Identifier fields require a value object declared in the same aggregate.
    - Use `string`, `boolean`, `integer`, `decimal`, `date`, `time`, and `instant`.
    - Do not use `number`; it is not a Thinai primitive.
+   - Integration events are handled only outside their owning bounded context; same-context reactions use domain events.
+   - Put `Conformist`/`AntiCorruptionLayer` on customer endpoints and `OpenHostService`/`PublishedLanguage` on supplier endpoints. A wrong-side pattern is a warning.
+   - A query repository uses either `reads from` or a projector-maintained read model; prefer separate repositories instead of mixing forms.
 
 5. **Check dependencies and impact**
    - MCP `get_dependencies` returns `reference` edges by default.

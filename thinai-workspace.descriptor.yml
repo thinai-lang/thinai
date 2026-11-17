@@ -23,6 +23,9 @@ services:
   codeActionProvider: packages/language/src/thinai-code-actions.ts
 validators:
   - path: packages/language/src/thinai-validator.ts
+  - path: packages/language/src/thinai-model-validator.ts
+  - path: packages/language/src/thinai-method-invocation-validator.ts
+  - path: packages/language/src/thinai-read-dependency-validator.ts
 tests:
   - packages/language/test
   - packages/cli/test
@@ -86,3 +89,9 @@ documentation:
   - src: examples/order-fulfillment/README.md
     description: Complete Order Fulfillment example
     priority: medium
+  - src: .agents/skills/thinai-model/references/authoring.md
+    description: Condensed authoring guide for agents
+    priority: high
+  - src: .agents/skills/thinai-model/references/validation.md
+    description: Validation checklist for agents
+    priority: high
