@@ -13,3 +13,5 @@ syntaxes/
 *.vsix
 /artifacts/
 coverage/
+
+/packages/cli/skills/

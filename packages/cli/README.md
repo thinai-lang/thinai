@@ -44,9 +44,23 @@ thinai-cli impact path/to/model.tni ValueObject:Ordering.Order.OrderId --json --
 # Validate the source file and its transitive imports
 thinai-cli validate path/to/model.tni
 
+# Print the bundled Thinai agent skill
+thinai-cli skill
+
+# Copy the complete skill folder into the current project
+thinai-cli skill --copy
+
+# Copy to a specific directory, overwriting if needed
+thinai-cli skill --copy --out path/to/skill --force
+
 # Start a read-only MCP server over stdio
 thinai-cli mcp path/to/model.tni
 ```
+
+`thinai-cli skill` prints `SKILL.md`. `--copy` installs the complete skill
+folder, including its authoring and validation references and examples, into
+`.agents/skills/thinai-model` by default. Use `--out` for another directory and
+`--force` to replace an existing one.
 
 The MCP server exposes element discovery, exact resolution, dependency filters,
 context slices, impact traversal, and bounded declaration source access. It does
@@ -73,4 +87,6 @@ import-connected model, including importers.
 - [src/main.ts](src/main.ts) — command definition.
 - [src/model.ts](src/model.ts) — model export, context, impact, and validation actions.
 - [src/mcp.ts](src/mcp.ts) — read-only MCP server.
+- [src/skill.ts](src/skill.ts) — prints or copies the bundled agent skill.
+- [scripts/sync-skill.mjs](scripts/sync-skill.mjs) — copies the canonical skill into the package for packing.
 - [src/util.ts](src/util.ts) — model document loading utilities.

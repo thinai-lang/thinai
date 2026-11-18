@@ -11,7 +11,8 @@
     "files": [
         "bin",
         "out",
-        "src"
+        "src",
+        "skills"
     ],
     "bin": {
         "thinai-cli": "./bin/cli.js"
@@ -19,7 +20,10 @@
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out",
         "build": "echo 'No build step'",
-        "build:clean": "npm run clean && npm run build"
+        "build:clean": "npm run clean && npm run build",
+        "sync:skill": "node scripts/sync-skill.mjs",
+        "prepack": "npm run sync:skill",
+        "pretest": "npm run sync:skill"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.32.2",

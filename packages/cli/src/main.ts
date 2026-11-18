@@ -2,6 +2,7 @@ import { ThinaiLanguageMetaData } from 'thinai-language';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { contextAction, impactAction, inspectAction, validateAction } from './model.js';
+import { skillAction } from './skill.js';
 import { startMcpServer } from './mcp.js';
 import * as url from 'node:url';
 import * as fs from 'node:fs/promises';
@@ -59,6 +60,16 @@ export default async function(): Promise<void> {
         .description('validates a Thinai model and its imports')
         .action(async (fileName: string, options: { json?: boolean }) => {
             await runAction(() => validateAction(fileName, options));
+        });
+
+    program
+        .command('skill')
+        .option('--copy', 'copy the full skill directory into the current project')
+        .option('--out <directory>', 'copy target directory; requires --copy')
+        .option('--force', 'overwrite an existing skill directory')
+        .description('prints or copies the bundled Thinai agent skill')
+        .action(async (options: { copy?: boolean; out?: string; force?: boolean }) => {
+            await runAction(() => skillAction(options));
         });
 
     program

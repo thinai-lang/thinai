@@ -19,7 +19,7 @@
         "build:clean": "npm run clean && npm run build",
         "langium:generate": "npm run --workspace packages/language langium:generate",
         "langium:watch": "npm run --workspace packages/language langium:watch",
-        "pretest": "npm run generate && tsc -b tsconfig.build.json",
+        "pretest": "npm run generate && npm run sync:skill --workspace packages/cli && tsc -b tsconfig.build.json",
         "test": "npm run --workspace packages/language test && vitest run --config packages/cli/vitest.config.ts",
         "coverage": "npm run --workspace packages/language coverage"
     },
