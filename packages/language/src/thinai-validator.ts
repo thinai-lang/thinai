@@ -1,10 +1,13 @@
 import {
     type AstNode,
+    type CstNode,
     type LangiumDocument,
     type Reference,
     type ReferenceInfo,
     AstUtils,
+    CstUtils,
     DocumentState,
+    GrammarUtils,
     type ValidationAcceptor,
     type ValidationChecks,
     isReference
@@ -46,6 +49,7 @@ import type {
     TypeDeclaration,
     ValueObject,
     SharedKernel,
+    SpecificationText,
     SpecificationTextPart
 } from './generated/ast.js';
 import {
@@ -151,6 +155,7 @@ export function registerValidationChecks(services: ThinaiServices): void {
         Repository: validator.checkRepository,
         SharedKernel: validator.checkSharedKernel,
         Subdomain: validator.checkNamedDeclaration,
+        SpecificationText: validator.checkSpecificationText,
         SpecificationTextPart: validator.checkSpecificationTextPart,
         ValueObject: validator.checkValueObject
     };
@@ -218,6 +223,10 @@ export class ThinaiValidator {
 
     checkImport(importDeclaration: Import, accept: ValidationAcceptor): void {
         this.modelValidator.checkImport(importDeclaration, accept);
+        const path = importDeclaration.$cstNode
+            ? GrammarUtils.findNodeForProperty(importDeclaration.$cstNode, 'path')
+            : undefined;
+        this.checkLegacyMultilineString(path, importDeclaration, 'path', accept);
     }
 
     checkModelImports(model: Model, accept: ValidationAcceptor): void {
@@ -541,6 +550,38 @@ export class ThinaiValidator {
             }
             names.add(value.name);
         }
+    }
+
+    checkSpecificationText(text: SpecificationText, accept: ValidationAcceptor): void {
+        this.checkLegacyMultilineString(text.$cstNode, text, undefined, accept);
+    }
+
+    private checkLegacyMultilineString(
+        cst: CstNode | undefined,
+        node: AstNode,
+        property: string | undefined,
+        accept: ValidationAcceptor
+    ): void {
+        if (!cst) {
+            return;
+        }
+        const leaves = [...CstUtils.flattenCst(cst)];
+        const start = leaves[0];
+        if (!start || (start.tokenType.name !== 'DOUBLE_STRING_START' &&
+            start.tokenType.name !== 'SINGLE_STRING_START')) {
+            return;
+        }
+        const end = leaves.at(-1);
+        if (!end || (end.tokenType.name !== 'DOUBLE_STRING_END' &&
+            end.tokenType.name !== 'SINGLE_STRING_END') ||
+            !leaves.some(leaf => /[\r\n]/u.test(leaf.text))) {
+            return;
+        }
+        accept('error', 'Use triple double quotes for multiline text; single and double quotes are for one-line text.', {
+            node,
+            property,
+            code: 'multiline-string-requires-triple-quotes'
+        });
     }
 
     checkSpecificationTextPart(part: SpecificationTextPart, accept: ValidationAcceptor): void {

@@ -84,6 +84,11 @@ export class ThinaiCodeActionProvider {
     ): CodeAction[] {
         const actions: CodeAction[] = [];
         for (const diagnostic of params.context.diagnostics) {
+            const multilineStringAction = this.getMultilineStringCodeAction(document, diagnostic);
+            if (multilineStringAction) {
+                actions.push(multilineStringAction);
+                continue;
+            }
             const unresolved = this.getUnresolvedReference(document, diagnostic.range);
             if (!unresolved) {
                 actions.push(...this.getVisibilityCodeActions(document, diagnostic));
@@ -130,6 +135,40 @@ export class ThinaiCodeActionProvider {
             }
         }
         return actions;
+    }
+
+    private getMultilineStringCodeAction(
+        document: LangiumDocument,
+        diagnostic: CodeActionParams['context']['diagnostics'][number]
+    ): CodeAction | undefined {
+        if (diagnostic.code !== 'multiline-string-requires-triple-quotes') {
+            return undefined;
+        }
+        const text = document.textDocument.getText(diagnostic.range);
+        const quote = text[0];
+        if ((quote !== '"' && quote !== "'") || text.at(-1) !== quote) {
+            return undefined;
+        }
+        const content = text.slice(1, -1);
+        if (content.includes('"""')) {
+            return undefined;
+        }
+        const body = /^\r?\n/u.test(content) ? content : `\n${content}`;
+        const formattedBody = /\r?\n[ \t]*$/u.test(body) ? body : `${body}\n`;
+        return {
+            title: 'Use triple double quotes',
+            kind: CodeActionKind.QuickFix,
+            isPreferred: true,
+            diagnostics: [diagnostic],
+            edit: {
+                changes: {
+                    [document.uri.toString()]: [{
+                        range: diagnostic.range,
+                        newText: `"""${formattedBody}"""`
+                    }]
+                }
+            }
+        };
     }
 
     private getVisibilityCodeActions(

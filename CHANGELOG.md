@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Reject literal line breaks in single- and double-quoted strings; use triple double quotes for multiline text.
+
 ## 0.1.5-alpha.5 - 2026-11-01
 
 - Add read-only MCP tools `get_source` and `resolve_element` for declaration text and exact qualified-name lookup.

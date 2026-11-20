@@ -49,6 +49,35 @@ context map Fulfillment {
         }
     });
 
+    test('rejects literal line breaks in single and double quoted strings', async () => {
+        const source = (literal: string) => `bounded context C
+in bounded context C {
+    application service A {
+        method m() {
+            behavior ${literal}
+        }
+    }
+}`;
+        for (const literal of ['"line one\nline two"', "'line one\nline two'"]) {
+            const document = await parse(source(literal));
+            expect(document.diagnostics?.filter(diagnostic =>
+                diagnostic.code === 'multiline-string-requires-triple-quotes'
+            ), literal).toHaveLength(1);
+        }
+
+        for (const literal of ['"""\nline one\nline two\n"""', '"line one\\nline two"']) {
+            const document = await parse(source(literal));
+            expect(document.diagnostics?.filter(diagnostic =>
+                diagnostic.code === 'multiline-string-requires-triple-quotes'
+            ), literal).toEqual([]);
+        }
+
+        const importDocument = await parse('import "./line\nbreak.tni"\nbounded context C\n');
+        expect(importDocument.diagnostics?.filter(diagnostic =>
+            diagnostic.code === 'multiline-string-requires-triple-quotes'
+        )).toHaveLength(1);
+    });
+
     test('rejects a complete empty import path', async () => {
         const document = await parse(`import ""\nbounded context Alpha\n`);
         expect(semanticDiagnostics(document).some(diagnostic =>

@@ -149,4 +149,36 @@ in bounded context Shop {
         expect(applied).toContain('depends on Other, Domain');
         expect(applied).toContain('exposes OrderId, OrderAggregate');
     });
+
+    test('converts multiline quoted text to triple double quotes', async () => {
+        const text = `bounded context Shop
+in bounded context Shop {
+  application service OrderApplication {
+    method placeOrder() {
+      behavior "Line one.
+Line two."
+    }
+  }
+}
+`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/code-actions/multiline-string.tni'),
+            text
+        );
+        documents = [document];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        const diagnostic = (document.diagnostics ?? []).find(candidate =>
+            candidate.code === 'multiline-string-requires-triple-quotes'
+        );
+        expect(diagnostic).toBeDefined();
+        const actions = await services.Thinai.lsp.CodeActionProvider!.getCodeActions(document, {
+            textDocument: { uri: document.uri.toString() },
+            range: diagnostic!.range,
+            context: { diagnostics: [diagnostic!] }
+        }) as CodeAction[] | undefined;
+        const action = actions?.find(candidate => candidate.title === 'Use triple double quotes');
+        expect(action).toBeDefined();
+        const applied = applyEdits(document, text, editsOf(action!, document));
+        expect(applied).toContain('behavior """\nLine one.\nLine two.\n"""');
+    });
 });

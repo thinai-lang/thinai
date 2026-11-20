@@ -539,8 +539,9 @@ quotes for single-line text. Put the opening and closing `"""` delimiters on
 their own lines for block-style text. Common line indentation is layout, while
 relative indentation, line breaks, and linked references are preserved. The
 formatter indents continuation text and aligns the closing delimiter with its
-specification clause. Existing multiline single- and double-quoted strings
-remain accepted for compatibility.
+specification clause. A literal line break inside a single- or double-quoted
+string is an error; convert it to triple double quotes with the quick fix or by
+hand.
 
 Journeys are top-level, actor-led, command-led timelines of non-event
 application-service commands and optional query-service reads that may cross

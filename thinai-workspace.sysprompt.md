@@ -181,7 +181,7 @@ In particular, put `Order` and `OrderId` as sibling members of `Order`; do not n
 
 ## Behavior specifications
 
-Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Use ordinary single or double quotes for one-line text, and triple double quotes for multiline text. Both forms support inline links:
+Use `invariant`, `precondition`, `postcondition`, and `behavior` to express domain meaning. Use ordinary single or double quotes only for one-line text; a literal line break inside either is an error. Use triple double quotes for multiline text. Both forms support inline links:
 
 <!-- thinai-fragment -->
 ```thinai

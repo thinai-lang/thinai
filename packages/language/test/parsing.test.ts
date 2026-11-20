@@ -312,7 +312,7 @@ in bounded context Sample {
         expect(document.parseResult.value?.declarations[0].$type).toBe('BoundedContextPart');
     });
 
-    test('parses triple-quoted string literals and retains legacy multiline quotes', async () => {
+    test('parses triple-quoted string literals and legacy multiline quotes', async () => {
         const triple = await parse(`import """./ordering.tni"""
 bounded context Ordering`);
         expect(triple.parseResult.lexerErrors).toEqual([]);
