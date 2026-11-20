@@ -5,7 +5,8 @@ import { scanThinaiSource } from './thinai-source-scanner.js';
 
 /**
  * Creates a selection hierarchy from the smallest relevant Thinai syntax node
- * through its enclosing constructs. Quoted values start at the complete string.
+ * through its enclosing constructs. Quoted values start at their inner text,
+ * then expand to the complete string.
  */
 export function createThinaiSelectionRange(
     document: LangiumDocument,
@@ -43,6 +44,7 @@ export function createThinaiSelectionRange(
     }
 
     const quotedValue = specification?.$cstNode ?? CstUtils.getDatatypeNode(leaf);
+    const quotedInner = quotedValue ? createQuotedInnerRange(document, quotedValue) : undefined;
     const base = projectClause ?? referenceNode?.$cstNode ?? quotedValue ?? leaf.astNode.$cstNode ?? leaf;
     const ranges: SelectionRange['range'][] = [];
     const pushRange = (range: SelectionRange['range']): void => {
@@ -63,6 +65,17 @@ export function createThinaiSelectionRange(
         while (current) {
             pushRange(current.range);
             current = current.container;
+        }
+    }
+    if (quotedInner && quotedValue) {
+        const fullRangeIndex = ranges.findIndex(range =>
+            range.start.line === quotedValue.range.start.line &&
+            range.start.character === quotedValue.range.start.character &&
+            range.end.line === quotedValue.range.end.line &&
+            range.end.character === quotedValue.range.end.character
+        );
+        if (fullRangeIndex >= 0) {
+            ranges.splice(fullRangeIndex, 0, quotedInner);
         }
     }
 
@@ -144,6 +157,32 @@ function containsOffset(
 ): boolean {
     return referenceNode !== undefined &&
         referenceNode.offset <= offset && offset <= referenceNode.end;
+}
+
+function createQuotedInnerRange(document: LangiumDocument, node: CstNode): Range | undefined {
+    const text = node.text;
+    const delimiter = text.startsWith('"""') ? '"""' : text[0] ?? '';
+    if ((delimiter !== '"' && delimiter !== "'" && delimiter !== '"""') ||
+        text.length < delimiter.length * 2 || !text.endsWith(delimiter)) {
+        return undefined;
+    }
+    let start = node.offset + delimiter.length;
+    let end = node.end - delimiter.length;
+    if (delimiter === '"""') {
+        const content = text.slice(delimiter.length, text.length - delimiter.length);
+        const leadingNewline = /^(?:\r\n|\r|\n)/u.exec(content);
+        if (leadingNewline) {
+            start += leadingNewline[0].length;
+        }
+        const trailingLayout = /(?:\r\n|\r|\n)[ \t]*$/u.exec(content);
+        if (trailingLayout) {
+            end = node.offset + delimiter.length + trailingLayout.index;
+        }
+    }
+    if (start >= end || text.slice(start - node.offset, end - node.offset).trim().length === 0) {
+        return undefined;
+    }
+    return Range.create(document.textDocument.positionAt(start), document.textDocument.positionAt(end));
 }
 
 /**

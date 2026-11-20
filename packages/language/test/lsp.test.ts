@@ -93,9 +93,14 @@ journey Checkout {
             const selection = createThinaiSelectionRange(document, position);
 
             expect(selection, quotedText).toBeDefined();
-            expect(document.textDocument.getText(selection!.range), quotedText).toBe(quotedText);
+            const innerText = quotedText.startsWith('"""')
+                ? quotedText.slice(3, -3)
+                : quotedText.slice(1, -1);
+            expect(document.textDocument.getText(selection!.range), quotedText).toBe(innerText);
             expect(selection!.parent, quotedText).toBeDefined();
-            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toContain(enclosingKeyword);
+            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toBe(quotedText);
+            expect(document.textDocument.getText(selection!.parent!.parent!.range), quotedText)
+                .toContain(enclosingKeyword);
         }
 
         const statementCases = [
@@ -108,8 +113,41 @@ journey Checkout {
         for (const [quotedText, expectedStatement] of statementCases) {
             const position = document.textDocument.positionAt(source.indexOf(quotedText) + 1);
             const selection = createThinaiSelectionRange(document, position);
-            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toBe(expectedStatement);
+            expect(document.textDocument.getText(selection!.parent!.range), quotedText).toBe(quotedText);
+            expect(document.textDocument.getText(selection!.parent!.parent!.range), quotedText)
+                .toBe(expectedStatement);
         }
+    });
+
+    test('selects triple-quoted content without its layout delimiters', () => {
+        const source = `bounded context C
+in bounded context C {
+    application service A {
+        method m() {
+            behavior """
+              Use [[OrderId]] here.
+            """
+        }
+    }
+    value object OrderId {
+        raw: string
+    }
+}`;
+        const document = services.shared.workspace.LangiumDocuments.createDocument(
+            URI.file('/workspace/triple-selection-ranges.tni'), source
+        );
+        documents = [document];
+        const quotedText = `"""
+              Use [[OrderId]] here.
+            """`;
+        const position = document.textDocument.positionAt(source.indexOf('Use [[OrderId]]') + 2);
+        const selection = createThinaiSelectionRange(document, position);
+        const inner = '              Use [[OrderId]] here.';
+
+        expect(selection).toBeDefined();
+        expect(document.textDocument.getText(selection!.range)).toBe(inner);
+        expect(document.textDocument.getText(selection!.parent!.range)).toBe(quotedText);
+        expect(document.textDocument.getText(selection!.parent!.parent!.range)).toContain('behavior');
     });
 
     test('selects complete method statements before expanding to their method', () => {
@@ -203,11 +241,12 @@ in bounded context Ordering {
             return texts;
         };
 
-        expect(textsAt('[[Domain.OrderPlaced.delivery.city]]', 'delivery').slice(0, 5)).toEqual([
+        expect(textsAt('[[Domain.OrderPlaced.delivery.city]]', 'delivery').slice(0, 6)).toEqual([
             'delivery',
             'Domain.OrderPlaced.delivery',
             'Domain.OrderPlaced.delivery.city',
             '[[Domain.OrderPlaced.delivery.city]]',
+            'Use [[Domain.OrderPlaced.delivery.city]].',
             '"Use [[Domain.OrderPlaced.delivery.city]]."'
         ]);
         expect(textsAt('invokes Domain.OrderAggregate.Order.place', 'place').slice(0, 3)).toEqual([
