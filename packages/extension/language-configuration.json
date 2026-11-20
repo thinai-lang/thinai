@@ -22,6 +22,28 @@
                 "flags": "u"
             },
             "action": { "indent": "none" }
+        },
+        {
+            "beforeText": {
+                "pattern": "^\\s*(?:behavior|invariant|precondition|postcondition|when|with)\\s+\"\"\"\\s*$",
+                "flags": "u"
+            },
+            "afterText": {
+                "pattern": "^\\s*\"\"\"\\s*$",
+                "flags": "u"
+            },
+            "action": { "indent": "indentOutdent" }
+        },
+        {
+            "beforeText": {
+                "pattern": "^\\s*\"\"\"\\s*$",
+                "flags": "u"
+            },
+            "afterText": {
+                "pattern": "^\\s*\"\"\"\\s*$",
+                "flags": "u"
+            },
+            "action": { "indent": "indentOutdent" }
         }
     ],
     // symbols that are auto closed when typing

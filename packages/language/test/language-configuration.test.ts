@@ -16,7 +16,11 @@ interface AutoClosingPair {
 
 interface LanguageConfiguration {
     wordPattern: RegexConfiguration;
-    onEnterRules: Array<{ beforeText: RegexConfiguration }>;
+    onEnterRules: Array<{
+        beforeText: RegexConfiguration;
+        afterText?: RegexConfiguration;
+        action?: { indent: 'none' | 'indent' | 'indentOutdent' | 'outdent' };
+    }>;
     autoClosingPairs: AutoClosingPair[];
     surroundingPairs: string[][];
 }
@@ -77,6 +81,38 @@ describe('VS Code language configuration', () => {
             candidate.open === '[' && candidate.close === ']'
         );
         expect(singleBracket?.notIn).toEqual(['string', 'comment']);
+    });
+
+    test('moves an auto-closed triple quote to its own line', async () => {
+        const configuration = await readLanguageConfiguration();
+        const rules = configuration.onEnterRules.filter(rule =>
+            rule.action?.indent === 'indentOutdent' && rule.afterText !== undefined
+        );
+        expect(rules).toHaveLength(2);
+
+        const keywordRule = rules.find(rule => rule.beforeText.pattern.includes('behavior'));
+        expect(keywordRule).toBeDefined();
+        const before = new RegExp(keywordRule!.beforeText.pattern, keywordRule!.beforeText.flags);
+        const after = new RegExp(keywordRule!.afterText!.pattern, keywordRule!.afterText!.flags);
+
+        for (const line of ['behavior """', '      invariant """', '    when """', '      with """']) {
+            expect(before.test(line), line).toBe(true);
+        }
+        expect(before.test('behavior "Run."')).toBe(false);
+        expect(before.test('// behavior """')).toBe(false);
+        for (const line of ['"""', '      """']) {
+            expect(after.test(line), line).toBe(true);
+        }
+        expect(after.test('"""text"""')).toBe(false);
+
+        const standaloneRule = rules.find(rule => rule !== keywordRule);
+        expect(standaloneRule).toBeDefined();
+        const standaloneBefore = new RegExp(
+            standaloneRule!.beforeText.pattern,
+            standaloneRule!.beforeText.flags
+        );
+        expect(standaloneBefore.test('  """')).toBe(true);
+        expect(standaloneBefore.test('  behavior """')).toBe(false);
     });
 
     test('auto-closes triple-quoted specifications without blocking string entry', async () => {
