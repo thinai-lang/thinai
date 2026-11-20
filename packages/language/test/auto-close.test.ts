@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { getSpecificationLinkAutoDeleteRange } from '../src/thinai-auto-close.js';
+import { getSpecificationLinkAutoDeleteRange, getTripleQuoteAutoDeleteRange } from '../src/thinai-auto-close.js';
 
 describe('specification link auto delete', () => {
     test('removes one closer when backspacing the second opener', () => {
@@ -46,5 +46,34 @@ describe('specification link auto delete', () => {
             end: 2
         });
         expect(getSpecificationLinkAutoDeleteRange('[[abc]]', 'abc]]', 0, 2, '')).toBeUndefined();
+    });
+});
+
+describe('triple quote auto delete', () => {
+    test('removes the closing triple when deleting an empty opening triple', () => {
+        expect(getTripleQuoteAutoDeleteRange('behavior """"""', 'behavior """""', 11, 1, ''))
+            .toEqual({ start: 11, end: 14 });
+        expect(getTripleQuoteAutoDeleteRange('behavior """"""', 'behavior """', 9, 3, ''))
+            .toEqual({ start: 9, end: 12 });
+        expect(getTripleQuoteAutoDeleteRange('behavior """"""', 'behavior """"', 11, 2, ''))
+            .toEqual({ start: 11, end: 13 });
+    });
+
+    test('removes the closing triple when deleting an opening triple with content', () => {
+        expect(getTripleQuoteAutoDeleteRange('behavior """abc"""', 'behavior ""abc"""', 11, 1, ''))
+            .toEqual({ start: 14, end: 17 });
+        expect(getTripleQuoteAutoDeleteRange('behavior """abc"""', 'behavior abc"""', 9, 3, ''))
+            .toEqual({ start: 12, end: 15 });
+    });
+
+    test('ignores closing delimiters, single quotes, insertions, and missing closers', () => {
+        expect(getTripleQuoteAutoDeleteRange('behavior """abc"""', 'behavior """abc""', 17, 1, ''))
+            .toBeUndefined();
+        expect(getTripleQuoteAutoDeleteRange('behavior "abc"', 'behavior abc"', 10, 1, ''))
+            .toBeUndefined();
+        expect(getTripleQuoteAutoDeleteRange('behavior """abc', 'behavior ""abc', 11, 1, ''))
+            .toBeUndefined();
+        expect(getTripleQuoteAutoDeleteRange('behavior """abc"""', 'behavior """abc', 11, 0, '"'))
+            .toBeUndefined();
     });
 });

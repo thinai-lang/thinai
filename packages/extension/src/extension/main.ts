@@ -8,6 +8,7 @@ import {
     createThinaiServices,
     createThinaiSelectionRange,
     getSpecificationLinkAutoDeleteRange,
+    getTripleQuoteAutoDeleteRange,
     isQueryRepositoryReadCompletionPosition
 } from 'thinai-language';
 
@@ -17,7 +18,7 @@ let client: LanguageClient;
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const thinaiServices = createThinaiServices(EmptyFileSystem);
     registerThinaiSelectionRanges(context, thinaiServices.shared);
-    registerSpecificationLinkAutoDelete(context);
+    registerAutoDelete(context);
     client = await startLanguageClient(context);
     registerQueryRepositoryReadCompletionTrigger(context, thinaiServices.Thinai);
 }
@@ -54,7 +55,7 @@ function registerThinaiSelectionRanges(
     }));
 }
 
-function registerSpecificationLinkAutoDelete(context: vscode.ExtensionContext): void {
+function registerAutoDelete(context: vscode.ExtensionContext): void {
     const previousTexts = new Map<string, string>();
     const applying = new Set<string>();
     const remember = (document: vscode.TextDocument): void => {
@@ -77,6 +78,12 @@ function registerSpecificationLinkAutoDelete(context: vscode.ExtensionContext): 
             }
             const change = event.contentChanges[0]!;
             const closer = getSpecificationLinkAutoDeleteRange(
+                previous,
+                current,
+                change.rangeOffset,
+                change.rangeLength,
+                change.text
+            ) ?? getTripleQuoteAutoDeleteRange(
                 previous,
                 current,
                 change.rangeOffset,

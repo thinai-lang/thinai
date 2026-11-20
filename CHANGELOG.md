@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Reject literal line breaks in single- and double-quoted strings; use triple double quotes for multiline text.
+- Auto-close triple double quotes and remove the closing delimiter when the opening triple is deleted.
 
 ## 0.1.5-alpha.5 - 2026-11-01
 

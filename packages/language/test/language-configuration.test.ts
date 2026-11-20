@@ -18,6 +18,7 @@ interface LanguageConfiguration {
     wordPattern: RegexConfiguration;
     onEnterRules: Array<{ beforeText: RegexConfiguration }>;
     autoClosingPairs: AutoClosingPair[];
+    surroundingPairs: string[][];
 }
 
 async function readLanguageConfiguration(): Promise<LanguageConfiguration> {
@@ -76,6 +77,17 @@ describe('VS Code language configuration', () => {
             candidate.open === '[' && candidate.close === ']'
         );
         expect(singleBracket?.notIn).toEqual(['string', 'comment']);
+    });
+
+    test('auto-closes triple-quoted specifications without blocking string entry', async () => {
+        const configuration = await readLanguageConfiguration();
+        const pair = configuration.autoClosingPairs.find(candidate =>
+            candidate.open === '"""' && candidate.close === '"""'
+        );
+        expect(pair).toBeDefined();
+        expect(pair?.notIn).toEqual(['comment']);
+        expect(pair?.notIn).not.toContain('string');
+        expect(configuration.surroundingPairs).toContainEqual(['"""', '"""']);
     });
 
     test('sets Thinai editor defaults for suggestions and whitespace', async () => {
