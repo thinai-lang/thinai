@@ -635,7 +635,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             // explicitly and let `filterText` drive client-side filtering. The
             // range also replaces an existing forward word so completion at a
             // token boundary cannot duplicate or concatenate text.
-            const tokenStart = context.textDocument.positionAt(context.tokenOffset);
+            const tokenStart = context.textDocument.positionAt(
+                isImportComponent(refInfo.container)
+                    ? context.tokenOffset
+                    : this.getPathSegmentStart(
+                        context.textDocument.getText(),
+                        context.tokenOffset,
+                        context.offset
+                    )
+            );
             const tokenEnd = context.textDocument.positionAt(Math.max(context.tokenEndOffset, context.offset));
             const tokenText = context.textDocument.getText({ start: tokenStart, end: tokenEnd });
             // Replace the whole word or backtick-delimited token. Ending the edit
@@ -1609,14 +1617,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             return { active: false, items: [] };
         }
         const endOffset = Math.max(offset, this.getForwardWordEndOffset(document, offset));
+        const text = document.textDocument.getText();
         return {
             active: true,
             items: descriptions.map(description => {
                 const target = description.node ?? resolveAstNodeDescription(description, this.thinaiServices);
+                const replacement = (description as AstNodeDescription & {
+                    thinaiPathReplacement?: string;
+                }).thinaiPathReplacement ?? description.name;
                 return this.createPathListCompletionItem(
                     document,
                     description,
-                    startOffset,
+                    replacement.includes('.')
+                        ? startOffset
+                        : this.getPathSegmentStart(text, startOffset, offset),
                     endOffset,
                     this.isReadSourceStructuralTarget(target)
                 );
@@ -1682,7 +1696,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                     nodeDescription: description,
                     kind: this.thinaiServices.shared.lsp.NodeKindProvider.getCompletionItemKind(description),
                     detail: this.completionDetails.getCompletionDetail(description),
-                    sortText: '0',
+                    // Context, module, and aggregate roots are paths, not the
+                    // same-level targets the list expects.
+                    sortText: target && (isBoundedContext(target) || isModule(target) || isAggregate(target))
+                        ? '2'
+                        : '0',
                     insertText,
                     ...(continuation ? { commitCharacters: ['.'] } : {})
                 };
@@ -1742,6 +1760,11 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             : afterComma || emptyList ? '' : text.slice(keywordEnd, offset).trimStart();
         const typedPrefix = normalizeIdentifierText(typedRaw);
         const prefixStart = currentReference?.$cstNode?.offset ?? offset - typedRaw.length;
+        // Completing `Container.segment` replaces only the segment so the
+        // client filters against the text it is actually replacing.
+        const segmentStart = currentReference?.$cstNode && typedPrefix.includes('.')
+            ? this.getPathSegmentStart(text, currentReference.$cstNode.offset, offset)
+            : undefined;
         const exposedNames = new Set([
             ...this.getOtherExposureNames(exposure),
             ...exposure.declarations
@@ -1776,10 +1799,20 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                                 return !exposedNames.has(label) && !exposedShortNames.has(shortLabel);
                             })
                             .map(description => {
+                                const replacement = (description as AstNodeDescription & {
+                                    thinaiPathReplacement?: string;
+                                }).thinaiPathReplacement ?? description.name;
+                                // A repair that rewrites an earlier segment keeps
+                                // the whole-path range; an exact container prefix
+                                // replaces only the terminal segment.
+                                const startOffset = segmentStart !== undefined &&
+                                    !replacement.includes('.')
+                                    ? segmentStart
+                                    : prefixStart;
                                 const item = this.createPathListCompletionItem(
                                     document,
                                     description,
-                                    prefixStart,
+                                    startOffset,
                                     endOffset
                                 );
                                 item.sortText = this.getExposureSortText(
@@ -1849,6 +1882,17 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
             .filter((name): name is string => name !== undefined)
             .map(name => normalizeIdentifierText(name.trim()))
             .filter(name => name.length > 0);
+    }
+
+    private getPathSegmentStart(text: string, referenceStart: number, offset: number): number {
+        const dot = text.lastIndexOf('.', offset - 1);
+        if (dot < referenceStart || !/[\p{L}\p{N}_`]$/u.test(text.slice(0, dot)) ||
+            !/^[\s\p{L}\p{N}_`]*$/u.test(text.slice(dot + 1, offset))) {
+            return referenceStart;
+        }
+        const segmentStart = dot + 1;
+        const whitespace = /^\s*/u.exec(text.slice(segmentStart, offset))?.[0].length ?? 0;
+        return segmentStart + whitespace;
     }
 
     private getExposureSortText(

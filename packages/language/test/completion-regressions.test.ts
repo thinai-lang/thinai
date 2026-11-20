@@ -694,6 +694,104 @@ in bounded context Shipping {
         expect(abbreviatedItems.find(item => item.label === 'Operations.ShipmentQueries')?.sortText).toBe('1');
     });
 
+    test('ranks same-level exposure targets and completes their members', async () => {
+        const source = (typed: string) => `bounded context Ordering
+in bounded context Ordering {
+    module Api {
+        application service OrderApplication {
+            method placeOrder() {}
+            method priceOrder() {}
+        }
+        exposes ${typed}${marker}
+    }
+}`;
+        const exact = await build(source('OrderApplication'));
+        const items = exact.completion?.items ?? [];
+        const direct = items.find(item => item.label === 'OrderApplication');
+        expect(direct?.sortText).toBe('0');
+        expect(direct?.filterText).toBe('OrderApplication');
+        expect(items[0]?.label).toBe('OrderApplication');
+        expect(applyCompletionItem(exact.document, exact.text, direct!)).toContain('exposes OrderApplication');
+        const module = items.find(item => item.label === 'Api');
+        expect(module).toMatchObject({ sortText: '2', filterText: 'Api' });
+
+        const partial = await build(source('OrderApplication.pric'));
+        const price = partial.completion?.items.find(item => item.label === 'priceOrder');
+        expect(price).toBeDefined();
+        expect(price?.textEdit).toMatchObject({
+            newText: 'priceOrder',
+            range: {
+                start: partial.document.textDocument.positionAt(
+                    partial.text.indexOf('OrderApplication.pric') + 'OrderApplication.'.length
+                ),
+                end: partial.document.textDocument.positionAt(partial.text.indexOf('OrderApplication.pric') + 'OrderApplication.pric'.length)
+            }
+        });
+        expect(applyCompletionItem(partial.document, partial.text, price!)).toContain('exposes OrderApplication.priceOrder');
+    });
+
+    test('ranks same-level list targets above enclosing path roots', async () => {
+        const reads = await build(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order { identifier id: Id }
+        value object Id { raw: string }
+    }
+    read model OrderView { id: string }
+    query repository OrderViewRepository { serves OrderView }
+    query repository AnotherRepository { serves OrderView }
+}
+in bounded context Ordering {
+    module Api {
+        query service OrderQueries {
+            method find() returns OrderView {
+                reads from O${marker}
+            }
+        }
+    }
+}`);
+        const readItems = reads.completion?.items ?? [];
+        expect(readItems.find(item => item.label === 'OrderViewRepository')?.sortText).toBe('0');
+        expect(readItems.find(item => item.label === 'Ordering')?.sortText).toBe('2');
+
+        const invokes = await build(`bounded context Ordering
+in bounded context Ordering {
+    aggregate Order {
+        root entity Order { identifier id: Id method place() {} }
+        value object Id { raw: string }
+    }
+    application service App {
+        method run() {
+            invokes ${marker}
+        }
+    }
+}`);
+        const invokeItems = invokes.completion?.items ?? [];
+        expect(invokeItems.find(item => item.label === 'run')?.sortText).toBe('0');
+        expect(invokeItems.find(item => item.label === 'place')?.sortText).toBe('0');
+        expect(invokeItems.find(item => item.label === 'Ordering')?.sortText).toBe('2');
+
+        const dottedInvoke = await build(`bounded context Ordering
+in bounded context Ordering {
+    application service App {
+        method run() {}
+        method use() {
+            invokes App.ru${marker}
+        }
+    }
+}`);
+        const dottedRun = dottedInvoke.completion?.items.find(item => item.label === 'run');
+        expect(dottedRun).toBeDefined();
+        expect(dottedRun?.textEdit).toMatchObject({
+            newText: 'run',
+            range: {
+                start: dottedInvoke.document.textDocument.positionAt(dottedInvoke.text.indexOf('App.ru') + 'App.'.length),
+                end: dottedInvoke.document.textDocument.positionAt(dottedInvoke.text.indexOf('App.ru') + 'App.ru'.length)
+            }
+        });
+        expect(applyCompletionItem(dottedInvoke.document, dottedInvoke.text, dottedRun!)).toContain('invokes App.run');
+    });
+
     test('keeps exposure completions consistent after the exposes keyword', async () => {
         const exact = await build(`bounded context Ordering
 in bounded context Ordering {

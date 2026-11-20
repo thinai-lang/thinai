@@ -314,6 +314,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 }
                 const ambiguous = standalone !== undefined &&
                     (standaloneCounts.get(standalone) ?? 0) > 1;
+                const rootSort = this.isFirstSegmentRoot(target);
                 if (ambiguous) {
                     // The short name does not identify one declaration. Keep the
                     // short label but insert the qualified path that resolves.
@@ -323,7 +324,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                         qualifiedName,
                         standalone,
                         qualifiedName,
-                        '0',
+                        rootSort ? '2' : '0',
                         replaceStart
                     );
                 } else {
@@ -337,18 +338,23 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                             qualifiedName,
                             qualifiedName,
                             qualifiedName,
-                            '0',
+                            rootSort ? '2' : '0',
                             replaceStart
                         );
                     }
                     if (standalone !== undefined) {
+                        // A dotted abbreviation may not match the standalone
+                        // label on its own; borrow the matched path only then.
+                        const standaloneFilter = this.pathSegmentMatchesTyped(standalone, typed)
+                            ? standalone
+                            : qualifiedName;
                         this.addTerminalPathItem(
                             results,
                             target,
                             standalone,
                             standalone,
-                            qualifiedName,
-                            showQualified ? '1' : '0',
+                            standaloneFilter,
+                            rootSort ? '2' : showQualified ? '1' : '0',
                             replaceStart
                         );
                     }
@@ -364,7 +370,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                 if (this.isPathContainer(current)) {
                     const name = (current as AstNode & { name?: unknown }).name;
                     if (typeof name === 'string' && name.length > 0) {
-                        this.addFirstPathSegment(results, context, current, name, replaceStart, qualifiedName);
+                        this.addFirstPathSegment(results, context, current, name, replaceStart);
                     }
                 }
                 current = current.$container;
@@ -514,8 +520,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         context: ReferenceInfo,
         target: AstNode,
         fallbackName: string,
-        replaceStart: number | undefined,
-        filterText?: string
+        replaceStart: number | undefined
     ): void {
         const name = this.getImportedRootName(context, target, fallbackName);
         const document = AstUtils.getDocument(target);
@@ -531,9 +536,7 @@ export class ThinaiPathScope extends DefaultScopeProvider {
         metadata.thinaiPathContinuation = true;
         metadata.thinaiNoDedupe = true;
         metadata.thinaiSortText = '2';
-        if (filterText !== undefined) {
-            metadata.thinaiFilterText = filterText;
-        }
+        metadata.thinaiFilterText = name;
         this.addPathReplacement(metadata, name, replaceStart);
         results.set(`${description.documentUri.toString()}#${description.path}`, description);
     }
@@ -615,6 +618,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
             .flatMap(declaration => declaration.components)
             .find(candidate => candidate.component.ref === target);
         return component?.alias ?? fallbackName;
+    }
+
+    private isFirstSegmentRoot(target: AstNode): boolean {
+        return isBoundedContext(target) || isSharedKernel(target) || isModule(target);
     }
 
     private isPathContainer(target: AstNode): boolean {
@@ -1200,6 +1207,10 @@ export class ThinaiPathScope extends DefaultScopeProvider {
                     }
                 }
                 const segmentDescription = this.descriptions.createDescription(target, segment, AstUtils.getDocument(target));
+                // Same-level terminals outrank enclosing path roots in the
+                // client's suggestion list.
+                (segmentDescription as AstNodeDescription & { thinaiSortText?: string })
+                    .thinaiSortText = segmentIsTerminal ? '0' : '2';
                 if (!segmentIsTerminal) {
                     (segmentDescription as AstNodeDescription & { thinaiPathContinuation?: boolean })
                         .thinaiPathContinuation = true;

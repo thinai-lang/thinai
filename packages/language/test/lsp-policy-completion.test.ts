@@ -933,7 +933,7 @@ in bounded context O {
         });
         expect(completion?.items.find(item => item.label === 'InventoryAggregate')).toMatchObject({
             sortText: '2',
-            filterText: 'InventoryAggregate.InventoryItem',
+            filterText: 'InventoryAggregate',
             textEdit: { newText: 'InventoryAggregate', range: wholeTokenRange },
             commitCharacters: ['.']
         });
