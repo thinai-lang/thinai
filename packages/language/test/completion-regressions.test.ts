@@ -1042,6 +1042,92 @@ in bounded context O {
         expect(item?.textEdit?.newText ?? item?.insertText).toBe(quotedValue);
     });
 
+    test('replaces a typed opening backtick when completing quoted identifiers', async () => {
+        const reference = await build(`bounded context O
+in bounded context O {
+  data object D {
+    \`display name\`: string
+  }
+  application service S {
+    method run(input: D) {
+      behavior "Use [[input.\`${marker}]]."
+    }
+  }
+}`);
+        const referenceItem = reference.completion?.items.find(candidate => candidate.label === 'display name');
+        expect(referenceItem).toBeDefined();
+        const referenceApplied = applyCompletionItem(reference.document, reference.text, referenceItem!);
+        expect(referenceApplied).toContain('[[input.`display name`]]');
+        expect(referenceApplied).not.toContain('[[input.``');
+
+        const partial = await build(`bounded context O
+in bounded context O {
+  data object D {
+    \`display name\`: string
+  }
+  application service S {
+    method run(input: D) {
+      behavior "Use [[input.\`dis${marker}]]."
+    }
+  }
+}`);
+        const partialItem = partial.completion?.items.find(candidate => candidate.label === 'display name');
+        expect(partialItem).toBeDefined();
+        const partialApplied = applyCompletionItem(partial.document, partial.text, partialItem!);
+        expect(partialApplied).toContain('[[input.`display name`]]');
+        expect(partialApplied).not.toContain('[[input.``');
+    });
+
+    test('absorbs typed opening backticks in list completions', async () => {
+        const exposure = await build(`bounded context O
+in bounded context O {
+  module Api {
+    value object \`display value\` { raw: string }
+    exposes \`${marker}
+  }
+}`);
+        const exposureItem = exposure.completion?.items.find(candidate =>
+            candidate.label === 'display value'
+        );
+        expect(exposureItem).toBeDefined();
+        const exposureApplied = applyCompletionItem(exposure.document, exposure.text, exposureItem!);
+        expect(exposureApplied).toContain('exposes `display value`');
+        expect(exposureApplied).not.toContain('exposes  `');
+
+        const depends = await build(`bounded context O
+in bounded context O {
+  module \`api module\` { value object X { raw: string } }
+  module Other {
+    depends on \`${marker}
+  }
+}`);
+        const dependsItem = depends.completion?.items.find(candidate =>
+            String(candidate.label).toLowerCase() === 'api module'
+        );
+        expect(dependsItem).toBeDefined();
+        const dependsApplied = applyCompletionItem(depends.document, depends.text, dependsItem!);
+        expect(dependsApplied).toContain('depends on `api module`');
+        expect(dependsApplied).not.toContain('depends on ``');
+
+        const projects = await build(`bounded context O
+in bounded context O {
+  read model \`order view\` { id: string }
+  event E
+  projector P {
+    method onE(source: E) {
+      projects \`${marker}
+    }
+  }
+}`);
+        const projectsItem = projects.completion?.items.find(candidate =>
+            String(candidate.label).toLowerCase() === 'order view'
+        );
+        expect(projectsItem).toBeDefined();
+        const projectsApplied = applyCompletionItem(projects.document, projects.text, projectsItem!);
+        expect(projectsApplied).toContain('projects `order view`');
+        expect(projectsApplied).not.toContain('projects ``');
+    });
+
     test('filters entity and DataObject types for restricted signatures', async () => {
         const factory = await build(`bounded context O
 in bounded context O {

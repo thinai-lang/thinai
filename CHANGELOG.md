@@ -6,6 +6,7 @@
 - Auto-close triple double quotes and remove the closing delimiter when the opening triple is deleted.
 - Expand selection inside quoted strings starting with the string content, then the quoted literal.
 - Prevent completed compound keywords from reopening after declaration names.
+- Replace a typed opening backtick when completing a quoted identifier.
 
 ## 0.1.5-alpha.5 - 2026-11-01
 

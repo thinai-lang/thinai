@@ -858,11 +858,15 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const indentation = await this.getClientIndentationOptions(document);
-        const completion = this.expandTokenStartEdits(
+        const completion = this.normalizeQuotedIdentifierEdits(
             document,
             params.position,
-            this.dedupeCompletionItems(
-                await this.getCompletionInternal(document, params, cancelToken)
+            this.expandTokenStartEdits(
+                document,
+                params.position,
+                this.dedupeCompletionItems(
+                    await this.getCompletionInternal(document, params, cancelToken)
+                )
             )
         );
         const serializable = completion
@@ -878,6 +882,66 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 )
             }
             : serializable;
+    }
+
+    /**
+     * A quoted identifier completion inserts its own backticks. When the user
+     * has already typed the opening backtick, the edit must replace it rather
+     * than inserting a second one.
+     */
+    private normalizeQuotedIdentifierEdits(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion) {
+            return completion;
+        }
+        const text = document.textDocument.getText();
+        const offset = document.textDocument.offsetAt(position);
+        const lineStart = getLineStartOffset(document, offset);
+        let changed = false;
+        const items = completion.items.map(item => {
+            const edit = item.textEdit;
+            if (!edit || !edit.newText.trimStart().startsWith('`') || /[\r\n]/u.test(edit.newText)) {
+                return item;
+            }
+            const adjustRange = (range: { start: Position; end: Position }): { start: Position; end: Position } => {
+                const start = document.textDocument.offsetAt(range.start);
+                let end = document.textDocument.offsetAt(range.end);
+                if (start <= lineStart || text[start - 1] !== '`') {
+                    return range;
+                }
+                const backticks = text.slice(lineStart, start).match(/`/gu)?.length ?? 0;
+                if (backticks % 2 === 0) {
+                    return range;
+                }
+                if (text[end] === '`') {
+                    end++;
+                }
+                return {
+                    start: document.textDocument.positionAt(start - 1),
+                    end: document.textDocument.positionAt(end)
+                };
+            };
+            const newText = edit.newText.startsWith(' ') ? edit.newText.slice(1) : edit.newText;
+            if ('range' in edit) {
+                const range = adjustRange(edit.range);
+                if (range === edit.range) {
+                    return item;
+                }
+                changed = true;
+                return { ...item, textEdit: { ...edit, range, newText } };
+            }
+            const insert = adjustRange(edit.insert);
+            const replace = adjustRange(edit.replace);
+            if (insert === edit.insert && replace === edit.replace) {
+                return item;
+            }
+            changed = true;
+            return { ...item, textEdit: { ...edit, insert, replace, newText } };
+        });
+        return changed ? { ...completion, items } : completion;
     }
 
     /**
