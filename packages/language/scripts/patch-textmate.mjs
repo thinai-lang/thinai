@@ -59,7 +59,7 @@ grammar.patterns.splice(commentPatternIndex + 1, 0, ...strings);
 
 grammar.repository['linked-reference'] = {
     name: 'meta.reference.thinai',
-    begin: '(?<!\\\\)((?:\\\\\\\\)*(\\[\\[))',
+    begin: '(?<!\\\\)((?:\\\\\\\\)*)(\\[\\[)',
     beginCaptures: {
         '1': { name: 'constant.character.escape.thinai' },
         '2': { name: 'punctuation.section.reference.begin.thinai' }

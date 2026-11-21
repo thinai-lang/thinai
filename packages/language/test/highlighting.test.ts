@@ -105,6 +105,34 @@ describe('TextMate highlighting', () => {
             .toContain('variable.other.reference.thinai');
     });
 
+    test('scopes reference begin and end delimiters symmetrically', () => {
+        const scopesAt = (line: string, needle: string, occurrence = 0): string[] => {
+            let index = -1;
+            for (let count = 0; count <= occurrence; count++) {
+                index = line.indexOf(needle, index + 1);
+            }
+            const token = grammar!.tokenizeLine(line, INITIAL).tokens
+                .find(candidate => candidate.startIndex <= index && index < candidate.endIndex);
+            return token?.scopes ?? [];
+        };
+
+        const line = 'behavior "Use [[OrderId]] here."';
+        const opening = scopesAt(line, '[[');
+        const closing = scopesAt(line, ']]');
+        expect(opening).toContain('punctuation.section.reference.begin.thinai');
+        expect(opening).not.toContain('constant.character.escape.thinai');
+        expect(closing).toContain('punctuation.section.reference.end.thinai');
+        expect(closing).not.toContain('constant.character.escape.thinai');
+
+        const escapedLine = String.raw`behavior "Escaped \\[[OrderId]] here."`;
+        const escapedOpening = scopesAt(escapedLine, '[[');
+        expect(escapedOpening).toContain('punctuation.section.reference.begin.thinai');
+        expect(escapedOpening).not.toContain('constant.character.escape.thinai');
+        const escapedBackslashes = grammar!.tokenizeLine(escapedLine, INITIAL).tokens
+            .find(token => escapedLine.slice(token.startIndex, token.endIndex) === '\\\\');
+        expect(escapedBackslashes?.scopes).toContain('constant.character.escape.thinai');
+    });
+
     test('tokenizes linked references in both quote styles and ignores escaped markers', () => {
         expect(grammar).toBeDefined();
         const lines = [
