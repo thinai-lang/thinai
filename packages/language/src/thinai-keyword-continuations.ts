@@ -79,10 +79,10 @@ export class ThinaiKeywordContinuations {
         const continuations: ReadonlyArray<readonly [RegExp, string[], () => boolean, boolean?, boolean?]> = [
             [/\bin\s+bounded\s+([\p{L}_]*)$/iu, ['context'], () =>
                 isModel(container) || (isBoundedContext(container) || isBoundedContextPart(container)) &&
-                !this.hasOpenedBody(container)],
+                !this.hasOpenedBody(container), true],
             [/\bbounded\s+([\p{L}_]*)$/iu, ['context'], () =>
-                isModel(container) || isBoundedContext(container) && !this.hasOpenedBody(container)],
-            [/\bshared\s+([\p{L}_]*)$/iu, ['kernel'], () => isModel(container)],
+                isModel(container) || isBoundedContext(container) && !this.hasOpenedBody(container), true],
+            [/\bshared\s+([\p{L}_]*)$/iu, ['kernel'], () => isModel(container), true],
             [/\bapplication\s+([\p{L}_]*)$/iu, ['service'], () => allowsSibling('application service'), true],
             [/\broot\s+([\p{L}_]*)$/iu, ['entity'], () => allowsSibling('root entity'), true],
             [/\bvalue\s+([\p{L}_]*)$/iu, ['object'], () => allowsSibling('value object'), true],
@@ -94,11 +94,12 @@ export class ThinaiKeywordContinuations {
             [/\bintegration\s+([\p{L}_]*)$/iu, ['event'], () => allowsSibling('integration event'), true],
             [/\bdepends\s+([\p{L}_]*)$/iu, ['on'], () =>
                 this.hasOpenedBody(container) && this.isModuleDeclarationOwner(container), true, true],
-            [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container)],
+            [/\bcontext\s+([\p{L}_]*)$/iu, ['map'], () => isModel(container), true],
             [new RegExp(`\\bsubdomain\\s+${identifierSource}\\s+kind(?:\\s+([\\p{L}_]*))?$`, 'iu'),
                 ['core', 'supporting', 'generic'], () => isSubdomain(container) ||
                     new RegExp(`^\\s*subdomain\\s+${identifierSource}\\s+kind(?:\\s+[\\p{L}_]*)?$`, 'iu').test(prefix)],
-            [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from'], () => isImport(container) || isModel(container)],
+            [/\bimport\s+\{[^}]*\}\s+([\p{L}_]*)$/iu, ['from'], () =>
+                isImport(container) || isModel(container), true],
             [new RegExp(`\\bquery\\s+repository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),
                 ['serves'], () => this.isRepositoryOwner(container, true)],
             [new RegExp(`\\brepository\\s+${identifierSource}\\s*\\{\\s*([\\p{L}_]*)$`, 'iu'),

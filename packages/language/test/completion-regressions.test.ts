@@ -599,6 +599,45 @@ in bounded context Ordering {
         expect(alreadyExposed.completion?.items.map(item => item.label)).not.toContain('exposes');
     });
 
+    test('does not reopen completed compound keywords after declaration names', async () => {
+        const falseContinuations = [
+            ['shared kernel Shared ', 'kernel'],
+            ['context map Shared ', 'kernel'],
+            ['in bounded context Shared ', 'kernel'],
+            ['shared kernel Context ', 'map'],
+            ['context map Context ', 'map'],
+            ['in bounded context Context ', 'map'],
+            ['shared kernel Bounded ', 'context'],
+            ['context map Bounded ', 'context'],
+            ['in bounded context Bounded ', 'context'],
+            ['bounded context Bounded ', 'context']
+        ] as const;
+        for (const [source, forbidden] of falseContinuations) {
+            const result = await build(`${source}${marker}\n`);
+            expect(result.completion?.items.map(item => item.label), source).not.toContain(forbidden);
+        }
+
+        const validContinuations = [
+            ['shared ', 'kernel'],
+            ['bounded ', 'context'],
+            ['context ', 'map'],
+            ['in bounded ', 'context'],
+            ['bounded context Ordering ', 'realizes'],
+            ['subdomain Sales ', 'kind'],
+            ['import { Foo } ', 'from']
+        ] as const;
+        for (const [source, expected] of validContinuations) {
+            const result = await build(`${source}${marker}\n`);
+            expect(result.completion?.items.map(item => item.label), source).toContain(expected);
+        }
+        const valueObject = await build(`bounded context C
+in bounded context C {
+  value object Money ${marker}
+}
+`);
+        expect(valueObject.completion?.items.map(item => item.label)).toContain('mirrors');
+    });
+
     test('offers depends inside a module body but not twice', async () => {
         const empty = await build(`bounded context X
 in bounded context X {
