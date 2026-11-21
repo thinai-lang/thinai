@@ -858,14 +858,18 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
         cancelToken?: CancellationToken
     ): Promise<CompletionList | undefined> {
         const indentation = await this.getClientIndentationOptions(document);
-        const completion = this.normalizeQuotedIdentifierEdits(
+        const completion = this.filterCompleteTypeCompletions(
             document,
             params.position,
-            this.expandTokenStartEdits(
+            this.normalizeQuotedIdentifierEdits(
                 document,
                 params.position,
-                this.dedupeCompletionItems(
-                    await this.getCompletionInternal(document, params, cancelToken)
+                this.expandTokenStartEdits(
+                    document,
+                    params.position,
+                    this.dedupeCompletionItems(
+                        await this.getCompletionInternal(document, params, cancelToken)
+                    )
                 )
             )
         );
@@ -882,6 +886,58 @@ export class ThinaiCompletionProvider extends DefaultCompletionProvider {
                 )
             }
             : serializable;
+    }
+
+    /**
+     * A completed primitive or type token is already a valid type. Keep only
+     * keyword items from that position; declaration candidates belong before
+     * the type is finished.
+     */
+    private filterCompleteTypeCompletions(
+        document: LangiumDocument,
+        position: Position,
+        completion: CompletionList | undefined
+    ): CompletionList | undefined {
+        if (!completion || !this.isCompleteTypeTokenAtCursor(document, position)) {
+            return completion;
+        }
+        const items = completion.items.filter(item => item.kind === CompletionItemKind.Keyword);
+        return items.length === completion.items.length ? completion : { ...completion, items };
+    }
+
+    private isCompleteTypeTokenAtCursor(document: LangiumDocument, position: Position): boolean {
+        const root = document.parseResult.value;
+        if (!root) {
+            return false;
+        }
+        const offset = document.textDocument.offsetAt(position);
+        return AstUtils.streamAst(root).some(node => {
+            if (isField(node) || isParameter(node)) {
+                if (node.$cstNode?.end !== offset) {
+                    return false;
+                }
+                if (node.primitive !== undefined) {
+                    return true;
+                }
+                if (node.collection !== undefined) {
+                    return this.isClosedCollectionType(node.collection);
+                }
+                return node.type?.ref !== undefined && node.type.$refNode?.end === offset;
+            }
+            if (isMethod(node)) {
+                if (node.returnCollection?.$cstNode?.end === offset) {
+                    return this.isClosedCollectionType(node.returnCollection);
+                }
+                if (node.returnType?.ref !== undefined && node.returnType.$refNode?.end === offset) {
+                    return true;
+                }
+                const returnPrimitive = node.$cstNode
+                    ? GrammarUtils.findNodeForProperty(node.$cstNode, 'returnPrimitive')
+                    : undefined;
+                return returnPrimitive?.end === offset;
+            }
+            return false;
+        });
     }
 
     /**

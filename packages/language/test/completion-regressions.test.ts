@@ -508,6 +508,52 @@ in bounded context X {
         expect(invoked?.items.map(item => item.label)).toContain('constructor');
     });
 
+    test('does not offer declaration completions after a complete type token', async () => {
+        const source = (field: string) => `bounded context C
+in bounded context C {
+  module Domain {
+    aggregate SessionAggregate {
+      value object SessionId { raw: string }
+      root entity Session {
+        identifier id: SessionId
+        ${field}
+      }
+    }
+  }
+}`;
+        for (const type of ['string', 'boolean', 'integer', 'decimal', 'date', 'time', 'instant']) {
+            const result = await build(source(`publishedOn: ${type}${marker}`));
+            const labels = result.completion?.items.map(item => item.label) ?? [];
+            expect(labels, type).not.toContain('Session');
+            expect(labels, type).not.toContain('SessionAggregate');
+        }
+
+        const customType = await build(source(`publishedOn: SessionId${marker}`));
+        expect(customType.completion?.items.map(item => item.label)).not.toContain('SessionId');
+
+        const collection = await build(source(`publishedOn: List<SessionId>${marker}`));
+        expect(collection.completion?.items.map(item => item.label)).not.toContain('SessionId');
+
+        const spaced = await build(source(`publishedOn: date ${marker}`));
+        expect(spaced.completion?.items.map(item => item.label)).toContain('constructor');
+
+        const parameter = await build(`bounded context C
+in bounded context C {
+  application service S {
+    method run(input: date${marker})
+  }
+}`);
+        expect(parameter.completion?.items.map(item => item.label)).not.toContain('S');
+
+        const returns = await build(`bounded context C
+in bounded context C {
+  application service S {
+    method run() returns date${marker}
+  }
+}`);
+        expect(returns.completion?.items.map(item => item.label)).not.toContain('S');
+    });
+
     test('offers clause keywords only after a declaration name is complete', async () => {
         const valueObjectName = await build(`bounded context X
 in bounded context X {

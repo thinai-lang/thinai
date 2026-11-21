@@ -8,6 +8,7 @@
 - Prevent completed compound keywords from reopening after declaration names.
 - Replace a typed opening backtick when completing a quoted identifier.
 - Scope reference opening and closing brackets consistently in syntax highlighting.
+- Stop offering declaration completions after a complete type token.
 
 ## 0.1.5-alpha.5 - 2026-11-01
 
