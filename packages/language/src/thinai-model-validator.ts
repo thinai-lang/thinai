@@ -64,7 +64,8 @@ export class ThinaiModelValidator {
         if (part.contextPath.length > 0) {
             accept('error', 'A bounded-context part cannot qualify its context; bounded contexts are top-level declarations.', {
                 node: part,
-                property: 'contextPath'
+                property: 'contextPath',
+                code: 'part-qualified-context'
             });
         }
         const contextName = part.context?.ref?.name ?? part.context?.$refText;
@@ -89,7 +90,8 @@ export class ThinaiModelValidator {
         if (roots.length === 0) {
             accept('error', `This bounded-context part is not included by a bounded-context root. Import this file from the file that declares 'bounded context ${contextName}'.`, {
                 node: part,
-                keyword: 'in'
+                keyword: 'in',
+                code: 'part-without-root'
             });
             return;
         }
@@ -97,7 +99,8 @@ export class ThinaiModelValidator {
             const names = roots.map(root => UriUtils.basename(root.uri)).sort();
             accept('error', `This bounded-context part is included by more than one root: ${names.join(', ')}.`, {
                 node: part,
-                keyword: 'in'
+                keyword: 'in',
+                code: 'part-root-ambiguity'
             });
             return;
         }
@@ -112,7 +115,8 @@ export class ThinaiModelValidator {
             if (uri.toString() === rootUri) {
                 accept('error', 'A bounded-context part must not import its root.', {
                     node: importDeclaration,
-                    property: 'path'
+                    property: 'path',
+                    code: 'part-imports-root'
                 });
                 continue;
             }
@@ -121,7 +125,8 @@ export class ThinaiModelValidator {
                 unitIndex.getRootForDocument(imported)?.uri.toString() === rootUri) {
                 accept('error', 'A bounded-context part must not import another part of the same bounded context.', {
                     node: importDeclaration,
-                    property: 'path'
+                    property: 'path',
+                    code: 'part-imports-peer'
                 });
             }
         }
@@ -222,7 +227,8 @@ export class ThinaiModelValidator {
         }
         accept('error', 'Import the bounded-context root instead of one of its parts.', {
             node: importDeclaration,
-            property: 'path'
+            property: 'path',
+            code: 'import-part-directly'
         });
     }
 

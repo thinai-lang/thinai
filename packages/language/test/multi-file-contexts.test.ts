@@ -94,6 +94,19 @@ bounded context Ordering`,
         expect(items?.items.map(item => item.label)).toContain('Ordering');
     });
 
+    test('offers the root context while a new part is being created', async () => {
+        const docs = await build({
+            'ordering.tni': `import "./pricing.tni"
+
+bounded context Ordering`,
+            'pricing.tni': 'in bounded context '
+        });
+
+        const source = docs['pricing.tni']!.textDocument.getText();
+        const items = await completion(docs['pricing.tni']!, source.length);
+        expect(items?.items.map(item => item.label)).toContain('Ordering');
+    });
+
     test('reports a part that no root imports', async () => {
         const docs = await build({
             'ordering.tni': 'bounded context Ordering',

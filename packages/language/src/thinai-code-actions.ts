@@ -41,6 +41,7 @@ import {
     isRepository,
     isSharedKernel,
     isValueObject,
+    type BoundedContextPart,
     type Import,
     type ImportableComponent,
     type Module
@@ -61,6 +62,7 @@ import {
 } from './thinai-scope-utils.js';
 import { ThinaiScopeProvider } from './thinai-scope-provider.js';
 import { getLineStartOffset, getNewline } from './thinai-text-utils.js';
+import { importPathRange } from './thinai-document-link-provider.js';
 import { inferIndentationOptions } from './thinai-indentation.js';
 
 interface UnresolvedReference {
@@ -84,6 +86,16 @@ export class ThinaiCodeActionProvider {
     ): CodeAction[] {
         const actions: CodeAction[] = [];
         for (const diagnostic of params.context.diagnostics) {
+            const partRootActions = this.getPartRootCodeActions(document, diagnostic);
+            if (partRootActions.length > 0) {
+                actions.push(...partRootActions);
+                continue;
+            }
+            const partImportAction = this.getPartImportCodeAction(document, diagnostic);
+            if (partImportAction) {
+                actions.push(partImportAction);
+                continue;
+            }
             const multilineStringAction = this.getMultilineStringCodeAction(document, diagnostic);
             if (multilineStringAction) {
                 actions.push(multilineStringAction);
@@ -135,6 +147,153 @@ export class ThinaiCodeActionProvider {
             }
         }
         return actions;
+    }
+
+    private getPartRootCodeActions(
+        document: LangiumDocument,
+        diagnostic: CodeActionParams['context']['diagnostics'][number]
+    ): CodeAction[] {
+        if (diagnostic.code !== 'part-without-root') {
+            return [];
+        }
+        const part = this.getPartAtRange(document, diagnostic.range);
+        const contextName = part?.context?.ref?.name ?? part?.context?.$refText;
+        if (!part || !contextName) {
+            return [];
+        }
+        const unitIndex = this.services.modelUnit.ThinaiModelUnitIndex;
+        const roots = unitIndex.getRootsDeclaringContext(contextName)
+            .filter(root => !UriUtils.equals(root.uri, document.uri))
+            .filter(root => !this.importsDocument(root, document.uri))
+            .sort((left, right) => left.uri.toString().localeCompare(right.uri.toString()));
+        const actions: CodeAction[] = [];
+        for (const root of roots) {
+            const rootPath = toImportPath(UriUtils.dirname(document.uri), root.uri);
+            const partPath = toImportPath(UriUtils.dirname(root.uri), document.uri);
+            const edit = this.appendImport(root, partPath);
+            if (!edit) {
+                continue;
+            }
+            actions.push({
+                title: `Add this part to '${rootPath}'`,
+                kind: CodeActionKind.QuickFix,
+                isPreferred: roots.length === 1,
+                diagnostics: [diagnostic],
+                edit: { changes: { [root.uri.toString()]: [edit] } }
+            });
+        }
+        return actions;
+    }
+
+    private getPartImportCodeAction(
+        document: LangiumDocument,
+        diagnostic: CodeActionParams['context']['diagnostics'][number]
+    ): CodeAction | undefined {
+        if (diagnostic.code !== 'import-part-directly') {
+            return undefined;
+        }
+        const importDeclaration = this.getImportAtRange(document, diagnostic.range);
+        if (!importDeclaration) {
+            return undefined;
+        }
+        const targetUri = resolveImportUri(document, importDeclaration);
+        const target = targetUri
+            ? this.services.shared.workspace.LangiumDocuments.getDocument(targetUri)
+            : undefined;
+        if (!target) {
+            return undefined;
+        }
+        const root = this.services.modelUnit.ThinaiModelUnitIndex.getRootForDocument(target);
+        if (!root || UriUtils.equals(root.uri, document.uri)) {
+            return undefined;
+        }
+        const importPath = toImportPath(UriUtils.dirname(document.uri), root.uri);
+        if (importPath === importDeclaration.path) {
+            return undefined;
+        }
+        const pathNode = importDeclaration.$cstNode &&
+            GrammarUtils.findNodeForProperty(importDeclaration.$cstNode, 'path');
+        if (!pathNode) {
+            return undefined;
+        }
+        return {
+            title: `Import '${importPath}' instead`,
+            kind: CodeActionKind.QuickFix,
+            isPreferred: true,
+            diagnostics: [diagnostic],
+            edit: {
+                changes: {
+                    [document.uri.toString()]: [{
+                        range: importPathRange(document, pathNode),
+                        newText: importPath
+                    }]
+                }
+            }
+        };
+    }
+
+    private getPartAtRange(
+        document: LangiumDocument,
+        range: CodeActionParams['context']['diagnostics'][number]['range']
+    ): BoundedContextPart | undefined {
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return undefined;
+        }
+        const start = document.textDocument.offsetAt(range.start);
+        const end = document.textDocument.offsetAt(range.end);
+        for (const node of AstUtils.streamAst(model)) {
+            if (isBoundedContextPart(node) && node.$cstNode &&
+                node.$cstNode.offset <= start && end <= node.$cstNode.end) {
+                return node;
+            }
+        }
+        return undefined;
+    }
+
+    private getImportAtRange(
+        document: LangiumDocument,
+        range: CodeActionParams['context']['diagnostics'][number]['range']
+    ): Import | undefined {
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return undefined;
+        }
+        const start = document.textDocument.offsetAt(range.start);
+        const end = document.textDocument.offsetAt(range.end);
+        return model.imports.find(importDeclaration =>
+            importDeclaration.$cstNode !== undefined &&
+            importDeclaration.$cstNode.offset <= start &&
+            end <= importDeclaration.$cstNode.end
+        );
+    }
+
+    private importsDocument(root: LangiumDocument, target: import('langium').URI): boolean {
+        const model = root.parseResult.value;
+        return isModel(model) && model.imports.some(importDeclaration => {
+            const uri = resolveImportUri(root, importDeclaration);
+            return uri !== undefined && UriUtils.equals(uri, target);
+        });
+    }
+
+    private appendImport(root: LangiumDocument, importPath: string): TextEdit | undefined {
+        const model = root.parseResult.value;
+        if (!isModel(model)) {
+            return undefined;
+        }
+        const newline = getNewline(root.textDocument.getText());
+        const lastImport = model.imports.at(-1);
+        if (lastImport?.$cstNode) {
+            const position = root.textDocument.positionAt(lastImport.$cstNode.end);
+            return {
+                range: { start: position, end: position },
+                newText: `${newline}import "${importPath}"`
+            };
+        }
+        return {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            newText: `import "${importPath}"${newline}`
+        };
     }
 
     private getMultilineStringCodeAction(

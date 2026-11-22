@@ -22,6 +22,7 @@ export class ThinaiModelUnitIndex {
     private partContextNames = new Map<string, string[]>();
     private rootsByPart = new Map<string, Map<string, LangiumDocument[]>>();
     private partsByRoot = new Map<string, Map<string, LangiumDocument[]>>();
+    private rootsImporting = new Map<string, LangiumDocument[]>();
     private unitSymbolsCache = new Map<string, AstNodeDescription[]>();
     private built = false;
 
@@ -39,6 +40,7 @@ export class ThinaiModelUnitIndex {
         this.partContextNames.clear();
         this.rootsByPart.clear();
         this.partsByRoot.clear();
+        this.rootsImporting.clear();
         this.unitSymbolsCache.clear();
     }
 
@@ -85,6 +87,37 @@ export class ThinaiModelUnitIndex {
         return roots.size === 1 ? roots.values().next().value : undefined;
     }
 
+    /** Roots that declare the given canonical context, regardless of imports. */
+    getRootsDeclaringContext(contextName: string): LangiumDocument[] {
+        this.ensureBuilt();
+        const roots: LangiumDocument[] = [];
+        for (const [uri, contexts] of this.rootContexts) {
+            const root = this.roots.get(uri);
+            if (root && contexts.has(contextName)) {
+                roots.push(root);
+            }
+        }
+        return roots;
+    }
+
+    /** Contexts declared by roots that import this document, including a new part. */
+    getProspectiveContexts(document: LangiumDocument): BoundedContext[] {
+        this.ensureBuilt();
+        const contexts = new Map<string, BoundedContext>();
+        for (const root of this.getProspectiveRoots(document)) {
+            for (const [name, context] of this.rootContexts.get(root.uri.toString()) ?? []) {
+                contexts.set(name, context);
+            }
+        }
+        return [...contexts.values()];
+    }
+
+    /** Roots that directly import this document, even before it contains a part block. */
+    getProspectiveRoots(document: LangiumDocument): LangiumDocument[] {
+        this.ensureBuilt();
+        return this.rootsImporting.get(document.uri.toString()) ?? [];
+    }
+
     /** Root plus directly imported parts. External imports are not included. */
     getUnitDocuments(document: LangiumDocument): LangiumDocument[] {
         this.ensureBuilt();
@@ -127,6 +160,7 @@ export class ThinaiModelUnitIndex {
         this.partContextNames.clear();
         this.rootsByPart.clear();
         this.partsByRoot.clear();
+        this.rootsImporting.clear();
         this.unitSymbolsCache.clear();
 
         const documents = this.services.shared.workspace.LangiumDocuments.all.toArray();
@@ -171,6 +205,11 @@ export class ThinaiModelUnitIndex {
                     continue;
                 }
                 const partUri = part.uri.toString();
+                const importers = this.rootsImporting.get(partUri) ?? [];
+                if (!importers.includes(root)) {
+                    importers.push(root);
+                }
+                this.rootsImporting.set(partUri, importers);
                 for (const contextName of this.partContextNames.get(partUri) ?? []) {
                     if (!this.rootContexts.get(rootUri)?.has(contextName)) {
                         continue;

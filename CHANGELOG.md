@@ -4,6 +4,9 @@
 
 - Make bounded contexts first-class multi-file units: a root file declares the context and imports its part files, parts share one context scope without importing peers, and other contexts import only the root.
 - Break: a bounded-context contribution no longer imports its canonical declaration; move that import to the root and import the part there.
+- Add a quick fix that adds an unrooted part to a bounded-context root.
+- Add a quick fix that replaces a direct part import with the bounded-context root.
+- Offer the root's context name in `in bounded context` completion for a newly imported part.
 - Reject direct imports of a context part, part imports of its root or a peer part, unrooted parts, and parts included by more than one root.
 - Keep module `depends on`, `exposes`, and cycle rules authoritative across parts.
 - Reject literal line breaks in single- and double-quoted strings; use triple double quotes for multiline text.

@@ -210,7 +210,7 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             this.externalScope.getDocumentSymbols(context, document, referenceType)
         ), result);
         if (referenceType === 'BoundedContext') {
-            result = this.createScope(this.getUnitContextDescriptions(document), result);
+            result = this.createScope(this.getUnitContextDescriptions(context, document), result);
         }
         result = this.createScope(
             this.filterUnqualifiedSpecificationTargets(
@@ -230,8 +230,14 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
         );
     }
 
-    private getUnitContextDescriptions(document: LangiumDocument): AstNodeDescription[] {
-        return this.modelUnits.getUnitContexts(document)
+    private getUnitContextDescriptions(context: ReferenceInfo, document: LangiumDocument): AstNodeDescription[] {
+        const unitContexts = this.modelUnits.getUnitContexts(document);
+        const contexts = unitContexts.length > 0
+            ? unitContexts
+            : isBoundedContextPart(context.container) && context.property === 'context'
+                ? this.modelUnits.getProspectiveContexts(document)
+                : [];
+        return contexts
             .filter(candidate => !UriUtils.equals(AstUtils.getDocument(candidate).uri, document.uri))
             .map(candidate => this.descriptions.createDescription(
                 candidate,
