@@ -558,3 +558,26 @@ in bounded context C {
         });
     });
 });
+
+describe('model entry points', () => {
+    test('reports a bounded-context part entry point', async () => {
+        await withTempDirectory(async directory => {
+            const fileName = path.join(directory, 'part.tni');
+            await writeFile(fileName, `in bounded context Ordering {
+    value object Amount {
+        raw: string
+    }
+}
+`);
+
+            const model = await loadModel(fileName);
+            expect(model.diagnostics.some(diagnostic =>
+                diagnostic.code === 'part-entry-point' &&
+                diagnostic.message.includes("Validate the root that declares 'bounded context Ordering'")
+            )).toBe(true);
+            expect(model.diagnostics.some(diagnostic =>
+                diagnostic.code === 'part-without-root'
+            )).toBe(false);
+        });
+    });
+});

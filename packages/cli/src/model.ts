@@ -5,6 +5,9 @@ import {
     computeImpact,
     createContextSlice,
     exportThinaiModel,
+    isBoundedContext,
+    isBoundedContextPart,
+    isModel,
     renderContextMarkdown,
     type ThinaiModelDiagnostic,
     type ThinaiModelExport
@@ -39,7 +42,33 @@ export interface ValidateOptions {
 export async function loadModel(fileName: string): Promise<ThinaiModelExport> {
     const services = createThinaiServices(NodeFileSystem).Thinai;
     const documents = await loadDocuments(fileName, services);
-    return exportThinaiModel(documents, { rootUri: URI.file(path.resolve(fileName)).toString() });
+    const entryUri = URI.file(path.resolve(fileName));
+    const model = exportThinaiModel(documents, { rootUri: entryUri.toString() });
+
+    const entry = services.shared.workspace.LangiumDocuments.getDocument(entryUri);
+    const entryModel = entry?.parseResult.value;
+    if (entry && isModel(entryModel)) {
+        const parts = entryModel.declarations.filter(isBoundedContextPart);
+        const hasCanonical = entryModel.declarations.some(isBoundedContext);
+        if (parts.length > 0 && !hasCanonical) {
+            const part = parts[0]!;
+            const contextName = part.context?.ref?.name ?? part.context?.$refText ?? 'bounded context';
+            model.diagnostics = model.diagnostics.filter(diagnostic =>
+                !(diagnostic.uri === entryUri.toString() && diagnostic.code === 'part-without-root')
+            );
+            model.diagnostics.push({
+                uri: entryUri.toString(),
+                severity: 1,
+                message: `This file is a bounded-context part. Validate the root that declares 'bounded context ${contextName}' instead.`,
+                range: part.context?.$refNode?.range ?? part.$cstNode?.range ?? {
+                    start: { line: 0, character: 0 },
+                    end: { line: 0, character: 0 }
+                },
+                code: 'part-entry-point'
+            });
+        }
+    }
+    return model;
 }
 
 export async function inspectAction(fileName: string, options: InspectOptions): Promise<void> {

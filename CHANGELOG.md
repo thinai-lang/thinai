@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a quick fix that creates a bounded-context root for an unrooted part.
+- Add a refactor action that creates a part and adds its root import.
+- Report a clear CLI entry-point diagnostic when validating a bounded-context part.
+
 ## 0.1.9-alpha.1 - 2026-11-22
 
 - Make bounded contexts first-class multi-file units: a root file declares the context and imports its part files, parts share one context scope without importing peers, and other contexts import only the root.

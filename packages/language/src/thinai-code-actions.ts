@@ -41,6 +41,7 @@ import {
     isRepository,
     isSharedKernel,
     isValueObject,
+    type BoundedContext,
     type BoundedContextPart,
     type Import,
     type ImportableComponent,
@@ -146,6 +147,8 @@ export class ThinaiCodeActionProvider {
                 });
             }
         }
+
+        actions.push(...this.getCreatePartCodeActions(document, params.range));
         return actions;
     }
 
@@ -166,6 +169,9 @@ export class ThinaiCodeActionProvider {
             .filter(root => !UriUtils.equals(root.uri, document.uri))
             .filter(root => !this.importsDocument(root, document.uri))
             .sort((left, right) => left.uri.toString().localeCompare(right.uri.toString()));
+        if (roots.length === 0) {
+            return [this.getCreateRootCodeAction(document, diagnostic, contextName)];
+        }
         const actions: CodeAction[] = [];
         for (const root of roots) {
             const rootPath = toImportPath(UriUtils.dirname(document.uri), root.uri);
@@ -183,6 +189,116 @@ export class ThinaiCodeActionProvider {
             });
         }
         return actions;
+    }
+
+    private getCreateRootCodeAction(
+        document: LangiumDocument,
+        diagnostic: CodeActionParams['context']['diagnostics'][number],
+        contextName: string
+    ): CodeAction {
+        const base = this.fileNameBase(contextName);
+        let rootUri = UriUtils.joinPath(UriUtils.dirname(document.uri), `${base}.tni`);
+        if (this.services.shared.workspace.LangiumDocuments.hasDocument(rootUri)) {
+            rootUri = UriUtils.joinPath(UriUtils.dirname(document.uri), `${base}-root.tni`);
+        }
+        const rootPath = toImportPath(UriUtils.dirname(document.uri), rootUri);
+        const partPath = toImportPath(UriUtils.dirname(rootUri), document.uri);
+        const content = `import "${partPath}"\n\nbounded context ${formatIdentifier(contextName)}\n`;
+        const range = {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 }
+        };
+        return {
+            title: `Create '${rootPath}' as the bounded-context root`,
+            kind: CodeActionKind.QuickFix,
+            isPreferred: true,
+            diagnostics: [diagnostic],
+            edit: {
+                documentChanges: [
+                    {
+                        kind: 'create',
+                        uri: rootUri.toString(),
+                        options: { overwrite: false, ignoreIfExists: false }
+                    },
+                    {
+                        textDocument: { uri: rootUri.toString(), version: null },
+                        edits: [{ range, newText: content }]
+                    }
+                ]
+            }
+        };
+    }
+
+    private getCreatePartCodeActions(
+        document: LangiumDocument,
+        range: CodeActionParams['range']
+    ): CodeAction[] {
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return [];
+        }
+        const start = document.textDocument.offsetAt(range.start);
+        const context = AstUtils.streamAst(model)
+            .filter(isBoundedContext)
+            .find(candidate => candidate.$cstNode !== undefined &&
+                candidate.$cstNode.offset <= start && start <= candidate.$cstNode.end) as BoundedContext | undefined;
+        if (!context) {
+            return [];
+        }
+
+        const directory = UriUtils.dirname(document.uri);
+        const base = this.fileNameBase(context.name);
+        let fileName = `${base}-part.tni`;
+        let counter = 2;
+        while (this.services.shared.workspace.LangiumDocuments.hasDocument(
+            UriUtils.joinPath(directory, fileName)
+        )) {
+            fileName = `${base}-part-${counter}.tni`;
+            counter++;
+        }
+        const partUri = UriUtils.joinPath(directory, fileName);
+        const importEdit = this.appendImport(
+            document,
+            toImportPath(directory, partUri)
+        );
+        if (!importEdit) {
+            return [];
+        }
+        const partContent = `in bounded context ${formatIdentifier(context.name)} {\n}\n`;
+        const partRange = {
+            start: { line: 0, character: 0 },
+            end: { line: 0, character: 0 }
+        };
+        return [{
+            title: `Create '${fileName}' as a part of '${context.name}'`,
+            kind: CodeActionKind.Refactor,
+            isPreferred: false,
+            edit: {
+                documentChanges: [
+                    {
+                        kind: 'create',
+                        uri: partUri.toString(),
+                        options: { overwrite: false, ignoreIfExists: false }
+                    },
+                    {
+                        textDocument: { uri: partUri.toString(), version: null },
+                        edits: [{ range: partRange, newText: partContent }]
+                    },
+                    {
+                        textDocument: { uri: document.uri.toString(), version: null },
+                        edits: [importEdit]
+                    }
+                ]
+            }
+        }];
+    }
+
+    private fileNameBase(name: string): string {
+        const base = name
+            .replace(/[^\p{Letter}\p{Number}_-]+/gu, '-')
+            .replace(/^-+|-+$/gu, '')
+            .toLowerCase();
+        return base || 'bounded-context';
     }
 
     private getPartImportCodeAction(

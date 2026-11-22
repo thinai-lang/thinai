@@ -314,3 +314,90 @@ in bounded context Shipping {
         expect((rebuilt['shipping.tni']!.diagnostics ?? []).filter(candidate => candidate.severity === 1)).toEqual([]);
     });
 });
+
+describe('Bounded-context creation actions', () => {
+    async function buildDocuments(sources: Record<string, string>) {
+        const result = Object.fromEntries(Object.entries(sources).map(([file, source]) => [
+            file,
+            services.shared.workspace.LangiumDocuments.createDocument(
+                URI.file(`/workspace/part-creation/${file}`),
+                source
+            )
+        ]));
+        documents = Object.values(result);
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
+        return result;
+    }
+
+    async function actionsAt(
+        document: LangiumDocument,
+        range: { start: { line: number; character: number }; end: { line: number; character: number } },
+        diagnostics: Diagnostic[] = []
+    ) {
+        const actions = await services.Thinai.lsp.CodeActionProvider!.getCodeActions(document, {
+            textDocument: { uri: document.uri.toString() },
+            range,
+            context: { diagnostics }
+        });
+        return (actions ?? []) as CodeAction[];
+    }
+
+    test('creates a root for an unrooted part', async () => {
+        const docs = await buildDocuments({
+            'pricing.tni': `in bounded context Ordering {
+    value object Amount {
+        raw: string
+    }
+}`
+        });
+        const part = docs['pricing.tni']!;
+        const diagnostic = (part.diagnostics ?? []).find(candidate => candidate.code === 'part-without-root');
+        expect(diagnostic).toBeDefined();
+
+        const actions = await actionsAt(part, diagnostic!.range, [diagnostic!]);
+        const action = actions.find(candidate =>
+            candidate.title === "Create './ordering.tni' as the bounded-context root"
+        );
+        expect(action).toBeDefined();
+
+        const changes = action!.edit?.documentChanges ?? [];
+        expect(changes[0]).toMatchObject({
+            kind: 'create',
+            uri: expect.stringContaining('/part-creation/ordering.tni')
+        });
+        expect(changes[1]).toMatchObject({
+            textDocument: { uri: expect.stringContaining('/part-creation/ordering.tni') }
+        });
+        const content = (changes[1] as { edits: Array<{ newText: string }> }).edits[0]!.newText;
+        expect(content).toContain('import "./pricing.tni"');
+        expect(content).toContain('bounded context Ordering');
+    });
+
+    test('creates a part from a canonical context declaration', async () => {
+        const docs = await buildDocuments({
+            'ordering.tni': 'bounded context Ordering'
+        });
+        const root = docs['ordering.tni']!;
+        const source = root.textDocument.getText();
+        const offset = source.indexOf('bounded context Ordering');
+        const range = {
+            start: root.textDocument.positionAt(offset),
+            end: root.textDocument.positionAt(offset)
+        };
+        const actions = await actionsAt(root, range);
+        const action = actions.find(candidate =>
+            candidate.title === "Create 'ordering-part.tni' as a part of 'Ordering'"
+        );
+        expect(action).toBeDefined();
+
+        const changes = action!.edit?.documentChanges ?? [];
+        expect(changes[0]).toMatchObject({
+            kind: 'create',
+            uri: expect.stringContaining('/part-creation/ordering-part.tni')
+        });
+        const partContent = (changes[1] as { edits: Array<{ newText: string }> }).edits[0]!.newText;
+        expect(partContent).toContain('in bounded context Ordering {');
+        const rootEdits = (changes[2] as { edits: TextEdit[] }).edits;
+        expect(rootEdits[0]?.newText).toContain('import "./ordering-part.tni"');
+    });
+});
