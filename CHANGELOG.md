@@ -9,6 +9,7 @@
 - Offer the root's context name in `in bounded context` completion for a newly imported part.
 - Reject direct imports of a context part, part imports of its root or a peer part, unrooted parts, and parts included by more than one root.
 - Keep module `depends on`, `exposes`, and cycle rules authoritative across parts.
+- Warn when disconnected model units declare the same bounded-context name; composing both roots still reports a duplicate declaration error.
 - Reject literal line breaks in single- and double-quoted strings; use triple double quotes for multiline text.
 - Auto-close triple double quotes and remove the closing delimiter when the opening triple is deleted.
 - Expand selection inside quoted strings starting with the string content, then the quoted literal.

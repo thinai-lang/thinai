@@ -23,7 +23,9 @@ peer part; importing the root makes the whole context available to other
 contexts.
 
 A document's model unit is its root plus the directly imported parts. Duplicate
-declaration names are scoped to that unit; independent models may reuse names.
+declaration names are scoped to the import-connected model; independent models
+may reuse names. A bounded-context name reused by disconnected roots produces a
+non-blocking warning that points at the other file.
 Cross-references still require the target to be reachable through the document's
 own direct imports; imports are not implicitly transitive. Actors, journeys, and
 subdomains have their own strategic namespaces, so a subdomain may share a name

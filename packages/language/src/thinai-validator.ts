@@ -10,7 +10,8 @@ import {
     GrammarUtils,
     type ValidationAcceptor,
     type ValidationChecks,
-    isReference
+    isReference,
+    UriUtils
 } from 'langium';
 import type {
     Aggregate,
@@ -99,7 +100,8 @@ import {
     isPublicApiDeclaration,
     moduleDependsTransitivelyOn,
     isModulePubliclyVisible,
-    resolveImportUri
+    resolveImportUri,
+    toImportPath
 } from './thinai-scope-utils.js';
 import { isSyntacticallyComplete } from './thinai-ast-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
@@ -195,6 +197,7 @@ export class ThinaiValidator {
 
     checkBoundedContext(context: BoundedContext, accept: ValidationAcceptor): void {
         this.modelValidator.checkBoundedContext(context, accept);
+        this.checkSharedContextName(context, accept);
         const seen = new Set<AstNode>();
         for (const reference of context.subdomains) {
             if (reference.path.length > 0) {
@@ -215,6 +218,28 @@ export class ThinaiValidator {
             }
             seen.add(target);
         }
+    }
+
+    private checkSharedContextName(context: BoundedContext, accept: ValidationAcceptor): void {
+        const document = AstUtils.getDocument(context);
+        const connected = this.getModelDocumentUris(document);
+        const others = this.services.modelUnit.ThinaiModelUnitIndex
+            .getRootsDeclaringContext(context.name)
+            .filter(root => !UriUtils.equals(root.uri, document.uri))
+            .filter(root => !connected.has(root.uri.toString()))
+            .sort((left, right) => left.uri.toString().localeCompare(right.uri.toString()));
+        if (others.length === 0) {
+            return;
+        }
+        const paths = others.map(root => toImportPath(UriUtils.dirname(document.uri), root.uri));
+        const shown = paths.slice(0, 3).map(path => `'${path}'`).join(', ');
+        const extra = paths.length > 3 ? ` and ${paths.length - 3} more` : '';
+        accept('warning',
+            `Bounded context '${context.name}' is also declared in ${shown}${extra}. The declarations are in separate model units.`, {
+                node: context,
+                property: 'name',
+                code: 'context-name-shared-across-models'
+            });
     }
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {

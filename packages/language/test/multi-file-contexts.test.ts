@@ -34,6 +34,12 @@ function errors(document: LangiumDocument): string[] {
         .map(diagnostic => String(diagnostic.message));
 }
 
+function warnings(document: LangiumDocument): string[] {
+    return (document.diagnostics ?? [])
+        .filter(diagnostic => diagnostic.severity === DiagnosticSeverity.Warning)
+        .map(diagnostic => String(diagnostic.message));
+}
+
 async function completion(document: LangiumDocument, offset: number) {
     return services.Thinai.lsp.CompletionProvider?.getCompletion(document, {
         textDocument: { uri: document.uri.toString() },
@@ -336,6 +342,58 @@ bounded context Ordering`,
         expect(errors(docs['a.tni']!).some(message =>
             message.includes('Module dependencies cannot contain a cycle')
         )).toBe(true);
+    });
+
+    test('warns when disconnected roots declare the same context name', async () => {
+        const docs = await build({
+            'sales/ordering.tni': 'bounded context Ordering',
+            'fulfillment/ordering.tni': 'bounded context Ordering'
+        });
+
+        expect(errors(docs['sales/ordering.tni']!)).toEqual([]);
+        expect(errors(docs['fulfillment/ordering.tni']!)).toEqual([]);
+        expect(warnings(docs['sales/ordering.tni']!).some(message =>
+            message.includes("Bounded context 'Ordering' is also declared in '../fulfillment/ordering.tni'")
+        )).toBe(true);
+        expect(warnings(docs['fulfillment/ordering.tni']!).some(message =>
+            message.includes("Bounded context 'Ordering' is also declared in '../sales/ordering.tni'")
+        )).toBe(true);
+    });
+
+    test('does not warn when the duplicate context is in the same model', async () => {
+        const docs = await build({
+            'a.tni': `import "./b.tni"
+bounded context Ordering`,
+            'b.tni': 'bounded context Ordering'
+        });
+
+        expect(errors(docs['a.tni']!).some(message =>
+            message.includes("Duplicate declaration 'Ordering'")
+        )).toBe(true);
+        expect(warnings(docs['a.tni']!).some(message =>
+            message.includes('separate model units')
+        )).toBe(false);
+        expect(warnings(docs['b.tni']!).some(message =>
+            message.includes('separate model units')
+        )).toBe(false);
+    });
+
+    test('does not warn for other names reused across models', async () => {
+        const docs = await build({
+            'a.tni': `subdomain Shared kind core
+actor Customer
+bounded context Alpha`,
+            'b.tni': `subdomain Shared kind core
+actor Customer
+bounded context Beta`
+        });
+
+        expect(warnings(docs['a.tni']!).some(message =>
+            message.includes('separate model units')
+        )).toBe(false);
+        expect(warnings(docs['b.tni']!).some(message =>
+            message.includes('separate model units')
+        )).toBe(false);
     });
 
     test('reports duplicate members across parts', async () => {
