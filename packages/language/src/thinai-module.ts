@@ -21,6 +21,7 @@ import { ThinaiFileOperationHandler } from './thinai-file-operation-handler.js';
 import { ThinaiHoverProvider } from './thinai-hover-provider.js';
 import { ThinaiRenameProvider } from './thinai-rename-provider.js';
 import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
+import { ThinaiModelUnitIndex } from './thinai-model-unit.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -28,6 +29,9 @@ import { THINAI_NAME_CHARACTER_REGEXP } from './thinai-identifiers.js';
 export type ThinaiAddedServices = {
     validation: {
         ThinaiValidator: ThinaiValidator
+    },
+    modelUnit: {
+        ThinaiModelUnitIndex: ThinaiModelUnitIndex
     }
 }
 
@@ -81,6 +85,9 @@ export const ThinaiModule: Module<ThinaiServices, PartialLangiumServices & Thina
     },
     validation: {
         ThinaiValidator: services => new ThinaiValidator(services)
+    },
+    modelUnit: {
+        ThinaiModelUnitIndex: services => new ThinaiModelUnitIndex(services)
     }
 };
 

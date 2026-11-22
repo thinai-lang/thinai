@@ -7,6 +7,7 @@ import {
 } from 'langium';
 import {
     isActor,
+    isBoundedContext,
     isContextMap,
     isCustomerSupplierRelationship,
     isJourney,
@@ -60,35 +61,69 @@ export class ThinaiModelValidator {
     }
 
     checkBoundedContextPart(part: BoundedContextPart, accept: ValidationAcceptor): void {
-        const targetContext = part.context?.ref;
         if (part.contextPath.length > 0) {
-            accept('error', 'A bounded-context contribution cannot qualify its context; bounded contexts are top-level declarations.', {
+            accept('error', 'A bounded-context part cannot qualify its context; bounded contexts are top-level declarations.', {
                 node: part,
                 property: 'contextPath'
             });
         }
-        if (!targetContext) {
+        const contextName = part.context?.ref?.name ?? part.context?.$refText;
+        if (!contextName) {
             return;
         }
 
-        const currentDocument = AstUtils.getDocument(part);
-        const targetDocument = AstUtils.getDocument(targetContext);
-        if (UriUtils.equals(currentDocument.uri, targetDocument.uri)) {
+        const document = AstUtils.getDocument(part);
+        const model = document.parseResult.value;
+        if (!isModel(model)) {
+            return;
+        }
+        // A part block in the root file is an inline part and needs no import.
+        if (model.declarations.some(declaration =>
+            isBoundedContext(declaration) && declaration.name === contextName
+        )) {
             return;
         }
 
-        const model = currentDocument.parseResult.value;
-        const imported = isModel(model)
-            ? model.imports.some(importDeclaration => {
-                const uri = resolveImportUri(currentDocument, importDeclaration);
-                return uri !== undefined && UriUtils.equals(uri, targetDocument.uri);
-            })
-            : false;
-        if (!imported) {
-            accept('error', 'A bounded-context contribution must directly import its canonical declaration.', {
+        const unitIndex = this.services.modelUnit.ThinaiModelUnitIndex;
+        const roots = unitIndex.getRootsForPart(document, contextName);
+        if (roots.length === 0) {
+            accept('error', `This bounded-context part is not included by a bounded-context root. Import this file from the file that declares 'bounded context ${contextName}'.`, {
                 node: part,
                 keyword: 'in'
             });
+            return;
+        }
+        if (roots.length > 1) {
+            const names = roots.map(root => UriUtils.basename(root.uri)).sort();
+            accept('error', `This bounded-context part is included by more than one root: ${names.join(', ')}.`, {
+                node: part,
+                keyword: 'in'
+            });
+            return;
+        }
+
+        const root = roots[0]!;
+        const rootUri = root.uri.toString();
+        for (const importDeclaration of model.imports) {
+            const uri = resolveImportUri(document, importDeclaration);
+            if (!uri) {
+                continue;
+            }
+            if (uri.toString() === rootUri) {
+                accept('error', 'A bounded-context part must not import its root.', {
+                    node: importDeclaration,
+                    property: 'path'
+                });
+                continue;
+            }
+            const imported = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
+            if (imported && unitIndex.isPartDocument(imported) &&
+                unitIndex.getRootForDocument(imported)?.uri.toString() === rootUri) {
+                accept('error', 'A bounded-context part must not import another part of the same bounded context.', {
+                    node: importDeclaration,
+                    property: 'path'
+                });
+            }
         }
     }
 
@@ -158,6 +193,37 @@ export class ThinaiModelValidator {
                 property: 'path'
             });
         }
+
+        const imported = this.services.shared.workspace.LangiumDocuments.getDocument(uri);
+        if (!imported) {
+            return;
+        }
+        const unitIndex = this.services.modelUnit.ThinaiModelUnitIndex;
+        if (unitIndex.isRootDocument(imported)) {
+            return;
+        }
+        const partContexts = unitIndex.getPartContextNames(imported);
+        if (partContexts.length === 0) {
+            return;
+        }
+        const isRootOfImported = partContexts.some(contextName =>
+            unitIndex.getRootsForPart(imported, contextName)
+                .some(root => root.uri.toString() === document.uri.toString())
+        );
+        if (isRootOfImported) {
+            return;
+        }
+        // A part importing a peer part is reported by the part rule with a
+        // more specific message.
+        const ownRoot = unitIndex.getRootForDocument(document);
+        const importedRoot = unitIndex.getRootForDocument(imported);
+        if (ownRoot && importedRoot && ownRoot.uri.toString() === importedRoot.uri.toString()) {
+            return;
+        }
+        accept('error', 'Import the bounded-context root instead of one of its parts.', {
+            node: importDeclaration,
+            property: 'path'
+        });
     }
 
     checkModelImports(model: Model, accept: ValidationAcceptor): void {

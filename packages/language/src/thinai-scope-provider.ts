@@ -6,7 +6,6 @@ import {
     type ReferenceInfo,
     type Scope,
     type Stream,
-    type LangiumCoreServices,
     type LangiumDocument,
     stream,
     DocumentState,
@@ -119,23 +118,28 @@ import {
     getJourneyStepOperation,
     getPriorJourneySteps
 } from './thinai-journey-timeline.js';
+import type { ThinaiServices } from './thinai-module.js';
 
 
 export class ThinaiScopeProvider extends DefaultScopeProvider {
-    private readonly services: LangiumCoreServices;
+    private readonly services: ThinaiServices;
     private readonly externalScope: ThinaiExternalScope;
     private readonly referencePolicy: ThinaiReferencePolicy;
     private readonly pathScope: ThinaiPathScope;
+    private readonly modelUnits: ThinaiServices['modelUnit']['ThinaiModelUnitIndex'];
     private eventPayloadUsageByValueObject: WeakMap<AstNode, 'domain' | 'integration'> | undefined;
 
-    constructor(services: LangiumCoreServices) {
+    constructor(services: ThinaiServices) {
         super(services);
         this.services = services;
+        this.modelUnits = services.modelUnit.ThinaiModelUnitIndex;
         this.externalScope = new ThinaiExternalScope(
             this.reflection,
             this.nameProvider,
             this.descriptions,
-            this.indexManager
+            this.indexManager,
+            services.shared.workspace.LangiumDocuments,
+            this.modelUnits
         );
         const clearCaches = () => {
             this.externalScope.clearCache();
@@ -205,6 +209,17 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             referenceType,
             this.externalScope.getDocumentSymbols(context, document, referenceType)
         ), result);
+        if (referenceType === 'BoundedContext') {
+            result = this.createScope(this.getUnitContextDescriptions(document), result);
+        }
+        result = this.createScope(
+            this.filterUnqualifiedSpecificationTargets(
+                context,
+                referenceType,
+                this.externalScope.getUnitSymbols(context, document, referenceType)
+            ),
+            result
+        );
         const dependencyReference = isModuleReference(context.container);
         const moduleSymbols = dependencyReference
             ? []
@@ -213,6 +228,16 @@ export class ThinaiScopeProvider extends DefaultScopeProvider {
             this.filterUnqualifiedSpecificationTargets(context, referenceType, moduleSymbols),
             result
         );
+    }
+
+    private getUnitContextDescriptions(document: LangiumDocument): AstNodeDescription[] {
+        return this.modelUnits.getUnitContexts(document)
+            .filter(candidate => !UriUtils.equals(AstUtils.getDocument(candidate).uri, document.uri))
+            .map(candidate => this.descriptions.createDescription(
+                candidate,
+                candidate.name,
+                AstUtils.getDocument(candidate)
+            ));
     }
 
     filterCompletionCandidates(context: ReferenceInfo, candidates: Iterable<AstNodeDescription>): Stream<AstNodeDescription> {

@@ -491,7 +491,7 @@ in bounded context C {
     });
 
     test('exports semantic edge roles and separates qualifier edges', async () => {
-        const fileName = fileURLToPath(new URL('../../../examples/order-fulfillment/ordering-events.tni', import.meta.url));
+        const fileName = fileURLToPath(new URL('../../../examples/order-fulfillment/ordering.tni', import.meta.url));
         const model = await loadModel(fileName);
         const edge = (fromId: string, toId: string, role: string) =>
             model.edges.find(candidate =>

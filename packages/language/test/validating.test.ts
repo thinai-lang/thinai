@@ -3131,17 +3131,16 @@ in bounded context Ordering {
         );
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-contexts.tni'),
-            'bounded context Ordering bounded context Shipping'
-        );
-        const map = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/shared-policy-map.tni'),
-            'import "./shared-policy-kernel.tni" import "./shared-policy-contexts.tni" context map SharedPolicies { sharedKernel Common { participants: [Ordering] } }'
+            `import "./shared-policy-kernel.tni"
+             import "./shared-policy-consumer.tni"
+             import "./shared-policy-nonparticipant.tni"
+             bounded context Ordering
+             bounded context Shipping
+             context map SharedPolicies { sharedKernel Common { participants: [Ordering] } }`
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-consumer.tni'),
-            `import "./shared-policy-contexts.tni"
-             import { Common } from "./shared-policy-kernel.tni"
-             import { SharedPolicies } from "./shared-policy-map.tni"
+            `import { Common } from "./shared-policy-kernel.tni"
              in bounded context Ordering {
                  application service OrderApplication {
                      method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
@@ -3150,16 +3149,14 @@ in bounded context Ordering {
         );
         const nonParticipant = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shared-policy-nonparticipant.tni'),
-            `import "./shared-policy-contexts.tni"
-             import { Common } from "./shared-policy-kernel.tni"
-             import { SharedPolicies } from "./shared-policy-map.tni"
+            `import { Common } from "./shared-policy-kernel.tni"
              in bounded context Shipping {
                  application service ShippingApplication {
                      method normalize(amount: decimal) returns decimal { invokes Common.PricingPolicy.normalize }
                  }
              }`
         );
-        documents = [shared, contexts, map, consumer, nonParticipant];
+        documents = [shared, contexts, consumer, nonParticipant];
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
         expect(semanticDiagnostics(consumer).filter(diagnostic => diagnostic.severity === 1).map(diagnostic => diagnostic.message)).toEqual([]);
@@ -3487,11 +3484,12 @@ context map Fulfillment {
     test('accepts bodyless bounded-context declarations and imported contributions', async () => {
         const canonical = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/canonical-context.tni'),
-            'subdomain OrderManagement kind core bounded context Ordering realizes OrderManagement'
+            `import "./direct-context-import.tni"
+             subdomain OrderManagement kind core bounded context Ordering realizes OrderManagement`
         );
         const directImport = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/direct-context-import.tni'),
-            'import "./canonical-context.tni" in bounded context Ordering { event OrderPlaced }'
+            'in bounded context Ordering { event OrderPlaced }'
         );
         documents = [canonical, directImport];
 

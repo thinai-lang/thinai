@@ -3,9 +3,12 @@ import type {
     AstNode,
     AstNodeDescription,
     AstReflection,
+    LangiumDocument,
+    LangiumDocuments,
     ReferenceInfo
 } from 'langium';
 import type { AstNodeDescriptionProvider, NameProvider, IndexManager } from 'langium';
+import type { ThinaiModelUnitIndex } from './thinai-model-unit.js';
 import {
     isBoundedContextPart,
     isDataObject,
@@ -37,17 +40,21 @@ import {
 export class ThinaiExternalScope {
     private readonly importedSymbolsCache = new Map<string, AstNodeDescription[]>();
     private readonly documentSymbolsCache = new Map<string, AstNodeDescription[]>();
+    private readonly unitSymbolsCache = new Map<string, AstNodeDescription[]>();
 
     constructor(
         private readonly reflection: AstReflection,
         private readonly nameProvider: NameProvider,
         private readonly descriptions: AstNodeDescriptionProvider,
-        private readonly indexManager: IndexManager
+        private readonly indexManager: IndexManager,
+        private readonly documents: LangiumDocuments,
+        private readonly modelUnits: ThinaiModelUnitIndex
     ) {}
 
     clearCache(): void {
         this.importedSymbolsCache.clear();
         this.documentSymbolsCache.clear();
+        this.unitSymbolsCache.clear();
     }
 
     getModuleSymbols(context: ReferenceInfo, referenceType: string): AstNodeDescription[] {
@@ -136,10 +143,18 @@ export class ThinaiExternalScope {
         const importsByUri = new Map<string, Import[]>();
         for (const declaration of root.imports) {
             const uri = resolveImportUri(document, declaration);
-            if (uri) {
-                const imports = importsByUri.get(uri.toString()) ?? [];
+            if (!uri) {
+                continue;
+            }
+            const imported = this.documents.getDocument(uri);
+            const unitDocuments = imported ? this.modelUnits.getUnitDocuments(imported) : [];
+            const keys = unitDocuments.length > 0
+                ? unitDocuments.map(unitDocument => unitDocument.uri.toString())
+                : [uri.toString()];
+            for (const key of keys) {
+                const imports = importsByUri.get(key) ?? [];
                 imports.push(declaration);
-                importsByUri.set(uri.toString(), imports);
+                importsByUri.set(key, imports);
             }
         }
         const candidates = new Map<string, Map<string, AstNodeDescription>>();
@@ -227,6 +242,47 @@ export class ThinaiExternalScope {
         }
         const result = this.getUniqueScopeCandidates(candidates);
         this.documentSymbolsCache.set(cacheKey, result);
+        return result;
+    }
+
+    /**
+     * Symbols contributed by peer documents of the same bounded-context unit.
+     * Parts see their sibling parts and the root; the root sees its parts.
+     * External imports made by a peer are not re-exported here.
+     */
+    getUnitSymbols(context: ReferenceInfo, document: LangiumDocument, referenceType: string): AstNodeDescription[] {
+        if (!this.modelUnits.getRootForDocument(document)) {
+            return [];
+        }
+        const cacheKey = JSON.stringify([
+            document.uri.toString(),
+            referenceType,
+            this.getLexicalContextName(context) ?? null
+        ]);
+        const cached = this.unitSymbolsCache.get(cacheKey);
+        if (cached) {
+            return cached;
+        }
+        const root = document.parseResult.value;
+        const aliases = isModel(root) ? getComponentAliases(root) : [];
+        const owningContextName = this.getLexicalContextName(context);
+        const candidates = new Map<string, Map<string, AstNodeDescription>>();
+        for (const description of this.modelUnits.getUnitSymbols(document, referenceType)) {
+            if (description.documentUri.toString() === document.uri.toString()) {
+                continue;
+            }
+            this.addScopeCandidate(candidates, description, description.name);
+            if (owningContextName && description.name.startsWith(`${owningContextName}.`)) {
+                for (const name of this.getUnaliasedNames(description.name).slice(1)) {
+                    this.addScopeCandidate(candidates, description, name);
+                }
+            }
+            for (const name of getComponentAliasNames(description.name, aliases, description.type)) {
+                this.addScopeCandidate(candidates, description, name);
+            }
+        }
+        const result = this.getUniqueScopeCandidates(candidates);
+        this.unitSymbolsCache.set(cacheKey, result);
         return result;
     }
 

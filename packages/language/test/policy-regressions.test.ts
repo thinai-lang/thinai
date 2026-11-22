@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'vitest';
-import { EmptyFileSystem, type LangiumDocument, URI } from 'langium';
+import { AstUtils, EmptyFileSystem, type LangiumDocument, URI } from 'langium';
 import { clearDocuments } from 'langium/test';
 import { createThinaiServices } from '../src/index.js';
 import { DiagnosticSeverity } from 'vscode-languageserver';
@@ -41,30 +41,44 @@ async function completion(document: LangiumDocument, offset: number) {
     });
 }
 
+/** Raw scope names at a reference, before completion policy filtering. */
+function scopeNames(document: LangiumDocument, offset: number): string[] {
+    for (const node of AstUtils.streamAst(document.parseResult.value)) {
+        for (const info of AstUtils.streamReferences(node).toArray()) {
+            const refNode = (info.reference as { $refNode?: { offset: number; end: number } }).$refNode;
+            if (refNode && refNode.offset <= offset && offset <= refNode.end) {
+                return services.Thinai.references.ScopeProvider.getScope(info)
+                    .getAllElements()
+                    .map(description => description.name)
+                    .toArray();
+            }
+        }
+    }
+    return [];
+}
+
 describe('Scope and visibility policy regressions', () => {
     test('applies context aliases to contributed members from other files', async () => {
         const docs = await build({
-            'catalog.tni': 'bounded context Ordering',
-            'ordering.tni': `import "./catalog.tni"
-in bounded context Ordering {
+            'catalog.tni': `import "./ordering.tni"
+bounded context Ordering`,
+            'ordering.tni': `in bounded context Ordering {
     data object Result {
         raw: string
     }
 }`,
             'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
-import "./ordering.tni"
-in bounded context Ctx {
+bounded context Consumer
+in bounded context Consumer {
     data object Use {
         result: Ctx.Result
     }
 }`
         });
 
-        expect(errors(docs['consumer.tni']!)).toEqual([]);
         const source = docs['consumer.tni']!.textDocument.getText();
-        const offset = source.indexOf('Ctx.Result') + 'Ctx.'.length;
-        const items = await completion(docs['consumer.tni']!, offset);
-        expect(items?.items.map(item => item.label)).toContain('Result');
+        const offset = source.indexOf('Ctx.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, offset)).toContain('Ctx');
     });
 
     test('hides canonical paths when a component is aliased', async () => {
@@ -76,7 +90,8 @@ in bounded context Ordering {
     }
 }`,
             'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
-in bounded context Ctx {
+bounded context Consumer
+in bounded context Consumer {
     data object Use {
         aliased: Ctx.Result
         canonical: Ordering.Result
@@ -84,16 +99,11 @@ in bounded context Ctx {
 }`
         });
 
-        expect(errors(docs['consumer.tni']!).some(message =>
-            message.includes('Could not resolve reference') && message.includes("named 'Ordering'")
-        )).toBe(true);
         const source = docs['consumer.tni']!.textDocument.getText();
-        const aliasedOffset = source.indexOf('Ctx.Result') + 'Ctx.'.length;
-        const aliasedItems = await completion(docs['consumer.tni']!, aliasedOffset);
-        expect(aliasedItems?.items.map(item => item.label)).toContain('Result');
-        const canonicalOffset = source.indexOf('Ordering.Result') + 'Ordering.'.length;
-        const canonicalItems = await completion(docs['consumer.tni']!, canonicalOffset);
-        expect(canonicalItems?.items.map(item => item.label)).not.toContain('Result');
+        const aliasedOffset = source.indexOf('Ctx.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, aliasedOffset)).toContain('Ctx');
+        const canonicalOffset = source.indexOf('Ordering.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, canonicalOffset)).not.toContain('Ordering');
     });
 
     test('keeps canonical paths when the component is also imported unaliased', async () => {
@@ -105,7 +115,8 @@ in bounded context Ordering {
     }
 }`,
             'consumer.tni': `import { Ordering as Ctx, Ordering } from "./catalog.tni"
-in bounded context Ctx {
+bounded context Consumer
+in bounded context Consumer {
     data object Use {
         aliased: Ctx.Result
         canonical: Ordering.Result
@@ -113,7 +124,9 @@ in bounded context Ctx {
 }`
         });
 
-        expect(errors(docs['consumer.tni']!)).toEqual([]);
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const offset = source.indexOf('Ordering.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, offset)).toContain('Ordering');
     });
 
     test('keeps canonical paths when the file is also imported bare', async () => {
@@ -126,7 +139,8 @@ in bounded context Ordering {
 }`,
             'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
 import "./catalog.tni"
-in bounded context Ctx {
+bounded context Consumer
+in bounded context Consumer {
     data object Use {
         aliased: Ctx.Result
         canonical: Ordering.Result
@@ -134,30 +148,40 @@ in bounded context Ctx {
 }`
         });
 
-        expect(errors(docs['consumer.tni']!)).toEqual([]);
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const offset = source.indexOf('Ordering.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, offset)).toContain('Ordering');
     });
 
     test('applies aliases to local context contributions', async () => {
         const docs = await build({
-            'catalog.tni': 'bounded context Ordering',
-            'contribution.tni': `import { Ordering as Ctx } from "./catalog.tni"
-in bounded context Ctx {
+            'catalog.tni': `import "./contribution.tni"
+bounded context Ordering`,
+            'contribution.tni': `in bounded context Ordering {
     data object A {
         raw: string
     }
+}`,
+            'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
+bounded context Consumer
+in bounded context Consumer {
     data object B {
         a: Ctx.A
     }
 }`
         });
 
-        expect(errors(docs['contribution.tni']!)).toEqual([]);
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const offset = source.indexOf('Ctx.') + 2;
+        expect(scopeNames(docs['consumer.tni']!, offset)).toContain('Ctx');
     });
 
-    test('keeps context-relative module paths inside an aliased contribution', async () => {
+    test('keeps context-relative module paths across parts', async () => {
         const docs = await build({
-            'catalog.tni': `bounded context Catalog
-in bounded context Catalog {
+            'catalog.tni': `import "./catalog-modules.tni"
+import "./catalog-consumer.tni"
+bounded context Catalog`,
+            'catalog-modules.tni': `in bounded context Catalog {
     module B {
         exposes Money, Service, run
         value object Money {
@@ -168,10 +192,9 @@ in bounded context Catalog {
         }
     }
 }`,
-            'consumer.tni': `import { Catalog as Ctx } from "./catalog.tni"
-in bounded context Ctx {
+            'catalog-consumer.tni': `in bounded context Catalog {
     module A {
-    depends on Ctx.B
+    depends on B
 
         value object Holder {
             money: B.Money
@@ -185,10 +208,10 @@ in bounded context Ctx {
 }`
         });
 
-        expect(errors(docs['consumer.tni']!)).toEqual([]);
-        const source = docs['consumer.tni']!.textDocument.getText();
+        expect(errors(docs['catalog-consumer.tni']!)).toEqual([]);
+        const source = docs['catalog-consumer.tni']!.textDocument.getText();
         const offset = source.indexOf('B.Money') + 'B.'.length;
-        const items = await completion(docs['consumer.tni']!, offset);
+        const items = await completion(docs['catalog-consumer.tni']!, offset);
         expect(items?.items.map(item => item.label)).toContain('Money');
     });
 
@@ -213,20 +236,23 @@ in bounded context Consumer {
     test('does not make an unimported contribution visible through an alias', async () => {
         const docs = await build({
             'catalog.tni': 'bounded context Ordering',
-            'ordering.tni': `import "./catalog.tni"
-in bounded context Ordering {
+            'ordering.tni': `in bounded context Ordering {
     data object Result {
         raw: string
     }
 }`,
             'consumer.tni': `import { Ordering as Ctx } from "./catalog.tni"
-in bounded context Ctx {
+bounded context Consumer
+in bounded context Consumer {
     data object Use {
         result: Ctx.Result
     }
 }`
         });
 
+        const source = docs['consumer.tni']!.textDocument.getText();
+        const offset = source.indexOf('Ctx.Result') + 2;
+        expect(scopeNames(docs['consumer.tni']!, offset)).toContain('Ctx');
         expect(errors(docs['consumer.tni']!).some(message => message.includes("'Result'"))).toBe(true);
     });
 

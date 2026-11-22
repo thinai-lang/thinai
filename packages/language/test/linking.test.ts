@@ -76,23 +76,22 @@ describe('Linking tests', () => {
         const contributionUri = URI.file(path.join(directory, 'contribution.tni'));
         const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
         const files = {
-            [catalogUri.fsPath]: `bounded context Ordering
+            [catalogUri.fsPath]: `import "./contribution.tni"
+import "./consumer.tni"
+bounded context Ordering
 in bounded context Ordering {
     value object OrderId {
         raw: string
     }
 }
 `,
-            [contributionUri.fsPath]: `import { Ordering } from "./catalog.tni"
-in bounded context Ordering {
+            [contributionUri.fsPath]: `in bounded context Ordering {
     value object Status {
         raw: string
     }
 }
 `,
-            [consumerUri.fsPath]: `import { Ordering } from "./catalog.tni"
-import "./contribution.tni"
-in bounded context Ordering {
+            [consumerUri.fsPath]: `in bounded context Ordering {
     data object D {
         status: Status
     }
@@ -184,15 +183,15 @@ in bounded context Ordering {
         const catalogUri = URI.file(path.join(directory, 'catalog.tni'));
         const mapUri = URI.file(path.join(directory, 'map.tni'));
         const consumerUri = URI.file(path.join(directory, 'consumer.tni'));
-        const typesText = `bounded context A
+        const typesText = `import "./catalog.tni"
+bounded context A
 in bounded context A {
     value object Info {
         a: string
     }
 }
 `;
-        const catalogText = `import "./types.tni"
-in bounded context A {
+        const catalogText = `in bounded context A {
     module M {
         exposes E
         integration event E {
@@ -202,14 +201,13 @@ in bounded context A {
 }
 `;
         const mapText = `import "./types.tni"
+import "./consumer.tni"
 bounded context B
 context map Fulfillment {
     customer B -> supplier A
 }
 `;
         const consumerText = `import "./types.tni"
-import "./catalog.tni"
-import "./map.tni"
 in bounded context B {
     application service App {
         method handle(source: A.M.E) {
@@ -280,7 +278,9 @@ in bounded context B {
     test('reports a duplicate write repository when the new declaration sorts first', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/z-context.tni'),
-            `bounded context Ordering in bounded context Ordering {
+            `import "./z-repository.tni"
+             import "./a-repository.tni"
+             bounded context Ordering in bounded context Ordering {
                 aggregate Order {
                     root entity Order { identifier id: OrderId }
                     value object OrderId { raw: string }
@@ -289,25 +289,20 @@ in bounded context B {
         );
         const existingRepository = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/z-repository.tni'),
-            `import "./z-context.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  repository ExistingRepository { manages Order.Order }
              }`
         );
-        documents = [context, existingRepository];
-        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
-        expect(semanticDiagnostics(existingRepository).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
-
         const addedRepository = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/a-repository.tni'),
-            `import "./z-context.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  repository AddedRepository { manages Order.Order }
              }`
         );
-        documents.push(addedRepository);
-        await services.shared.workspace.DocumentBuilder.build([addedRepository], { validation: true });
+        documents = [context, existingRepository, addedRepository];
+        await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
+        expect(semanticDiagnostics(existingRepository).filter(diagnostic => diagnostic.severity === 1)).toEqual([]);
         expect(semanticDiagnostics(addedRepository).some(diagnostic =>
             diagnostic.code === 'duplicate-write-repository'
         )).toBe(true);
@@ -357,6 +352,7 @@ in bounded context B {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering.tni'),
             s`
+                import "./order-events.tni"
                 subdomain OrderManagement kind core
                 bounded context Ordering realizes OrderManagement
                 in bounded context Ordering {
@@ -390,8 +386,6 @@ in bounded context B {
         const part = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-events.tni'),
             s`
-                import "./ordering.tni"
-
                 in bounded context Ordering {
                     event OrderConfirmed
                     integration event OrderConfirmedV1
@@ -400,7 +394,10 @@ in bounded context B {
         );
         const shippingContext = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping.tni'),
-            `bounded context Shipping in bounded context Shipping {
+            `import "./ordering.tni"
+             import "./shipping-flow.tni"
+             bounded context Shipping
+             in bounded context Shipping {
                 aggregate Shipment {
                     root entity Shipment { method start() identifier id: ShipmentId }
                     value object ShipmentId { raw: string }
@@ -416,17 +413,14 @@ in bounded context B {
                         invokes ShipmentFactory.createShipment
                     }
                 }
-            }`
-        );
-        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/context-map.tni'),
-            `import "./ordering.tni" import "./shipping.tni" context map Fulfillment {
+            }
+            context map Fulfillment {
                 customer Shipping -> supplier Ordering
             }`
         );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-flow.tni'),
-            `import "./ordering.tni" import "./order-events.tni" import "./shipping.tni" import { Fulfillment } from "./context-map.tni"
+            `import "./ordering.tni"
              in bounded context Shipping {
                   application service ShipmentEventHandler {
                         method onOrderPlaced(source: Ordering.OrderPlacedV1) {
@@ -436,7 +430,7 @@ in bounded context B {
                   }
               }`
         );
-        documents = [context, part, shippingContext, contextMap, consumer];
+        documents = [context, part, shippingContext, consumer];
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
@@ -627,12 +621,17 @@ in bounded context B {
     test('allows reads from an exposed external query operation with an authorized context map', async () => {
         const contexts = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/query-contexts.tni'),
-            'bounded context Catalog bounded context Ordering'
+            `import "./catalog-api.tni"
+             import "./query-consumer.tni"
+             bounded context Catalog
+             bounded context Ordering
+             context map Commerce {
+                 customer Ordering -> supplier Catalog
+             }`
         );
         const catalog = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/catalog-api.tni'),
-            `import "./query-contexts.tni"
-             in bounded context Catalog {
+            `in bounded context Catalog {
                  module PublicApi {
                       exposes ProductQueries, ProductInfo
                       query service ProductQueries {
@@ -643,19 +642,9 @@ in bounded context B {
                   }
              }`
         );
-        const contextMap = services.shared.workspace.LangiumDocuments.createDocument(
-            URI.file('/workspace/query-map.tni'),
-            `import "./query-contexts.tni"
-             context map Commerce {
-                 customer Ordering -> supplier Catalog
-             }`
-        );
         const consumer = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/query-consumer.tni'),
-            `import "./query-contexts.tni"
-             import "./catalog-api.tni"
-             import { Commerce } from "./query-map.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  read model OrderSummary {
                      productAvailable: boolean
                  }
@@ -685,7 +674,7 @@ in bounded context B {
                  }
              }`
         );
-        documents = [contexts, catalog, contextMap, consumer];
+        documents = [contexts, catalog, consumer];
 
         await services.shared.workspace.DocumentBuilder.build(documents, { validation: true });
 
@@ -1293,12 +1282,12 @@ in bounded context Beta {
     test('resolves every mirror path segment through an imported bounded-context contribution', async () => {
         const context = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-context.tni'),
-            'bounded context Ordering'
+            `import "./ordering-part.tni"
+             bounded context Ordering`
         );
         const orderingPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/ordering-part.tni'),
-            `import "./ordering-context.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  aggregate Order {
                      root entity Order { identifier id: OrderId }
                      value object OrderId { raw: string }
@@ -1308,7 +1297,6 @@ in bounded context Beta {
         const shipping = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/shipping-mirror.tni'),
             `import "./ordering-context.tni"
-             import "./ordering-part.tni"
              bounded context Shipping in bounded context Shipping {
                  value object OrderId mirrors Ordering.Order.OrderId { raw: string }
              }
@@ -1889,12 +1877,13 @@ in bounded context Beta {
     test('links every segment of a qualified invocation across imported context contributions', async () => {
         const canonical = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-context.tni'),
-            'bounded context Ordering'
+            `import "./order-aggregate.tni"
+             import "./order-application.tni"
+             bounded context Ordering`
         );
         const aggregatePart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-aggregate.tni'),
-            `import "./order-context.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  aggregate Order {
                      root entity Order { method place() identifier id: OrderId }
                      value object OrderId { raw: string }
@@ -1903,9 +1892,7 @@ in bounded context Beta {
         );
         const applicationPart = services.shared.workspace.LangiumDocuments.createDocument(
             URI.file('/workspace/order-application.tni'),
-            `import "./order-context.tni"
-             import "./order-aggregate.tni"
-             in bounded context Ordering {
+            `in bounded context Ordering {
                  application service OrderApplication {
                      method placeOrder(id: OrderId) {
                          invokes Order.Order.place
@@ -2208,7 +2195,10 @@ in bounded context C {
         const payloadUri = URI.file(path.join(directory, 'payload.tni'));
         const eventUri = URI.file(path.join(directory, 'event.tni'));
         const files = {
-            [aggUri.fsPath]: `bounded context C
+            [aggUri.fsPath]: `import "./types.tni"
+import "./payload.tni"
+import "./event.tni"
+bounded context C
 in bounded context C {
     aggregate A {
         root entity A {
@@ -2220,24 +2210,19 @@ in bounded context C {
     }
 }
 `,
-            [typesUri.fsPath]: `import "./agg.tni"
-in bounded context C {
+            [typesUri.fsPath]: `in bounded context C {
     value object Nested {
         raw: string
     }
 }
 `,
-            [payloadUri.fsPath]: `import "./agg.tni"
-import "./types.tni"
-in bounded context C {
+            [payloadUri.fsPath]: `in bounded context C {
     value object Payload {
         nested: Nested
     }
 }
 `,
-            [eventUri.fsPath]: `import "./agg.tni"
-import "./payload.tni"
-in bounded context C {
+            [eventUri.fsPath]: `in bounded context C {
     integration event E {
         payload: Payload
     }
@@ -2262,8 +2247,7 @@ in bounded context C {
             await localServices.shared.workspace.DocumentBuilder.build(documents, { validation: true });
             expect(errors(event)).toEqual([]);
 
-            fs.writeFileSync(typesUri.fsPath, `import "./agg.tni"
-in bounded context C {
+            fs.writeFileSync(typesUri.fsPath, `in bounded context C {
     value object Nested {
         raw: string
         owner: C.A.A

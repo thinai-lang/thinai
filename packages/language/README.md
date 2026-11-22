@@ -16,22 +16,24 @@ and the [complete Order Fulfillment example](https://github.com/thinai-lang/thin
 
 ## File Model
 
-Declare a bounded context once, without braces. Put members in one or more
-`in bounded context Name { ... }` blocks; contributions in other files import
-the file containing the canonical declaration.
+Declare a bounded context once, without braces, in a **root file**. Put members
+in one or more `in bounded context Name { ... }` blocks either in the root file
+or in **part files** that the root imports. A part never imports its root or a
+peer part; importing the root makes the whole context available to other
+contexts.
 
-A document's model is its import-connected component: its transitive imports
-and the files that import it, not every file in the workspace. Duplicate
-declaration names are therefore scoped to that component; independent models
-may reuse names. Cross-references still require the target to be reachable
-through the document's own direct imports; imports are not implicitly
-transitive. Actors,
-journeys, and subdomains have their own strategic namespaces, so a subdomain may
-share a name with its bounded context. Subdomains are referenced through
-`realizes`; they are not specification-path targets.
+A document's model unit is its root plus the directly imported parts. Duplicate
+declaration names are scoped to that unit; independent models may reuse names.
+Cross-references still require the target to be reachable through the document's
+own direct imports; imports are not implicitly transitive. Actors, journeys, and
+subdomains have their own strategic namespaces, so a subdomain may share a name
+with its bounded context. Subdomains are referenced through `realizes`; they are
+not specification-path targets.
 
 ```thinai
 // ordering.tni
+import "./ordering-events.tni"
+
 subdomain OrderManagement kind core
 
 bounded context Ordering realizes OrderManagement
@@ -90,8 +92,6 @@ lists at 120 characters, one item per continuation line.
 
 ```thinai
 // ordering-events.tni
-import "./ordering.tni"
-
 actor Customer
 
 in bounded context Ordering {
@@ -335,20 +335,17 @@ aliased as `Orders`, reference its declarations as `Orders.Member`; the
 canonical `Ordering.Member` spelling is not available unless the same file is
 also imported with a bare import or the component is imported again without an
 alias. An alias applies to every visible declaration of the selected component,
-including members contributed from other imported files. Inside a contribution
-to an aliased context, declarations belonging to that context also keep
-context-relative spellings such as `Module.Type` and `Type`; local and imported
-contributions behave the same way. Aliases are document-local
-scope names; an alias must not collide with any visible path-root spelling,
-including a context-relative suffix such as `Module` or `Type`, a component
-name, or a canonical declaration visible through imports. Terminal
+including members declared in the context's part files. Inside a part,
+declarations belonging to its own context keep context-relative spellings such
+as `Module.Type` and `Type`; no import of the root is needed. Aliases are
+document-local scope names; an alias must not collide with any visible path-root
+spelling, including a context-relative suffix such as `Module` or `Type`, a
+component name, or a canonical declaration visible through imports. Terminal
 fields, methods, enum values, and parameters do not conflict with aliases.
-Strategic declarations (actors,
-journeys, and subdomains) are not aliased by component imports; import them
-with a bare file import rather than a component selection.
-Aliases do not import files on their own: import the contribution file that
-declares the members you use. Declarations in the current document can also be
-referenced through a local context alias.
+Strategic declarations (actors, journeys, and subdomains) are not aliased by
+component imports; import them with a bare file import rather than a component
+selection. Aliases do not import files on their own: the context root must still
+be imported for its members to be visible.
 
 Shared value objects belong in an explicit `shared kernel`. Context maps record
 which bounded contexts share that kernel. Modules are optional internal

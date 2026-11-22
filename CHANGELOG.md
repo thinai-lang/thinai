@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Make bounded contexts first-class multi-file units: a root file declares the context and imports its part files, parts share one context scope without importing peers, and other contexts import only the root.
+- Break: a bounded-context contribution no longer imports its canonical declaration; move that import to the root and import the part there.
+- Reject direct imports of a context part, part imports of its root or a peer part, unrooted parts, and parts included by more than one root.
+- Keep module `depends on`, `exposes`, and cycle rules authoritative across parts.
 - Reject literal line breaks in single- and double-quoted strings; use triple double quotes for multiline text.
 - Auto-close triple double quotes and remove the closing delimiter when the opening triple is deleted.
 - Expand selection inside quoted strings starting with the string content, then the quoted literal.

@@ -1,7 +1,6 @@
 import {
     AstUtils,
     type AstNode,
-    type LangiumCoreServices,
     type LangiumDocument,
     type URI,
     UriUtils
@@ -70,12 +69,13 @@ import {
 import { getNavigableTypeReferences, getTypeReferences } from './thinai-type-utils.js';
 import { isJourneyCommand, isJourneyQuery } from './thinai-operation-utils.js';
 import { getJourneySpecificationKind } from './thinai-journey-utils.js';
+import type { ThinaiServices } from './thinai-module.js';
 
 /** Shared visibility and cross-context authorization rules for linking, completion, and validation. */
 export class ThinaiReferencePolicy {
     private eventContractTargetsCache = new WeakMap<AstNode, Set<AstNode>>();
 
-    constructor(private readonly services: LangiumCoreServices) {}
+    constructor(private readonly services: ThinaiServices) {}
 
     /**
      * Event contract targets are computed from payload value-object shapes in
@@ -207,9 +207,15 @@ export class ThinaiReferencePolicy {
         if (UriUtils.equals(sourceDocument.uri, targetDocument.uri)) {
             return true;
         }
+        if (this.isSameModelUnit(sourceDocument, targetDocument)) {
+            return true;
+        }
         const model = sourceDocument.parseResult.value;
         if (!isModel(model)) {
             return false;
+        }
+        if (this.importsDocumentOrUnit(model, sourceDocument, targetDocument)) {
+            return true;
         }
         const targetContext = getOwningContextName(target);
         return model.imports.some(declaration => {
@@ -226,6 +232,30 @@ export class ThinaiReferencePolicy {
                     getOwningContextName(componentTarget) === targetContext;
             });
         });
+    }
+
+    private isSameModelUnit(sourceDocument: LangiumDocument, targetDocument: LangiumDocument): boolean {
+        const unitIndex = this.services.modelUnit.ThinaiModelUnitIndex;
+        const sourceRoot = unitIndex.getRootForDocument(sourceDocument);
+        const targetRoot = unitIndex.getRootForDocument(targetDocument);
+        return sourceRoot !== undefined && targetRoot !== undefined &&
+            UriUtils.equals(sourceRoot.uri, targetRoot.uri);
+    }
+
+    /**
+     * A root import imports the whole model unit, so importing the root also
+     * makes its parts visible.
+     */
+    private importsDocumentOrUnit(
+        model: Model,
+        sourceDocument: LangiumDocument,
+        targetDocument: LangiumDocument
+    ): boolean {
+        if (this.importsDocument(model, sourceDocument, targetDocument.uri)) {
+            return true;
+        }
+        const targetRoot = this.services.modelUnit.ThinaiModelUnitIndex.getRootForDocument(targetDocument);
+        return targetRoot !== undefined && this.importsDocument(model, sourceDocument, targetRoot.uri);
     }
 
     /**
@@ -708,8 +738,14 @@ export class ThinaiReferencePolicy {
         if (!contextName || !isModel(model)) {
             return false;
         }
-        const contextMaps = this.getVisibleContextMaps(model);
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship => {
+        const contextMaps = new Set(this.getVisibleContextMaps(model));
+        const root = this.services.modelUnit.ThinaiModelUnitIndex.getRootForDocument(document);
+        if (root && isModel(root.parseResult.value)) {
+            for (const contextMap of this.getVisibleContextMaps(root.parseResult.value)) {
+                contextMaps.add(contextMap);
+            }
+        }
+        return [...contextMaps].some(contextMap => contextMap.relationships.some(relationship => {
             if (!isSyntacticallyComplete(relationship) || !isSharedKernelRelationship(relationship) ||
                 relationship.sharedKernel?.ref !== sharedKernel) {
                 return false;
@@ -725,7 +761,7 @@ export class ThinaiReferencePolicy {
             return [...new Set(participants)]
                 .filter(participant => participant !== contextName)
                 .every(participant =>
-                    this.haveCompatibleRelationshipDefinitions(contextMaps, contextName, participant, 'event')
+                    this.haveCompatibleRelationshipDefinitions([...contextMaps], contextName, participant, 'event')
                 );
         }));
     }
@@ -798,17 +834,28 @@ export class ThinaiReferencePolicy {
         const targetDocument = AstUtils.getDocument(target);
         const model = document.parseResult.value;
         const sameDocument = UriUtils.equals(document.uri, targetDocument.uri);
+        const sameUnit = this.isSameModelUnit(document, targetDocument);
         if (!consumer || !provider || !isModel(model) ||
-            (!sameDocument && !this.importsDocument(model, document, targetDocument.uri))) {
+            (!sameDocument && !sameUnit && !this.importsDocumentOrUnit(model, document, targetDocument))) {
             return false;
         }
         // Local context maps authorize relationships declared in the same
         // document. Imported maps remain required for external declarations.
-        const contextMaps = sameDocument ? this.getVisibleContextMaps(model) : this.getImportedContextMaps(model);
-        if (!this.haveCompatibleRelationshipDefinitions(contextMaps, consumer, provider, purpose)) {
+        const contextMaps = new Set<ContextMap>(
+            sameDocument ? this.getVisibleContextMaps(model) : this.getImportedContextMaps(model)
+        );
+        // A unit root's maps apply to every part of that unit, so a part does
+        // not have to import its own root.
+        const root = this.services.modelUnit.ThinaiModelUnitIndex.getRootForDocument(document);
+        if (root && isModel(root.parseResult.value)) {
+            for (const contextMap of this.getVisibleContextMaps(root.parseResult.value)) {
+                contextMaps.add(contextMap);
+            }
+        }
+        if (!this.haveCompatibleRelationshipDefinitions([...contextMaps], consumer, provider, purpose)) {
             return false;
         }
-        return contextMaps.some(contextMap => contextMap.relationships.some(relationship =>
+        return [...contextMaps].some(contextMap => contextMap.relationships.some(relationship =>
             this.authorizesTeamRelationship(relationship, consumer, provider)
         ));
     }
