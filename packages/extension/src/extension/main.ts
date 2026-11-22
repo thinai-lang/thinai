@@ -247,11 +247,18 @@ async function createBoundedContextPart(args: BoundedContextCreationArgs): Promi
     const edit = new vscode.WorkspaceEdit();
     edit.createFile(partUri, { overwrite: false, ignoreIfExists: false });
     edit.insert(partUri, new vscode.Position(0, 0),
-        `in bounded context ${formatIdentifier(args.contextName)} {\n}\n`);
+        `in bounded context ${formatIdentifier(args.contextName)} {\n  \n}\n`);
     edit.insert(rootUri, importText.position, importText.newText);
     if (!await vscode.workspace.applyEdit(edit)) {
         void vscode.window.showErrorMessage('Could not create the bounded-context part.');
+        return;
     }
+    const partDocument = await vscode.workspace.openTextDocument(partUri);
+    const partPosition = new vscode.Position(1, 2);
+    await vscode.window.showTextDocument(partDocument, {
+        preview: false,
+        selection: new vscode.Range(partPosition, partPosition)
+    });
 }
 
 async function createBoundedContextRoot(args: BoundedContextCreationArgs): Promise<void> {
@@ -287,7 +294,14 @@ async function createBoundedContextRoot(args: BoundedContextCreationArgs): Promi
     edit.insert(rootUri, new vscode.Position(0, 0), content);
     if (!await vscode.workspace.applyEdit(edit)) {
         void vscode.window.showErrorMessage('Could not create the bounded-context root.');
+        return;
     }
+    const rootDocument = await vscode.workspace.openTextDocument(rootUri);
+    const rootPosition = rootDocument.positionAt(rootDocument.getText().length);
+    await vscode.window.showTextDocument(rootDocument, {
+        preview: false,
+        selection: new vscode.Range(rootPosition, rootPosition)
+    });
 }
 
 function validateThinaiFileName(value: string): string | undefined {
