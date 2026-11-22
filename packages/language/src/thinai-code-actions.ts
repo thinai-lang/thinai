@@ -196,35 +196,18 @@ export class ThinaiCodeActionProvider {
         diagnostic: CodeActionParams['context']['diagnostics'][number],
         contextName: string
     ): CodeAction {
-        const base = this.fileNameBase(contextName);
-        let rootUri = UriUtils.joinPath(UriUtils.dirname(document.uri), `${base}.tni`);
-        if (this.services.shared.workspace.LangiumDocuments.hasDocument(rootUri)) {
-            rootUri = UriUtils.joinPath(UriUtils.dirname(document.uri), `${base}-root.tni`);
-        }
-        const rootPath = toImportPath(UriUtils.dirname(document.uri), rootUri);
-        const partPath = toImportPath(UriUtils.dirname(rootUri), document.uri);
-        const content = `import "${partPath}"\n\nbounded context ${formatIdentifier(contextName)}\n`;
-        const range = {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 0 }
-        };
         return {
-            title: `Create '${rootPath}' as the bounded-context root`,
+            title: `Create a bounded-context root for '${contextName}'…`,
             kind: CodeActionKind.QuickFix,
             isPreferred: true,
             diagnostics: [diagnostic],
-            edit: {
-                documentChanges: [
-                    {
-                        kind: 'create',
-                        uri: rootUri.toString(),
-                        options: { overwrite: false, ignoreIfExists: false }
-                    },
-                    {
-                        textDocument: { uri: rootUri.toString(), version: null },
-                        edits: [{ range, newText: content }]
-                    }
-                ]
+            command: {
+                title: 'Create bounded-context root',
+                command: 'thinai.createRoot',
+                arguments: [{
+                    uri: document.uri.toString(),
+                    contextName
+                }]
             }
         };
     }
@@ -245,60 +228,18 @@ export class ThinaiCodeActionProvider {
         if (!context) {
             return [];
         }
-
-        const directory = UriUtils.dirname(document.uri);
-        const base = this.fileNameBase(context.name);
-        let fileName = `${base}-part.tni`;
-        let counter = 2;
-        while (this.services.shared.workspace.LangiumDocuments.hasDocument(
-            UriUtils.joinPath(directory, fileName)
-        )) {
-            fileName = `${base}-part-${counter}.tni`;
-            counter++;
-        }
-        const partUri = UriUtils.joinPath(directory, fileName);
-        const importEdit = this.appendImport(
-            document,
-            toImportPath(directory, partUri)
-        );
-        if (!importEdit) {
-            return [];
-        }
-        const partContent = `in bounded context ${formatIdentifier(context.name)} {\n}\n`;
-        const partRange = {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 0 }
-        };
         return [{
-            title: `Create '${fileName}' as a part of '${context.name}'`,
+            title: `Create a bounded-context part of '${context.name}'…`,
             kind: CodeActionKind.Refactor,
-            isPreferred: false,
-            edit: {
-                documentChanges: [
-                    {
-                        kind: 'create',
-                        uri: partUri.toString(),
-                        options: { overwrite: false, ignoreIfExists: false }
-                    },
-                    {
-                        textDocument: { uri: partUri.toString(), version: null },
-                        edits: [{ range: partRange, newText: partContent }]
-                    },
-                    {
-                        textDocument: { uri: document.uri.toString(), version: null },
-                        edits: [importEdit]
-                    }
-                ]
+            command: {
+                title: 'Create bounded-context part',
+                command: 'thinai.createPart',
+                arguments: [{
+                    uri: document.uri.toString(),
+                    contextName: context.name
+                }]
             }
         }];
-    }
-
-    private fileNameBase(name: string): string {
-        const base = name
-            .replace(/[^\p{Letter}\p{Number}_-]+/gu, '-')
-            .replace(/^-+|-+$/gu, '')
-            .toLowerCase();
-        return base || 'bounded-context';
     }
 
     private getPartImportCodeAction(

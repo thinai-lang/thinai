@@ -666,7 +666,8 @@ completion and links, call hierarchy for method invocations and journey
 steps, document formatting, and quick fixes for unresolved
 declarations that can be imported, for missing module dependencies or
 exposures, for bounded-context part imports, and for creating a missing
-bounded-context root or part. Renaming or moving a `.tni` file updates relative import paths. Formatting uses the
+bounded-context root or part. In VS Code, the creation actions prompt for the
+new filename and, for roots, the target location. Renaming or moving a `.tni` file updates relative import paths. Formatting uses the
 editor's indentation options; the VS Code extension defaults Thinai files to two
 spaces.
 

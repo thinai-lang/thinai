@@ -1,4 +1,5 @@
 export * from './thinai-module.js';
+export { formatIdentifier } from './thinai-scope-utils.js';
 export * from './thinai-code-actions.js';
 export * from './thinai-completion.js';
 export * from './thinai-scope.js';

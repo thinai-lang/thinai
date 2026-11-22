@@ -7,6 +7,7 @@ import {
     applyConfiguredIndentationToCompletions,
     createThinaiServices,
     createThinaiSelectionRange,
+    formatIdentifier,
     getSpecificationLinkAutoDeleteRange,
     getTripleQuoteAutoDeleteRange,
     isQueryRepositoryReadCompletionPosition
@@ -19,6 +20,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const thinaiServices = createThinaiServices(EmptyFileSystem);
     registerThinaiSelectionRanges(context, thinaiServices.shared);
     registerAutoDelete(context);
+    registerBoundedContextCreation(context);
     client = await startLanguageClient(context);
     registerQueryRepositoryReadCompletionTrigger(context, thinaiServices.Thinai);
 }
@@ -200,6 +202,156 @@ function getEditorIndentation(document: vscode.TextDocument): {
         tabSize: typeof tabSize === 'number' && tabSize > 0 ? Math.floor(tabSize) : 2,
         insertSpaces: typeof insertSpaces === 'boolean' ? insertSpaces : true
     };
+}
+
+interface BoundedContextCreationArgs {
+    uri: string;
+    contextName: string;
+}
+
+function registerBoundedContextCreation(context: vscode.ExtensionContext): void {
+    context.subscriptions.push(
+        vscode.commands.registerCommand('thinai.createPart', (args: BoundedContextCreationArgs) =>
+            createBoundedContextPart(args)
+        ),
+        vscode.commands.registerCommand('thinai.createRoot', (args: BoundedContextCreationArgs) =>
+            createBoundedContextRoot(args)
+        )
+    );
+}
+
+async function createBoundedContextPart(args: BoundedContextCreationArgs): Promise<void> {
+    const rootUri = vscode.Uri.parse(args.uri);
+    const rootDocument = await vscode.workspace.openTextDocument(rootUri);
+    const base = boundedContextFileName(args.contextName);
+    const fileName = await vscode.window.showInputBox({
+        title: 'Create bounded-context part',
+        prompt: `File name for the ${args.contextName} part`,
+        value: `${base}-part.tni`,
+        valueSelection: [0, `${base}-part`.length],
+        validateInput: async value => {
+            const error = validateThinaiFileName(value);
+            if (error) {
+                return error;
+            }
+            const target = vscode.Uri.file(path.join(path.dirname(rootUri.fsPath), value.trim()));
+            return await fileExists(target) ? `'${value.trim()}' already exists.` : undefined;
+        }
+    });
+    if (!fileName) {
+        return;
+    }
+
+    const partUri = vscode.Uri.file(path.join(path.dirname(rootUri.fsPath), fileName.trim()));
+    const importText = importInsertion(rootDocument, relativeImportPath(rootUri, partUri));
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(partUri, { overwrite: false, ignoreIfExists: false });
+    edit.insert(partUri, new vscode.Position(0, 0),
+        `in bounded context ${formatIdentifier(args.contextName)} {\n}\n`);
+    edit.insert(rootUri, importText.position, importText.newText);
+    if (!await vscode.workspace.applyEdit(edit)) {
+        void vscode.window.showErrorMessage('Could not create the bounded-context part.');
+    }
+}
+
+async function createBoundedContextRoot(args: BoundedContextCreationArgs): Promise<void> {
+    const partUri = vscode.Uri.parse(args.uri);
+    const base = boundedContextFileName(args.contextName);
+    const defaultUri = vscode.Uri.file(path.join(path.dirname(partUri.fsPath), `${base}.tni`));
+    const rootUri = await vscode.window.showSaveDialog({
+        title: 'Create bounded-context root',
+        defaultUri,
+        filters: { Thinai: ['tni'] },
+        saveLabel: 'Create bounded-context root'
+    });
+    if (!rootUri) {
+        return;
+    }
+    if (vscode.workspace.workspaceFolders?.length && !vscode.workspace.getWorkspaceFolder(rootUri)) {
+        void vscode.window.showErrorMessage('Choose a location inside the workspace.');
+        return;
+    }
+    if (!rootUri.fsPath.endsWith('.tni')) {
+        void vscode.window.showErrorMessage('The root file must use the .tni extension.');
+        return;
+    }
+    if (await fileExists(rootUri)) {
+        void vscode.window.showErrorMessage(`'${rootUri.fsPath}' already exists.`);
+        return;
+    }
+
+    const partPath = relativeImportPath(rootUri, partUri);
+    const content = `import "${partPath}"\n\nbounded context ${formatIdentifier(args.contextName)}\n`;
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(rootUri, { overwrite: false, ignoreIfExists: false });
+    edit.insert(rootUri, new vscode.Position(0, 0), content);
+    if (!await vscode.workspace.applyEdit(edit)) {
+        void vscode.window.showErrorMessage('Could not create the bounded-context root.');
+    }
+}
+
+function validateThinaiFileName(value: string): string | undefined {
+    const name = value.trim();
+    if (!name) {
+        return 'Enter a file name.';
+    }
+    if (!name.endsWith('.tni')) {
+        return 'Use the .tni file extension.';
+    }
+    if (/[\\/]/u.test(name) || name === '.' || name === '..' || path.basename(name) !== name) {
+        return 'Enter a file name, not a path.';
+    }
+    return undefined;
+}
+
+function boundedContextFileName(name: string): string {
+    const base = name
+        .replace(/[^\p{Letter}\p{Number}_-]+/gu, '-')
+        .replace(/^-+|-+$/gu, '')
+        .toLowerCase();
+    return base || 'bounded-context';
+}
+
+function relativeImportPath(fromFile: vscode.Uri, toFile: vscode.Uri): string {
+    const relative = path.relative(path.dirname(fromFile.fsPath), toFile.fsPath)
+        .split(path.sep)
+        .join('/');
+    return relative.startsWith('.') ? relative : `./${relative}`;
+}
+
+function importInsertion(
+    document: vscode.TextDocument,
+    importPath: string
+): { position: vscode.Position; newText: string } {
+    const text = document.getText();
+    const newline = text.includes('\r\n') ? '\r\n' : '\n';
+    const lines = text.split(/\r?\n/u);
+    let lastImportLine = -1;
+    for (let index = 0; index < lines.length; index++) {
+        if (/^\s*import\b/u.test(lines[index]!)) {
+            lastImportLine = index;
+        }
+    }
+    const statement = `import "${importPath}"`;
+    if (lastImportLine >= 0) {
+        return {
+            position: new vscode.Position(lastImportLine, lines[lastImportLine]!.length),
+            newText: `${newline}${statement}`
+        };
+    }
+    return {
+        position: new vscode.Position(0, 0),
+        newText: `${statement}${newline}`
+    };
+}
+
+async function fileExists(uri: vscode.Uri): Promise<boolean> {
+    try {
+        await vscode.workspace.fs.stat(uri);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 async function startLanguageClient(context: vscode.ExtensionContext): Promise<LanguageClient> {

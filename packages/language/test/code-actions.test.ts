@@ -356,21 +356,16 @@ describe('Bounded-context creation actions', () => {
 
         const actions = await actionsAt(part, diagnostic!.range, [diagnostic!]);
         const action = actions.find(candidate =>
-            candidate.title === "Create './ordering.tni' as the bounded-context root"
+            candidate.title === "Create a bounded-context root for 'Ordering'…"
         );
         expect(action).toBeDefined();
-
-        const changes = action!.edit?.documentChanges ?? [];
-        expect(changes[0]).toMatchObject({
-            kind: 'create',
-            uri: expect.stringContaining('/part-creation/ordering.tni')
+        expect(action?.command).toMatchObject({
+            command: 'thinai.createRoot',
+            arguments: [{
+                uri: part.uri.toString(),
+                contextName: 'Ordering'
+            }]
         });
-        expect(changes[1]).toMatchObject({
-            textDocument: { uri: expect.stringContaining('/part-creation/ordering.tni') }
-        });
-        const content = (changes[1] as { edits: Array<{ newText: string }> }).edits[0]!.newText;
-        expect(content).toContain('import "./pricing.tni"');
-        expect(content).toContain('bounded context Ordering');
     });
 
     test('creates a part from a canonical context declaration', async () => {
@@ -386,18 +381,15 @@ describe('Bounded-context creation actions', () => {
         };
         const actions = await actionsAt(root, range);
         const action = actions.find(candidate =>
-            candidate.title === "Create 'ordering-part.tni' as a part of 'Ordering'"
+            candidate.title === "Create a bounded-context part of 'Ordering'…"
         );
         expect(action).toBeDefined();
-
-        const changes = action!.edit?.documentChanges ?? [];
-        expect(changes[0]).toMatchObject({
-            kind: 'create',
-            uri: expect.stringContaining('/part-creation/ordering-part.tni')
+        expect(action?.command).toMatchObject({
+            command: 'thinai.createPart',
+            arguments: [{
+                uri: root.uri.toString(),
+                contextName: 'Ordering'
+            }]
         });
-        const partContent = (changes[1] as { edits: Array<{ newText: string }> }).edits[0]!.newText;
-        expect(partContent).toContain('in bounded context Ordering {');
-        const rootEdits = (changes[2] as { edits: TextEdit[] }).edits;
-        expect(rootEdits[0]?.newText).toContain('import "./ordering-part.tni"');
     });
 });
