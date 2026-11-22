@@ -30,10 +30,7 @@ demonstrates strategic and tactical modeling, events, CQRS, and journeys.
 See the [Thinai language guides](https://thinai-lang.dev/) for the full
 language documentation.
 
-## Source
+## Support
 
-The Thinai source repository is private during the alpha. Report bugs and
-feature requests in the [public issue tracker](https://github.com/thinai-lang/issues).
-
-The language server is bundled into `out/language/main.cjs`; the extension entry
-point is `out/extension/main.cjs`.
+Report bugs and feature requests in the
+[public issue tracker](https://github.com/thinai-lang/issues).
