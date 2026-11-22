@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.9-alpha.1 - 2026-11-22
+
 - Make bounded contexts first-class multi-file units: a root file declares the context and imports its part files, parts share one context scope without importing peers, and other contexts import only the root.
 - Break: a bounded-context contribution no longer imports its canonical declaration; move that import to the root and import the part there.
 - Add a quick fix that adds an unrooted part to a bounded-context root.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9-alpha.1 - 2026-11-22
+
+- Make bounded contexts first-class multi-file units with a root file and imported parts.
+- Add quick fixes for unrooted parts and direct part imports, plus root-context completion for new parts.
+- Warn when disconnected model units reuse a bounded-context name.
+- Refresh examples and docs for root/part composition and add a video walkthrough page.
+- Align the language, CLI, and extension on the shared `0.1.9-alpha.1` release version.
+
 ## 0.1.8-alpha.8 - 2026-11-17
 
 - Warn when a context-map integration pattern is listed on the wrong customer or supplier side, and offer only role-appropriate patterns in completion.
