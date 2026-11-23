@@ -1,7 +1,7 @@
 version: 0.5.1
 languages:
   - name: thinai
-    description: "A domain-specific language for modeling domain-driven design (DDD)."
+    description: "A modeling language for domain-driven design (DDD)."
     caseInsensitive: false
     grammar: packages/language/src/thinai.langium
 langiumConfig: packages/language/langium-config.json

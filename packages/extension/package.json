@@ -2,6 +2,15 @@
     "name": "vscode-thinai",
     "publisher": "thinai-lang",
     "description": "Alpha: Thinai language support for VS Code",
+    "keywords": [
+        "ddd",
+        "domain-driven-design",
+        "modeling-language",
+        "thinai",
+        "vscode",
+        "vscode-extension",
+        "language-server"
+    ],
     "version": "0.1.9-alpha.1",
     "license": "MIT",
     "displayName": "Thinai",

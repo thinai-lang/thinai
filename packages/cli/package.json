@@ -1,6 +1,13 @@
 {
     "name": "thinai-cli",
     "description": "Alpha: Command-line tools for Thinai models",
+    "keywords": [
+        "ddd",
+        "domain-driven-design",
+        "modeling-language",
+        "thinai",
+        "cli"
+    ],
     "version": "0.1.9-alpha.1",
     "license": "MIT",
     "type": "module",

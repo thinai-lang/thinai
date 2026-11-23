@@ -1,6 +1,12 @@
 {
     "name": "thinai-language",
     "description": "Alpha: Thinai language services, grammar, and validators",
+    "keywords": [
+        "ddd",
+        "domain-driven-design",
+        "modeling-language",
+        "thinai"
+    ],
     "version": "0.1.9-alpha.1",
     "license": "MIT",
     "type": "module",

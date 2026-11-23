@@ -4,9 +4,9 @@
 
 > **Alpha:** Thinai is in alpha. Syntax and tooling may change between releases.
 
-Thinai is a domain-specific language for modeling domain-driven design (DDD).
-Describe subdomains, bounded contexts, aggregates, services, events, and user
-journeys in a shared model that is easy to navigate and evolve across files.
+Thinai is a modeling language for domain-driven design (DDD). Describe
+subdomains, bounded contexts, aggregates, services, events, and user journeys in
+a shared model that is easy to navigate and evolve across files.
 
 Thinai's VS Code language support provides completion, navigation, diagnostics,
 references, document symbols, hover, rename, call hierarchy, formatting,
@@ -52,53 +52,6 @@ grammar, validation, and language behavior are defined in this project.
 
 See [RELEASING.md](./RELEASING.md) for the CI publishing workflows, version
 mapping, and release checklist.
-
-### LLM evaluations
-
-Evaluations use an API that implements the OpenAI-compatible chat completions
-format. Set the model and, if needed, the API endpoint and key for the service
-you want to use:
-
-```bash
-export EVAL_LLM_MODEL="your-model-name"
-export EVAL_LLM_BASE_URL="https://api.example.com/v1"
-export EVAL_LLM_API_KEY="your-api-key"
-```
-
-`EVAL_LLM_BASE_URL` and `EVAL_LLM_API_KEY` can be omitted when the API uses the
-SDK's default endpoint or does not require authentication. The checked-in
-Thinai system prompt is used. Some OpenAI-compatible gateways require a stable
-session header. Set both variables for such a gateway:
-
-```bash
-export EVAL_LLM_SESSION_HEADER="<header-name>"
-export EVAL_LLM_SESSION_ID="<stable-session-id>"
-```
-
-`EVAL_LLM_SESSION_HEADER` and `EVAL_LLM_SESSION_ID` can be omitted for gateways
-that do not require a stable session. For OpenCode Go, use
-`deepseek-v4.1-flash` through the OpenAI-compatible inference API:
-
-```bash
-export EVAL_LLM_MODEL="deepseek-v4.1-flash"
-export EVAL_LLM_BASE_URL="https://opencode.ai/inference/go/openai/v1"
-export EVAL_LLM_SESSION_HEADER="x-opencode-session"
-export EVAL_LLM_SESSION_ID="thinai-lai-evals"
-# Set EVAL_LLM_API_KEY from your OpenCode Console personal API key.
-```
-
-Create the key in the [OpenCode Console](https://opencode.ai/console) under
-**Account → Personal API keys**. Do not commit it.
-
-Install the Langium AI CLI if needed, then run:
-
-```bash
-npm install -g langium-ai
-lai evaluate
-```
-
-Review the selected service's data handling policies before sending project
-content.
 
 ## License
 

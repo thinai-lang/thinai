@@ -2,9 +2,10 @@
 
 <p><img src="https://raw.githubusercontent.com/thinai-lang/thinai-lang.github.io/main/public/assets/thinai-light.svg" alt="Thinai logo" width="80"></p>
 
-Thinai is a domain-specific modeling language for expressing DDD structures,
-relationships, and behavioral intent in a shared, navigable model. It models
-strategic and tactical DDD, aggregates, application services, events, and journeys.
+Thinai is a modeling language for domain-driven design (DDD). It expresses DDD
+structures, relationships, and behavioral intent in a shared, navigable model.
+It models strategic and tactical DDD, aggregates, application services, events,
+and journeys.
 Thinai uses braces for blocks and does not use semicolon terminators.
 
 > **Alpha:** Thinai is in alpha. Language rules and tooling may
@@ -670,16 +671,6 @@ bounded-context root or part. In VS Code, the creation actions prompt for the
 new filename and, for roots, the target location. Renaming or moving a `.tni` file updates relative import paths. Formatting uses the
 editor's indentation options; the VS Code extension defaults Thinai files to two
 spaces.
-
-## What's in the folder?
-
-- [src/thinai.langium](src/thinai.langium) — grammar definition.
-- [src/thinai-formatter.ts](src/thinai-formatter.ts) — document formatting.
-- [src/thinai-validator.ts](src/thinai-validator.ts) — semantic validation.
-- [src/thinai-scope-provider.ts](src/thinai-scope-provider.ts),
-  [src/thinai-scope-computation.ts](src/thinai-scope-computation.ts), and
-  [src/thinai-scope-utils.ts](src/thinai-scope-utils.ts) — import and reference scoping.
-- [test](test) — parsing, linking, validation, and LSP tests.
 
 ## License
 
