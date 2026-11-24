@@ -8,17 +8,30 @@ Thinai is a modeling language for domain-driven design (DDD). Describe
 subdomains, bounded contexts, aggregates, services, events, and user journeys in
 a shared model that is easy to navigate and evolve across files.
 
+## Install
+
+Install the pre-release extension from the Visual Studio Marketplace:
+
+```bash
+code --install-extension thinai-lang.vscode-thinai --pre-release
+```
+
+For editors that use Open VSX, install from the
+[Open VSX listing](https://open-vsx.org/extension/thinai-lang/vscode-thinai).
+
+The CLI and language package are available from npm:
+
+```bash
+npm install -g thinai-cli@alpha
+npm install thinai-language@alpha
+```
+
+## Features
+
 Thinai's VS Code language support provides completion, navigation, diagnostics,
 references, document symbols, hover, rename, call hierarchy, formatting,
 clickable imports, automatic import updates on file moves, and
 import/dependency/exposure quick fixes for `.tni` files.
-
-## Support
-
-Report bugs, documentation problems, and feature requests in the public
-[issue tracker](https://github.com/thinai-lang/thinai/issues). Report security
-vulnerabilities privately to `security@thinai-lang.dev` or through GitHub
-advisories, not in a public issue.
 
 ## Get started
 
@@ -30,13 +43,23 @@ advisories, not in a public issue.
   syntax, module, and sharing features without following the full domain model.
 - See the [agent workflow guide](https://thinai-lang.dev/agent-workflow/) for
   model-first coding with CLI, MCP, and LSP.
-- See the [Thinai language package](./packages/language/README.md),
-  [CLI](./packages/cli/README.md), and
-  [VS Code extension development guide](./packages/extension/extension-development.md).
 
-After installing dependencies and building the workspace (`npm install` then
-`npm run build`), inspect the model graph or request an agent context slice
-from the repository root:
+## Support
+
+Report bugs, documentation problems, and feature requests in the public
+[issue tracker](https://github.com/thinai-lang/thinai/issues). Report security
+vulnerabilities privately to `security@thinai-lang.dev` or through GitHub
+advisories, not in a public issue.
+
+## Development
+
+This workspace targets Node.js 22 or later. To build and test the language
+package, run `npm install`, `npm run build`, and `npm test` from the repository
+root. Thinai's grammar, validation, and language behavior are defined in this
+project.
+
+From a source checkout, inspect the model graph or request an agent context
+slice:
 
 ```bash
 node packages/cli/bin/cli.js inspect examples/order-fulfillment/shipping.tni
@@ -44,11 +67,10 @@ node packages/cli/bin/cli.js context examples/order-fulfillment/shipping.tni Agg
 node packages/cli/bin/cli.js validate examples/order-fulfillment/shipping.tni
 ```
 
-## Development
-
-This workspace targets Node.js 22 or later. To build and test the language
-package, run `npm run build` and `npm test` from the repository root. Thinai's
-grammar, validation, and language behavior are defined in this project.
+See the [Thinai language package](./packages/language/README.md),
+[CLI](./packages/cli/README.md), and
+[VS Code extension development guide](./packages/extension/extension-development.md)
+for package-level details.
 
 See [RELEASING.md](./RELEASING.md) for the CI publishing workflows, version
 mapping, and release checklist.
