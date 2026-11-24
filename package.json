@@ -1,8 +1,8 @@
 {
     "name": "thinai-workspace",
     "description": "Thinai DDD modeling language workspace",
-    "version": "0.1.9-alpha.1",
-    "license": "MIT",
+    "version": "0.1.10-alpha.1",
+    "license": "Apache-2.0",
     "type": "module",
     "private": true,
     "engines": {

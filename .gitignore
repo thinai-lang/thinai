@@ -15,3 +15,8 @@ syntaxes/
 coverage/
 
 /packages/cli/skills/
+
+/packages/*/LICENSE
+/.agents/skills/lai
+/.agents/skills/lai-gen-*
+/.agents/skills/langium

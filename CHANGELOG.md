@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.10-alpha.1 - 2026-11-24
 
 - Add a quick fix that creates a bounded-context root for an unrooted part, with a filename and location prompt.
 - Add a refactor action that creates a part and adds its root import, with a filename prompt.
 - Report a clear CLI entry-point diagnostic when validating a bounded-context part.
 - Open newly created bounded-context roots and parts with the cursor at the insertion point.
+- Relicense the project under the Apache License 2.0.
+- Publish the source repository and move issue reporting to the main repository.
+- Install generic agent skills from `skills-lock.json` instead of vendoring them.
+- Include third-party notices in the VS Code extension.
 
 ## 0.1.9-alpha.1 - 2026-11-22
 

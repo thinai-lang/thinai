@@ -16,9 +16,9 @@ import/dependency/exposure quick fixes for `.tni` files.
 ## Support
 
 Report bugs, documentation problems, and feature requests in the public
-[issue tracker](https://github.com/thinai-lang/issues). The source repository is
-private during the alpha. Report security vulnerabilities privately to
-`security@thinai-lang.dev` or through GitHub advisories, not in a public issue.
+[issue tracker](https://github.com/thinai-lang/thinai/issues). Report security
+vulnerabilities privately to `security@thinai-lang.dev` or through GitHub
+advisories, not in a public issue.
 
 ## Get started
 
@@ -55,4 +55,4 @@ mapping, and release checklist.
 
 ## License
 
-Thinai is released under the [MIT License](./LICENSE).
+Thinai is released under the [Apache License 2.0](./LICENSE).

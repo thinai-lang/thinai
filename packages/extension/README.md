@@ -33,4 +33,4 @@ language documentation.
 ## Support
 
 Report bugs and feature requests in the
-[public issue tracker](https://github.com/thinai-lang/issues).
+[public issue tracker](https://github.com/thinai-lang/thinai/issues).

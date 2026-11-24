@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.10-alpha.1 - 2026-11-24
+
+- Add quick fixes for creating bounded-context roots and parts.
+- Relicense the extension under the Apache License 2.0.
+- Include the license and third-party notices in the VSIX.
+- Move issue links to the main repository.
+- Align the language, CLI, and extension on the shared `0.1.10-alpha.1` release version.
+
 ## 0.1.9-alpha.1 - 2026-11-22
 
 - Make bounded contexts first-class multi-file units with a root file and imported parts.

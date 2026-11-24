@@ -11,8 +11,8 @@
         "vscode-extension",
         "language-server"
     ],
-    "version": "0.1.9-alpha.1",
-    "license": "MIT",
+    "version": "0.1.10-alpha.1",
+    "license": "Apache-2.0",
     "displayName": "Thinai",
     "icon": "./icon.png",
     "type": "module",
@@ -71,7 +71,7 @@
     "main": "./out/extension/main.cjs",
     "scripts": {
         "clean": "shx rm -fr *.tsbuildinfo out syntaxes",
-        "vscode:prepublish": "npm run build",
+        "vscode:prepublish": "npm run build && shx cp -f ../../LICENSE LICENSE",
         "build:prepare": "npm --prefix ../language run langium:generate && shx mkdir -p ./syntaxes/ && shx cp -f ../language/syntaxes/thinai.tmLanguage.json ./syntaxes/thinai.tmLanguage.json",
         "build": "npm run build:prepare && tsc -b tsconfig.json && node esbuild.mjs",
         "build:clean": "npm run clean && npm run build",
@@ -79,7 +79,7 @@
     },
     "dependencies": {
         "langium": "~4.4.0",
-        "thinai-language": "0.1.9-alpha.1",
+        "thinai-language": "0.1.10-alpha.1",
         "vscode-languageclient": "~10.1.0",
         "vscode-languageserver": "~10.1.0"
     },
@@ -98,6 +98,6 @@
     },
     "homepage": "https://thinai-lang.dev/",
     "bugs": {
-        "url": "https://github.com/thinai-lang/issues"
+        "url": "https://github.com/thinai-lang/thinai/issues"
     }
 }
