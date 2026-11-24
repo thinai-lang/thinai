@@ -54,6 +54,11 @@
         "vscode-oniguruma": "^2.0.1",
         "vscode-textmate": "^9.3.2"
     },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/thinai-lang/thinai.git",
+        "directory": "packages/language"
+    },
     "homepage": "https://thinai-lang.dev/",
     "bugs": {
         "url": "https://github.com/thinai-lang/thinai/issues"

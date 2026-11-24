@@ -39,6 +39,11 @@
         "thinai-language": "0.1.10-alpha.1",
         "zod": "^4.6.7"
     },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/thinai-lang/thinai.git",
+        "directory": "packages/cli"
+    },
     "homepage": "https://thinai-lang.dev/",
     "bugs": {
         "url": "https://github.com/thinai-lang/thinai/issues"
